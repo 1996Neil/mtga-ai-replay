@@ -1,0 +1,33 @@
+{
+  "name": "mtga-gpt-replay",
+  "version": "0.3.1",
+  "private": true,
+  "type": "module",
+  "description": "Private MTGA Live Coach source development repository",
+  "bin": {
+    "mtga-gpt-replay": "bin/mtga-gpt-replay.mjs",
+    "mtga-gpt-collection": "bin/mtga-gpt-collection.mjs"
+  },
+  "scripts": {
+    "test": "node scripts/test.mjs",
+    "replay": "node bin/mtga-gpt-replay.mjs latest",
+    "launcher:install": "node tools/macos-launcher/install.mjs",
+    "viewer:install": "npm ci --ignore-scripts --prefix viewer",
+    "viewer:build": "npm --prefix viewer run build",
+    "viewer:test": "node scripts/test.mjs --viewer",
+    "coach:offline": "node bin/mtga-gpt-replay.mjs live-coach serve --enable --offline",
+    "coach:test": "node scripts/test.mjs --coach",
+    "start": "node scripts/cloud-dev.mjs",
+    "test:private-corpus": "node scripts/test.mjs --private-corpus",
+    "test:cloud": "node --test tests/cloud-dev.test.mjs tests/release-policy.test.mjs",
+    "viewer:test:full": "node scripts/test.mjs --viewer --full-viewer",
+    "check:release": "node scripts/check-release.mjs",
+    "viewer:materialize": "node scripts/materialize-viewer.mjs"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "mtga-log-parser": "4.1.0"
+  }
+}

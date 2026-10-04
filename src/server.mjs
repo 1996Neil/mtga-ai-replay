@@ -1,0 +1,163 @@
+import { createServer } from 'node:http';
+import { readFile, stat, realpath, mkdir, writeFile, rm } from 'node:fs/promises';
+import { resolve, join, extname, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { defaultDataDir, listReplays, getReplay, getArchivedCard } from './history.mjs';
+import { getCardMetadata, getCardImage, cardImageIsCached } from './card-cache.mjs';
+import { createCoachContext } from './coach-context.mjs';
+import { loadInstalledChineseDisplayNames } from './display-names.mjs';
+import { createViewerSync } from './viewer-sync.mjs';
+import { createCoachRoutes } from './live-coach/routes.mjs';
+
+const defaultViewer = fileURLToPath(new URL('../viewer/dist/', import.meta.url));
+const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.ico': 'image/x-icon', '.woff2': 'font/woff2' };
+
+export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir = defaultViewer, port = 0, cardNames = new Map(), cardMetadata = new Map(), displayNamesZh, fetchFn = fetch, writeInfo = true, syncWorkflow, liveCoach, replayProvider, enableReplaySync = !replayProvider } = {}) {
+  const root = await realpath(resolve(viewerDir)).catch(() => resolve(viewerDir));
+  const chineseNames = displayNamesZh ?? await loadInstalledChineseDisplayNames();
+  let assignedPort;
+  const sync = createViewerSync({ dataDir, workflow: syncWorkflow });
+  const coach = liveCoach ? createCoachRoutes(liveCoach) : null;
+  function send(response, status, value, contentType = 'application/json; charset=utf-8', extraHeaders = {}) {
+    response.writeHead(status, { 'Content-Type': contentType, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
+      'Cross-Origin-Resource-Policy': 'same-origin', 'Referrer-Policy': 'no-referrer', ...extraHeaders });
+    response.end(Buffer.isBuffer(value) || typeof value === 'string' ? value : JSON.stringify(value));
+  }
+  function trustedRequest(request) {
+    let host;
+    try { host = new URL(`http://${request.headers.host}`); } catch { return false; }
+    if (!['127.0.0.1', 'localhost'].includes(host.hostname) || Number(host.port) !== assignedPort) return false;
+    if (request.headers.origin) {
+      try {
+        const origin = new URL(request.headers.origin);
+        if (origin.protocol !== 'http:' || !['127.0.0.1', 'localhost'].includes(origin.hostname) || Number(origin.port) !== assignedPort) return false;
+      } catch { return false; }
+    }
+    return request.headers['sec-fetch-site'] !== 'cross-site';
+  }
+  async function localCard(arenaId) {
+    return { ...(cardMetadata.get(arenaId) ?? {}), ...(await getArchivedCard(arenaId, { dataDir }) ?? {}),
+      ...(cardNames.has(arenaId) ? { name: cardNames.get(arenaId) } : {}) };
+  }
+  // Keep the immutable coaching source authoritative for its recorded matches.
+  // Manual replay sync adds local Viewer history only; it never extends the
+  // coach's locked inference corpus or starts model/TTS work.
+  async function replayCatalog() {
+    const recorded = replayProvider ? await replayProvider.list() : [];
+    if (replayProvider && !enableReplaySync) return recorded;
+    const catalog = new Map((await listReplays({ dataDir, limit: null })).map(entry => [entry.id, entry]));
+    for (const entry of recorded) catalog.set(entry.id, entry);
+    return [...catalog.values()].sort((a, b) => Date.parse(b.started_at) - Date.parse(a.started_at) || b.id.localeCompare(a.id));
+  }
+  async function replayById(id) {
+    const recorded = replayProvider ? await replayProvider.get(id) : null;
+    return recorded ?? (enableReplaySync || !replayProvider ? await getReplay(id, { dataDir }) : null);
+  }
+  const server = createServer(async (request, response) => {
+    if (!trustedRequest(request)) return send(response, 403, { error: 'Local replay access only.' });
+    try {
+      const url = new URL(request.url, `http://127.0.0.1:${assignedPort}`);
+      const path = decodeURIComponent(url.pathname);
+      if (path.includes('\0') || path.includes('\\') || path.split('/').includes('..')) return send(response, 400, { error: 'Invalid path.' });
+      if (coach && await coach.handle(request, response, url)) return;
+      if (path === '/api/sync' && !enableReplaySync) return send(response, 403, { error: 'Replay synchronization is disabled in this isolated corpus server.' });
+      if (path === '/api/sync' && request.method === 'POST') {
+        // No body, paths, repository or command accepted. A non-simple header
+        // forces foreign pages through a rejected CORS preflight; also require
+        // exact same origin to block forged same-site/cross-origin POSTs.
+        if (request.headers.origin !== `http://${request.headers.host}` || request.headers['x-mtga-replay-action'] !== 'sync') return send(response, 403, { error: 'Same-origin replay action required.' });
+        if (url.search || request.headers['transfer-encoding'] || Number(request.headers['content-length'] ?? 0) !== 0) return send(response, 400, { error: 'Replay sync does not accept parameters.' });
+        return send(response, 202, sync.start());
+      }
+      if (request.method !== 'GET' && request.method !== 'HEAD') return send(response, 405, { error: 'Unsupported replay action.' });
+      if (path === '/api/sync') return send(response, 200, request.method === 'HEAD' ? '' : sync.snapshot());
+      if (path === '/api/health') return send(response, 200, { service: 'mtga-gpt-replay', pid: process.pid, port: assignedPort, capabilities: [...(enableReplaySync ? ['replay-sync'] : []), ...(coach ? ['live-coach'] : [])] });
+      if (path === '/api/matches') return send(response, 200, await replayCatalog());
+      if (path === '/api/matches/latest') {
+        const entries = await replayCatalog();
+        const replay = replayProvider && !enableReplaySync ? await replayProvider.latest() : entries.length ? await replayById(entries[0].id) : null;
+        return send(response, replay ? 200 : 404, replay ?? { error: 'No archived matches.' });
+      }
+      const contextRoute = path.match(/^\/api\/matches\/([^/]+)\/context$/);
+      if (contextRoute) {
+        const gameNumber = Number(url.searchParams.get('game') ?? 1);
+        const boundary = url.searchParams.get('boundary') ?? 'after';
+        if (!Number.isSafeInteger(gameNumber) || gameNumber < 1 || !['before', 'after'].includes(boundary)) {
+          return send(response, 400, { error: 'Invalid context game or boundary.' });
+        }
+        const replay = await replayById(contextRoute[1]);
+        const context = createCoachContext(replay, { gameNumber, anchor: url.searchParams.get('anchor'), boundary });
+        if (!context) return send(response, 404, { error: 'Unknown replay context anchor.' });
+        const safePart = value => String(value).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 100);
+        const filename = `${safePart(context.match_id)}-G${gameNumber}-${safePart(context.anchor)}-${context.state_boundary.startsWith('before') ? 'before' : 'after'}-coach.json`;
+        return send(response, 200, request.method === 'HEAD' ? '' : `${JSON.stringify(context, null, 2)}\n`,
+          'application/json; charset=utf-8', { 'Content-Disposition': `attachment; filename="${filename}"` });
+      }
+      const matchRoute = path.match(/^\/api\/matches\/([^/]+)$/);
+      if (matchRoute) {
+        const replay = await replayById(matchRoute[1]);
+        return send(response, replay ? 200 : 404, replay ?? { error: 'Unknown match.' });
+      }
+      const cardRoute = path.match(/^\/api\/cards\/(\d+)(\/image)?$/);
+      if (cardRoute) {
+        const id = Number(cardRoute[1]);
+        if (!Number.isSafeInteger(id) || id <= 0) return send(response, 400, { error: 'Invalid card ID.' });
+        const options = { dataDir, fetchFn, local: await localCard(id) };
+        if (cardRoute[2]) {
+          const image = await getCardImage(id, options);
+          return image ? send(response, 200, image.data, image.contentType) : send(response, 404, { error: 'Image unavailable. Use card text.' });
+        }
+        const metadata = await getCardMetadata(id, options);
+        return send(response, 200, { ...metadata, display_name_zh: chineseNames.get(id) ?? null,
+          image_url: metadata.image_source ? `/api/cards/${id}/image` : null,
+          image_available: Boolean(metadata.image_source), image_cached: await cardImageIsCached(id, { dataDir }) });
+      }
+      if (path.startsWith('/api/')) return send(response, 404, { error: 'Unknown API route.' });
+      const requested = resolve(root, `.${path === '/' ? '/index.html' : path}`);
+      if (requested !== root && !requested.startsWith(root + sep)) return send(response, 400, { error: 'Invalid path.' });
+      let file;
+      try { file = await realpath(requested); } catch (error) {
+        if (error.code === 'ENOENT') return send(response, 404, { error: 'Viewer asset not found. Build the viewer first.' });
+        throw error;
+      }
+      if (!file.startsWith(root + sep) || !(await stat(file)).isFile()) return send(response, 403, { error: 'Invalid asset.' });
+      const data = await readFile(file);
+      return send(response, 200, request.method === 'HEAD' ? Buffer.alloc(0) : data, types[extname(file)] ?? 'application/octet-stream');
+    } catch (error) {
+      if (error instanceof URIError) return send(response, 400, { error: 'Invalid URL.' });
+      send(response, 500, { error: 'Local replay request failed.' });
+    }
+  });
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
+  assignedPort = server.address().port;
+  const url = `http://127.0.0.1:${assignedPort}/`;
+  if (writeInfo) {
+    await mkdir(dataDir, { recursive: true, mode: 0o700 });
+    await writeFile(join(dataDir, 'server.json'), JSON.stringify({ pid: process.pid, url, port: assignedPort, viewerDir: root }), { mode: 0o600 });
+  }
+  const close = async () => {
+    // Finish a publication before shutting down; don't strand a Git write.
+    await coach?.close();
+    await sync.wait();
+    server.closeAllConnections();
+    await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    if (writeInfo) {
+      try { if (JSON.parse(await readFile(join(dataDir, 'server.json'), 'utf8')).port === assignedPort) await rm(join(dataDir, 'server.json')); } catch { /* Already removed. */ }
+    }
+  };
+  return { server, url, port: assignedPort, close };
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const args = process.argv.slice(2), options = {};
+  for (let i = 0; i < args.length; i += 2) {
+    if (args[i] === '--data-dir') options.dataDir = args[i + 1];
+    else if (args[i] === '--viewer-dir') options.viewerDir = args[i + 1];
+    else if (args[i] === '--port') options.port = Number(args[i + 1]);
+    else throw new Error(`Unknown server option: ${args[i]}`);
+  }
+  const running = await startReplayServer(options);
+  process.stdout.write(`${running.url}\n`);
+  for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, async () => { await running.close(); process.exit(0); });
+}

@@ -1,0 +1,7 @@
+{
+  "name": "mtga-collection-reader-helper",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": { "mtga-reader": "0.1.13" }
+}

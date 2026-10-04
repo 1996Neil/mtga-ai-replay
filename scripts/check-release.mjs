@@ -1,0 +1,81 @@
+import { readFile, readdir, lstat } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
+
+const root = fileURLToPath(new URL('../', import.meta.url));
+const restricted = new Set(JSON.parse(await readFile(new URL('../docs/restricted-viewer.json', import.meta.url), 'utf8')).files.map(row => row.path));
+export function forbiddenPath(path) {
+  return restricted.has(path) || /(?:^|\/)(?:node_modules|dist|output|data|history|cache|audio|\.agents|\.codex|\.aws|\.git)(?:\/|$)/.test(path) ||
+    /(?:^|\/)(?:credentials(?:\.[^/]+)?\.json|tokens?\.json|grant\.json|config\.json|Player\.log|UTC_Log[^/]*\.log|\.env(?:\.[^/]+)?|[^/]*ACCEPTANCE[^/]*)$/i.test(path) ||
+    /\.(?:sqlite3?|db|log|mp3|wav|m4a|ogg|png|jpg|jpeg|webp|icns|zip|tgz|p12|pem|key)$/i.test(path);
+}
+export function inspectRecord(path, bytes) {
+  const issues = [];
+  if (forbiddenPath(path)) issues.push('forbidden path');
+  if (bytes.includes(0)) issues.push('binary content');
+  const text = bytes.toString('utf8');
+  const tokenPattern = /\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|eyJ[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,})\b/g;
+  for (const match of text.matchAll(tokenPattern)) {
+    if (!(path.startsWith('tests/') && /synthetic|sentinel/i.test(match[0]))) issues.push('credential-shaped value');
+  }
+  for (const match of text.matchAll(/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/g)) {
+    const next = text[match.index + match[0].length];
+    // A quoted header-only rejection sentinel is not key material. A newline,
+    // escaped newline or body after the header is always rejected.
+    if (!(path === 'tests/sync-security.test.mjs' && (next === "'" || next === '"'))) issues.push('private key');
+  }
+  if (/\/Users\/neil(?:\/|\b)|1996Neil\/mtga-replay-coach|Neil#[0-9]+/.test(text)) issues.push('personal machine/account binding');
+  return [...new Set(issues)];
+}
+const git = args => spawnSync('git', args, { cwd: root, encoding: 'buffer', maxBuffer: 64 * 1024 * 1024 });
+async function treeRecords() {
+  const result = [];
+  async function walk(dir = '') {
+    for (const entry of await readdir(resolve(root, dir), { withFileTypes: true })) {
+      const path = `${dir ? dir + '/' : ''}${entry.name}`;
+      if (['node_modules', '.git', 'dist'].includes(entry.name) || restricted.has(path)) continue;
+      const info = await lstat(resolve(root, path));
+      if (info.isSymbolicLink()) throw new Error(`Release candidate has a symlink: ${path}`);
+      if (entry.isDirectory()) await walk(path);
+      else if (entry.isFile()) result.push({ path, bytes: await readFile(resolve(root, path)) });
+    }
+  }
+  await walk(); return result;
+}
+export async function checkRelease() {
+  let records = await treeRecords();
+  const top = git(['rev-parse', '--show-toplevel']);
+  if (top.status !== 0 || resolve(top.stdout.toString().trim()) !== resolve(root)) throw new Error('Release scan requires this repository as the Git root.');
+  const tracked = git(['ls-files', '-z']);
+  if (tracked.status !== 0) throw new Error('Cannot inspect tracked files.');
+  if (tracked.status === 0) {
+    // Worktree absence is not evidence: inspect staged content and every commit.
+    const staged = git(['ls-files', '--stage', '-z']);
+    if (staged.status !== 0) throw new Error('Cannot inspect Git index.');
+    for (const entry of staged.stdout.toString().split('\0').filter(Boolean)) {
+      const [meta, path] = entry.split('\t'), [mode, object] = meta.split(' ');
+      if (mode !== '100644' && mode !== '100755') throw new Error(`Non-regular staged entry: ${path}`);
+      const blob = git(['cat-file', 'blob', object]); if (blob.status !== 0) throw new Error('Cannot inspect staged blob.');
+      records.push({ path, bytes: blob.stdout });
+    }
+    const commits = git(['rev-list', '--all']);
+    if (commits.status !== 0) throw new Error('Cannot inspect commit history.');
+    for (const commit of commits.stdout.toString().trim().split('\n').filter(Boolean)) {
+      const metadata = git(['cat-file', 'commit', commit]);
+      if (metadata.status !== 0) throw new Error('Cannot inspect commit metadata.');
+      records.push({ path: `[commit metadata ${commit}]`, bytes: metadata.stdout });
+      const entries = git(['ls-tree', '-rz', commit]); if (entries.status !== 0) throw new Error('Cannot inspect commit tree.');
+      for (const entry of entries.stdout.toString().split('\0').filter(Boolean)) {
+        const [meta, path] = entry.split('\t'), [mode, type, object] = meta.split(' ');
+        if (type !== 'blob' || !['100644', '100755'].includes(mode)) throw new Error(`Non-regular historical entry: ${path}`);
+        const blob = git(['cat-file', 'blob', object]); if (blob.status !== 0) throw new Error('Cannot inspect historical blob.');
+        records.push({ path, bytes: blob.stdout });
+      }
+    }
+  }
+  const failures = records.flatMap(record => inspectRecord(record.path, record.bytes).map(issue => `${record.path}: ${issue}`));
+  if (failures.length) throw new Error(`Release scan failed:\n${[...new Set(failures)].join('\n')}`);
+  console.log(`Release scan passed: ${new Set(records.filter(record => !record.path.startsWith('[commit metadata')).map(record => record.path)).size} paths; worktree, index, all commit trees and commit metadata; no values printed.`);
+}
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await checkRelease();

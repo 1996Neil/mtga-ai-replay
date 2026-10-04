@@ -1,0 +1,83 @@
+{
+  "upstream_repository": "https://github.com/m1kk3l/mtg-replay-viewer",
+  "upstream_commit": "472969b805c1e62e17797c7cdac7f69f3670597c",
+  "license_status": "No declared license; private local copying was authorized, redistribution permission unverified.",
+  "files": [
+    {
+      "path": "viewer/src/components/GameBoard.tsx",
+      "sha256": "5cab1d4bc9200172b9439ede1c2c776e3472411e438541d480e37cc9408d1f4e"
+    },
+    {
+      "path": "viewer/src/components/BattlefieldZone.tsx",
+      "sha256": "6765af1c705bd1838216dcd4a38006072f3584e642c0b68dce397536e722aae7"
+    },
+    {
+      "path": "viewer/src/components/HandZone.tsx",
+      "sha256": "463f3775e0fcd49a79d6fa41e6409413b2893316d7d2de039625edff4d171b70"
+    },
+    {
+      "path": "viewer/src/components/GraveyardZone.tsx",
+      "sha256": "9d31e76ddcedd0131abd89941b57583a22de9884beef39fe72aa4fd6642cceb0"
+    },
+    {
+      "path": "viewer/src/components/StackZone.tsx",
+      "sha256": "6db342dc142ccee5bf5e9d017f3713d2e85f403f7c9cc74a5e76ea0c371ca1df"
+    },
+    {
+      "path": "viewer/src/components/PlayerInfo.tsx",
+      "sha256": "6917bdf452752741b4269a9da50b1580aba521f624ead8a61e6fa689ab8c4700"
+    },
+    {
+      "path": "viewer/src/components/ReplayControls.tsx",
+      "sha256": "fece46f1a03d985549cc2f176d58266867d835a3f249920f6086f37876472c65"
+    },
+    {
+      "path": "viewer/src/components/TurnSlider.tsx",
+      "sha256": "bf83d947971b4b3a70ca7c760242428d358a36ba8f8e1517892454eef3726725"
+    },
+    {
+      "path": "viewer/src/components/PhaseIndicator.tsx",
+      "sha256": "5358a1384fe44b4e5acbde192b1d29d43f829a48b6f7eb4ae5cae92891b1e7c7"
+    },
+    {
+      "path": "viewer/src/components/CardImage.tsx",
+      "sha256": "5123b24e844d30dd3b26d8a9d9ac7d310b51cbf311872463318b770efb4a33ff"
+    },
+    {
+      "path": "viewer/src/components/GameLog.tsx",
+      "sha256": "91aaa4bf360af89e1f164335b371e93873847b47f04d221fd853c77b895e04c3"
+    },
+    {
+      "path": "viewer/src/store/replayStore.ts",
+      "sha256": "95013e15bf6dbc940865af8cf1b0bc9031c06b39aa01e9525b424395b11348f9"
+    },
+    {
+      "path": "viewer/src/store/cardCacheStore.ts",
+      "sha256": "41bcdde7c5a535c4c220df4fb7dc94eebb9838b1e0b45de10f9ec68aab1d92ae"
+    },
+    {
+      "path": "viewer/src/store/hoverStore.ts",
+      "sha256": "a626472ca6de5ace039df8d76d246538a6698d6e8e5d29c286346a83d3f9ecbe"
+    },
+    {
+      "path": "viewer/src/hooks/useReplayEngine.ts",
+      "sha256": "e08e1cb4438c65b65fa6f7dd3f5dcb6041f7cc7eabd23b5fa2a4a213cdcc762c"
+    },
+    {
+      "path": "viewer/src/hooks/useElementSize.ts",
+      "sha256": "6342611886afb2a7c3de814e3d5adffce7afe458e26dccc5078f0df1e1767946"
+    },
+    {
+      "path": "viewer/src/hooks/useCardImage.ts",
+      "sha256": "ab0aedf2b9faf127d349c95de3056ec093154d2bd3bc457e6e0b84f828a1e986"
+    },
+    {
+      "path": "viewer/src/types/game.ts",
+      "sha256": "29650286694847450a9cb4bbfbff13409d4207c7a9da0e0ec8ab2004014da13a"
+    },
+    {
+      "path": "viewer/src/index.css",
+      "sha256": "5377f9810c08a81355962f614f13eb3014d8d73e5c533855b1cb27054c9dd40a"
+    }
+  ]
+}

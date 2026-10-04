@@ -1,0 +1,88 @@
+{
+  "recorded_at_utc": "2026-10-04T16:41:38.834480+00:00",
+  "scope": "Owned safe source only; full standalone Viewer is blocked by upstream permission.",
+  "platform": "Darwin arm64",
+  "node": "24.19.0",
+  "npm_install": {
+    "root_ci_ignore_scripts": true,
+    "viewer_ci_ignore_scripts": true,
+    "dependency_versions_changed": false
+  },
+  "checks": {
+    "portable_full": {
+      "passed": 267,
+      "skipped_private_corpus": 8,
+      "total": 275,
+      "command": "npm test"
+    },
+    "portable_coach": {
+      "passed": 90,
+      "skipped_private_corpus": 8,
+      "total": 98,
+      "command": "npm run coach:test"
+    },
+    "portable_viewer": {
+      "passed": 43,
+      "command": "npm run viewer:test",
+      "two_store_dependent_test_files_excluded": true
+    },
+    "synthetic_cloud_and_release_policy": {
+      "passed": 5,
+      "command": "npm run test:cloud"
+    },
+    "local_private_corpus_coach": {
+      "passed": 98,
+      "command": "Explicit existing local corpus and heldout inventory; node scripts/test.mjs --coach",
+      "data_not_uploaded": true
+    },
+    "local_authorized_viewer": {
+      "passed": 55,
+      "command": "npm run viewer:test:full",
+      "19_materialized_files_not_uploaded": true
+    },
+    "local_materialized_viewer_build": {
+      "passed": true,
+      "command": "npm run viewer:build"
+    },
+    "viewer_build_without_restricted_files": {
+      "passed": false,
+      "result": "TypeScript reports missing withheld components/stores/types."
+    },
+    "independent_review": {
+      "blocking_issues": 0,
+      "remaining_P2": 0,
+      "restricted_upload_scope_disclosed": true
+    }
+  },
+  "not_verified": [
+    "Fresh Linux dependency install and test run",
+    "Full Viewer build on a fresh cloud clone",
+    "Fresh SIWC or DeepSeek account catalogs",
+    "Real model/TTS requests, strategy quality, acoustic cancellation",
+    "New actual match active coaching",
+    "Saved NeilCloud repository access and configuration"
+  ],
+  "exclusions": {
+    "restricted_viewer_files": 19,
+    "unverified_icon": true,
+    "private_history_and_account_files": true,
+    "personal_archive_paths_in_windows_removed": 23
+  },
+  "external_actions": {
+    "new_GPT_TTS_calls": 0,
+    "new_auth_or_permissions": false,
+    "game_control_or_memory_reads": false,
+    "deployment": false,
+    "source_original_modified": false
+  },
+  "local_evidence_sha256": {
+    "final-full-test.log": "d7d0d6754b1ed25a253f7fbd4667da267401c2513fe641df0be101694f83849f",
+    "coach-test.log": "19386233086acac1e56d40470e292e64789e9902aaf5ecc5f9e5057e3f1c4cf9",
+    "coach-full-local-test.log": "6fc47c1e4d14a9a0e2c1444f789c77294a0644f92fe32da9b8b04f60f5b656d3",
+    "viewer-portable-test.log": "6cf3bc367730f8f9e2b528bc3c7b1d4339cfb00f2bb0ee018bf2f2ba50b8a0ec",
+    "viewer-full-local-test.log": "e4b854d274750ab5ce6ca8ddd32fa94660de83ed401c7996af52bf8a14282505",
+    "viewer-local-build.log": "8a326d0f2328032162788559a26375d44e1b9235c7bd00221e8c2ffdcae43fba",
+    "fresh-viewer-build.log": "33b3a405300cd8abefbd6cca1a99a17ceca14f39ad1817b10a00b1b4def0edcb",
+    "cloud-test.log": "413ba19d3116f64439f822b6817d58a42c6a8b39d7fd8352f22c97f665c4ceb9"
+  }
+}
