@@ -14,6 +14,7 @@ import { CoachController } from '../src/live-coach/controller.mjs';
 import { startReplayServer } from '../src/server.mjs';
 import { defaultDataDir } from '../src/history.mjs';
 import { CoachSetup } from '../src/live-coach/setup.mjs';
+import { attachStandbyGuard } from '../src/live-coach/standby.mjs';
 import { evaluateModelCases } from '../src/live-coach/evaluation.mjs';
 
 const run = promisify(execFile);
@@ -31,6 +32,7 @@ const help = `Usage: mtga-gpt-replay live-coach [serve | status | login | voices
   --script PATH      voice-compare: JSON array of 12 {id,text,emotion} scripts
   evaluate            Same 8 sanitized real windows; 5 model requests, no TTS
   --output PATH      Private test records/audio directory (default: config-dir/runtime)
+  --standby          Replay serve: no startup cloud calls; existing UI actions and valid grants enable generation
   --offline          No model/TTS generation; setup catalog queries require a click
   --no-open          Do not open browser
   --port N           Loopback Viewer port (default: random)
@@ -41,12 +43,14 @@ export async function main(args = process.argv.slice(2)) {
   const { values, positionals } = parseArgs({ args, allowPositionals: true, options: {
     enable: { type: 'boolean' }, help: { type: 'boolean' }, 'repo-dir': { type: 'string' }, 'config-dir': { type: 'string' },
     match: { type: 'string' }, mode: { type: 'string' }, log: { type: 'string' }, provider: { type: 'string' }, 'model-provider': { type: 'string' }, model: { type: 'string' },
-    script: { type: 'string' }, output: { type: 'string' }, offline: { type: 'boolean' }, 'no-open': { type: 'boolean' }, port: { type: 'string' }
+    script: { type: 'string' }, output: { type: 'string' }, standby: { type: 'boolean' }, offline: { type: 'boolean' }, 'no-open': { type: 'boolean' }, port: { type: 'string' },
+    'data-dir': { type: 'string' }, 'viewer-dir': { type: 'string' }
   } });
   if (values.help) { console.log(help); return; }
   if (!values.enable && process.env.MTGA_LIVE_COACH !== '1') throw new Error('Live Coach 功能开关关闭。使用 --enable 单独启用；旧回放功能保持原行为。');
   const command = positionals[0] ?? 'serve';
   if (positionals.length > 1 || !['serve','status','login','voices','voice-compare','models','evaluate'].includes(command)) throw new Error(help);
+  if (values.standby && (command !== 'serve' || values.offline || (values.mode ?? 'replay') !== 'replay')) throw new Error('--standby is only for replay serve and cannot be combined with offline/live modes.');
   const configDir = resolve(values['config-dir'] ?? coachConfigDir()), config = await readCoachConfig(configDir, { provider: values['model-provider'], model: values.model });
   const budget = new BudgetLedger({ filePath: join(configDir, 'usage.json'), grant: config.grant });
   const auth = new SiwcAuth({ configDir, grant: config.grant });
@@ -106,8 +110,8 @@ export async function main(args = process.argv.slice(2)) {
     console.log(JSON.stringify({ tested_windows: report.results.length, model_requests: report.model_requests, model_usage: report.model_usage, strategy_independently_adjudicated: false }, null, 2)); return;
   }
   if (!['replay','live'].includes(values.mode??'replay')) throw new Error('mode must be replay or explicitly authorized live practice.');
-  let tacticalModel = null, modelStatus = 'offline: cloud generation disabled';
-  if (!values.offline) {
+  let tacticalModel = null, modelStatus = values.standby ? 'standby: use explicit UI setup and session actions' : 'offline: cloud generation disabled';
+  if (!values.offline && !values.standby) {
     try {
       const catalog = await model.availableModels();
       if (!catalog.some(row => row.slug === config.modelId)) throw new Error('所选型号不在实际账户目录；模型通道暂停，未切换其他型号。');
@@ -124,13 +128,14 @@ export async function main(args = process.argv.slice(2)) {
   const runtime = new LiveCoachRuntime({ repoDir, controller, sourceMode: values.mode??'replay', logPath:values.log,
     livePractice:config.livePractice, names, rules: source.cards });
   runtime.setup = await new CoachSetup({ directory: configDir, auth, model, budget, controller, offline: Boolean(values.offline), modelFactory: latest => createModelProvider(latest, { auth, budget }), modelSelection: { provider: values['model-provider'], model: values.model } }).initialize();
+  if (values.standby) attachStandbyGuard(runtime);
   runtime.sources.set(source.summary.match_id, Promise.resolve(source));
   // UI receives the immutable recorded replay; only its currently selected LiveState enters inference.
   const replayProvider = await runtime.replayProvider();
   // Reuse the existing public card cache; replay reads still use the same verified source as the coach.
   // Restore the explicitly requested toolbar action using the existing canonical
   // replay sync. Coaching stays pinned to its separate immutable source.
-  const server=await startReplayServer({port:Number(values.port??0),dataDir:defaultDataDir(),writeInfo:false,liveCoach:runtime,replayProvider,
+  const server=await startReplayServer({port:Number(values.port??0),dataDir:resolve(values['data-dir'] ?? defaultDataDir()), ...(values['viewer-dir'] ? { viewerDir: resolve(values['viewer-dir']) } : {}),writeInfo:false,liveCoach:runtime,replayProvider,
     enableReplaySync:true});
   console.log(`Live Coach 回放：${server.url}?match=${source.summary.match_id}\n语音：${values.offline?'离线验证，真实语音未测':mini&&config.minimaxVoiceId?'MiniMax已配置，首次实际调用仍需核验':'真实语音账户/音色缺失'}\n计划额度与费用：${JSON.stringify(budget.summary())}`);
   if(!values['no-open'])await run('/usr/bin/open',[`${server.url}?match=${source.summary.match_id}`]);

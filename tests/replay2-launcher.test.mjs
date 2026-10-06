@@ -21,9 +21,9 @@ import { appendFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 const argv=process.argv.slice(2), at=flag=>argv[argv.indexOf(flag)+1];
 if (argv.includes('--fail')) process.exit(17);
-if (!argv.includes('--offline') || !argv.includes('--no-open') || at('--mode') !== 'replay') throw Error('unsafe launch');
+if (!argv.includes('--standby') || !argv.includes('--no-open') || at('--mode') !== 'replay') throw Error('unsafe launch');
 appendFileSync(join(process.cwd(),'starts.txt'),JSON.stringify(argv)+'\\n');
-let enabled=argv.includes('--active'),muted=!enabled;
+let enabled=argv.includes('--active'),muted=!enabled,statusReads=0;
 const port=Number(at('--port'));
 const s=http.createServer((req,res)=>{
  res.setHeader('Content-Type','application/json');
@@ -31,7 +31,7 @@ const s=http.createServer((req,res)=>{
   res.write('{'); const timer=setInterval(()=>res.write(' '),100); res.on('close',()=>clearInterval(timer)); return;
  }
  if(req.url==='/api/health') res.end(JSON.stringify({service:'mtga-gpt-replay',port,pid:process.pid,capabilities:['live-coach']}));
- else if(req.url==='/api/live-coach/status') res.end(JSON.stringify({enabled,muted,source_mode:'replay'}));
+ else if(req.url==='/api/live-coach/status') { statusReads++; if(argv.includes('--late-active') && statusReads===2){enabled=true;muted=false;} res.end(JSON.stringify({enabled,muted,source_mode:'replay',standby_guard_version:argv.includes('--legacy')?null:'replay-standby-v1'})); }
  else if(req.url==='/api/live-coach/stop' && req.method==='POST' && req.headers.origin==='http://127.0.0.1:'+port && req.headers['x-mtga-coach-action']==='session') {enabled=false;muted=true;res.end('{}');}
  else {res.statusCode=403;res.end('{}');}
 });
@@ -88,7 +88,7 @@ test('multiple independent launchers recover one stale lock without deleting a n
 test('reuse external service, reset active coach, and stop without killing foreign owner', async t => {
   const { launcher, root, port } = await setup(t);
   const cli = join(root, 'bin/mtga-gpt-replay.mjs');
-  const child = spawn(process.execPath, [cli, 'live-coach', 'serve', '--offline', '--no-open', '--mode', 'replay', '--port', String(port), '--active'], { cwd: root, stdio: 'ignore' });
+  const child = spawn(process.execPath, [cli, 'live-coach', 'serve', '--standby', '--no-open', '--mode', 'replay', '--port', String(port), '--active'], { cwd: root, stdio: 'ignore' });
   t.after(async () => { child.kill('SIGTERM'); await new Promise(done => child.exitCode !== null ? done() : child.once('exit', done)); });
   let ready = false;
   for (let i = 0; i < 40 && !ready; i++) { try { ready = Boolean(await requestJSON(`http://127.0.0.1:${port}/api/health`)); } catch { await pause(50); } }
@@ -99,6 +99,21 @@ test('reuse external service, reset active coach, and stop without killing forei
   assert.equal(state.enabled, false); assert.equal(state.muted, true);
   assert.equal((await launcher.stop()).stopped, false);
   assert.equal((await launcher.status()).running, true);
+});
+for (const oldMode of ['ordinary-serve', 'offline']) test(`legacy ${oldMode} stays alive and fails clearly without opening or claiming standby`,async t=>{
+  const {launcher,root,port,opened}=await setup(t);
+  const child=spawn(process.execPath,[join(root,'bin/mtga-gpt-replay.mjs'),'live-coach','serve','--standby','--no-open','--mode','replay','--port',String(port),'--legacy','--active',...(oldMode==='offline'?['--offline']:[])],{cwd:root,stdio:'ignore'});
+  t.after(async()=>{if(child.exitCode===null)child.kill('SIGTERM');await new Promise(done=>child.exitCode!==null||child.signalCode!==null?done():child.once('exit',done));});
+  let ready=false;for(let i=0;i<40&&!ready;i++){try{ready=Boolean(await requestJSON(`http://127.0.0.1:${port}/api/health`));}catch{await pause(50);}}
+  assert.equal(ready,true);await assert.rejects(launcher.start(),/旧服务.*新待机保护尚未生效.*保留旧进程.*Ctrl\+C/);
+  assert.equal(opened.length,0);assert.equal(child.exitCode,null);const state=await launcher.status();assert.equal(state.running,true);assert.equal(state.enabled,false);assert.equal(state.muted,true);assert.equal(state.standbyGuardVersion,null);
+});
+test('latest status becoming active cannot be reported as disabled standby or open a page',async t=>{
+  const {launcher,root,port,opened}=await setup(t);
+  const child=spawn(process.execPath,[join(root,'bin/mtga-gpt-replay.mjs'),'live-coach','serve','--standby','--no-open','--mode','replay','--port',String(port),'--late-active'],{cwd:root,stdio:'ignore'});
+  t.after(async()=>{if(child.exitCode===null)child.kill('SIGTERM');await new Promise(done=>child.exitCode!==null||child.signalCode!==null?done():child.once('exit',done));});
+  let ready=false;for(let i=0;i<40&&!ready;i++){try{ready=Boolean(await requestJSON(`http://127.0.0.1:${port}/api/health`));}catch{await pause(50);}}
+  assert.equal(ready,true);await assert.rejects(launcher.start(),/服务状态已改变.*未打开页面或报告待机成功/);assert.equal(opened.length,0);assert.equal(child.exitCode,null);
 });
 
 test('occupied port fails clearly without opening or terminating server', async t => {

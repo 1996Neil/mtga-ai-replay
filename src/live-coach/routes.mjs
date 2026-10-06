@@ -40,13 +40,15 @@ export function createCoachRoutes(runtime) {
             json(response, 200, await runtime.setup.save(input)); return true;
           case 'setup/voices':
             if (!runtime.setup) throw new Error('setup_unavailable');
+            runtime.standbyGuard?.metadata('voice', input.provider);
             json(response, 200, await runtime.setup.availableVoices(input.provider)); return true;
           case 'setup/models':
             if (!runtime.setup) throw new Error('setup_unavailable');
+            runtime.standbyGuard?.metadata('model');
             json(response, 200, await runtime.setup.refreshModels()); return true;
-          case 'start': await runtime.start(); break;
+          case 'start': runtime.standbyGuard?.ready(); await runtime.start(); break;
           case 'mute': runtime.controller.mute(); break;
-          case 'unmute': runtime.controller.unmute(); break;
+          case 'unmute': runtime.standbyGuard?.ready(); runtime.controller.unmute(); break;
           case 'stop': runtime.setup?.cancelMetadata(); await runtime.stop(); break;
           case 'invalidate':
             if (!Number.isSafeInteger(input.view_seq) || input.view_seq < 1) throw new Error('invalid_view_sequence');

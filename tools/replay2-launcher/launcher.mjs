@@ -169,7 +169,7 @@ export function createLauncher({ projectRoot, nodePath = process.execPath, port 
         await log.chmod(0o600);
         let child;
         try {
-          child = spawn(nodePath, [cli, 'live-coach', 'serve', '--enable', '--offline', '--mode', 'replay',
+          child = spawn(nodePath, [cli, 'live-coach', 'serve', '--enable', '--standby', '--mode', 'replay',
             '--no-open', '--port', String(port), ...extraArgs], { cwd: root, detached: true,
             stdio: ['ignore', log.fd, log.fd], env: { ...process.env, MTGA_LIVE_COACH: '1' } });
         } finally { await log.close(); }
@@ -188,16 +188,27 @@ export function createLauncher({ projectRoot, nodePath = process.execPath, port 
             if (!service) await pause(100);
           }
           await standby(service);
+          await requireStandbyGuard();
           await writeFile(recordPath, JSON.stringify(service), { mode: 0o600 });
         } catch (e) {
           // Only this invocation's child is stopped, gracefully; no unrelated process or SIGKILL.
           if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
           throw e;
         }
-      } else await standby(service);
+      } else { await standby(service); await requireStandbyGuard(); }
       if (openPage) await openBrowser(url);
-      return { ...service, reused, url, enabled: false, muted: true };
+      return { ...service, reused, url, enabled: false, muted: true, standbyGuardVersion: 'replay-standby-v1' };
     });
+  }
+
+  async function requireStandbyGuard() {
+    const status = await requestJSON(`${url}/api/live-coach/status`);
+    if (status.standby_guard_version !== 'replay-standby-v1') {
+      throw new Error('检测到旧服务：教练已关闭及静音，但新待机保护尚未生效。保留旧进程，未打开页面；请在原终端按 Ctrl+C 正常退出后，再双击 Replay 2.0。旧 --offline 服务也需要手动重开。');
+    }
+    if (status.source_mode !== 'replay' || status.enabled !== false || status.muted !== true) {
+      throw new Error('确认待机能力时服务状态已改变；未打开页面或报告待机成功。请先在现有页面退出教练，再重开入口。');
+    }
   }
 
   async function stop() {
@@ -231,6 +242,7 @@ export function createLauncher({ projectRoot, nodePath = process.execPath, port 
     const service = await probe();
     if (!service) return { running: false };
     const state = await requestJSON(`${url}/api/live-coach/status`);
-    return { running: true, ...service, enabled: state.enabled, muted: state.muted, source_mode: state.source_mode };
+    return { running: true, ...service, enabled: state.enabled, muted: state.muted, source_mode: state.source_mode,
+      standbyGuardVersion: state.standby_guard_version ?? null };
   } };
 }

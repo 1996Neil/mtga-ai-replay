@@ -15,7 +15,7 @@ export class CoachController extends EventEmitter {
     this.spoken = new Set(); this.analyzed = new Set(); this.records = []; this.error = null; this.epoch = 0;
   }
   snapshot() {
-    return { enabled: this.enabled, muted: this.muted, generation: this.epoch,
+    return { standby_guard_version: this.standbyGuardVersion ?? null, enabled: this.enabled, muted: this.muted, generation: this.epoch,
       source_mode: this.state?.source_mode ?? null, state_id: this.state?.state_id ?? null,
       match_id: this.state?.match_id ?? null, phase: this.state?.phase ?? null,
       advice: this.current?.advice ?? null, status: this.current?.phase ?? 'quiet',
@@ -78,6 +78,7 @@ export class CoachController extends EventEmitter {
       phase: 'selecting', audio: null, generation: ++this.epoch, record };
     this.error = null; this.current = current; this.records.push(record); if (this.records.length > 200) this.records.shift();
     try {
+      this.beforeGenerate?.(state, options);
       let candidate = options[0];
       if (options.length > 1 && this.model) {
         const selected = await this.model.select({ state, candidates: options, signal: controller.signal });
@@ -105,6 +106,7 @@ export class CoachController extends EventEmitter {
       }
       const chunks = []; let bytes = 0;
       const text = [advice.speech_core, advice.speech_followup].filter(Boolean).join(' ');
+      this.beforeVoice?.(text);
       for await (const chunk of this.voice.synthesize(text, { voiceId: this.voiceId,
         emotion: advice.emotion, intensity: advice.intensity, signal: controller.signal })) {
         if (!this.valid(current)) { if (this.current === current) this.cancel('tts_expired'); return; }
