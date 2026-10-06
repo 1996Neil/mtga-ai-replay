@@ -13,25 +13,41 @@ const alive = pid => { try { process.kill(pid, 0); return true; } catch (e) { re
 
 export function requestJSON(url, method = 'GET') {
   return new Promise((done, reject) => {
-    const req = http.request(url, { method, headers: method === 'POST' ? {
+    let req, deadline, settled = false;
+    const settle = (error, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
+      req?.setTimeout(0);
+      if (error) reject(error); else done(value);
+    };
+    const fail = error => { settle(error); req.destroy(error); };
+    req = http.request(url, { method, headers: method === 'POST' ? {
       Origin: new URL(url).origin, 'x-mtga-coach-action': 'session', 'Content-Type': 'application/json'
     } : {} }, response => {
       let text = '';
       response.setEncoding('utf8');
       response.on('data', chunk => {
         text += chunk;
-        if (text.length > 131072) req.destroy(new Error('本地服务响应过大。'));
+        if (text.length > 131072) fail(new Error('本地服务响应过大。'));
       });
       response.on('end', () => {
         try {
           if (response.statusCode !== 200) throw new Error(`本地服务返回 HTTP ${response.statusCode}。`);
-          done(JSON.parse(text));
-        } catch (e) { reject(e); }
+          settle(null, JSON.parse(text));
+        } catch (e) { settle(e); }
       });
-      response.on('error', reject);
+      response.on('aborted', () => settle(Object.assign(new Error('本地服务响应提前中断。'), { code: 'ECONNRESET' })));
+      response.on('error', settle);
     });
-    req.setTimeout(1500, () => req.destroy(new Error('本地服务响应超时。')));
-    req.on('error', reject);
+    // Socket idle timeouts alone do not bound a response that keeps trickling data.
+    deadline = setTimeout(() => {
+      const error = new Error('本地服务请求超过总时限 1500ms。');
+      error.code = 'LOCAL_REQUEST_DEADLINE';
+      fail(error);
+    }, 1500);
+    req.setTimeout(1500, () => fail(new Error('本地服务响应超时。')));
+    req.on('error', settle);
     req.end(method === 'POST' ? '{}' : undefined);
   });
 }

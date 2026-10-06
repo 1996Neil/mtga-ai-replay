@@ -17,7 +17,7 @@ async function freePort() {
   return port;
 }
 const fixture = `import http from 'node:http';
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 const argv=process.argv.slice(2), at=flag=>argv[argv.indexOf(flag)+1];
 if (argv.includes('--fail')) process.exit(17);
@@ -27,6 +27,9 @@ let enabled=argv.includes('--active'),muted=!enabled;
 const port=Number(at('--port'));
 const s=http.createServer((req,res)=>{
  res.setHeader('Content-Type','application/json');
+ if(req.url==='/api/live-coach/status' && existsSync(join(process.cwd(),'trickle-status'))) {
+  res.write('{'); const timer=setInterval(()=>res.write(' '),100); res.on('close',()=>clearInterval(timer)); return;
+ }
  if(req.url==='/api/health') res.end(JSON.stringify({service:'mtga-gpt-replay',port,pid:process.pid,capabilities:['live-coach']}));
  else if(req.url==='/api/live-coach/status') res.end(JSON.stringify({enabled,muted,source_mode:'replay'}));
  else if(req.url==='/api/live-coach/stop' && req.method==='POST' && req.headers.origin==='http://127.0.0.1:'+port && req.headers['x-mtga-coach-action']==='session') {enabled=false;muted=true;res.end('{}');}
@@ -159,4 +162,78 @@ test('installer quotes spaces/apostrophes and preserves unrelated desktop entrie
   assert.equal(await readFile(join(desktop, 'Replay 2.0.command'), 'utf8'), before);
   assert.equal(await readFile(join(desktop, '停止 Replay 2.0.command'), 'utf8'), 'unrelated user file');
   assert.ok(commandText('/node', cli, 'start').includes('read -r response'));
+});
+
+
+async function trickleServer(t, port = 0) {
+  let chunks = 0;
+  const server = http.createServer((_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.write('{"never_ends":"');
+    const timer = setInterval(() => { chunks++; res.write('x'); }, 100);
+    res.on('close', () => clearInterval(timer));
+  });
+  await new Promise(done => server.listen(port, '127.0.0.1', done));
+  t.after(async () => { server.closeAllConnections(); await new Promise(done => server.close(done)); });
+  return { url: `http://127.0.0.1:${server.address().port}`, server, chunks: () => chunks };
+}
+
+test('continuous small chunks cannot extend the absolute request deadline', async t => {
+  const running = await trickleServer(t);
+  const before = Date.now();
+  await assert.rejects(requestJSON(`${running.url}/api/health`), { code: 'LOCAL_REQUEST_DEADLINE' });
+  assert.ok(Date.now() - before >= 1400);
+  assert.ok(Date.now() - before < 3000);
+  assert.ok(running.chunks() >= 8);
+  assert.ok(running.chunks() < 100);
+});
+
+test('startup fails within a request deadline on trickling health, opens nothing and releases lock', async t => {
+  const { launcher, dir, root, port, opened } = await setup(t);
+  await trickleServer(t, port);
+  const before = Date.now();
+  await assert.rejects(launcher.start(), { code: 'LOCAL_REQUEST_DEADLINE' });
+  assert.ok(Date.now() - before < 3000);
+  assert.equal(opened.length, 0);
+  await assert.rejects(access(join(root, 'starts.txt')));
+  await assert.rejects(access(join(dir, 'state/launcher.lock')));
+});
+
+test('stop fails within a request deadline on trickling status and preserves the running process', async t => {
+  const { launcher, dir, root } = await setup(t);
+  const first = await launcher.start({ openPage: false });
+  await writeFile(join(root, 'trickle-status'), '');
+  try {
+    const before = Date.now();
+    await assert.rejects(launcher.stop(), { code: 'LOCAL_REQUEST_DEADLINE' });
+    assert.ok(Date.now() - before < 3000);
+    assert.doesNotThrow(() => process.kill(first.pid, 0));
+    await assert.rejects(access(join(dir, 'state/launcher.lock')));
+  } finally { await rm(join(root, 'trickle-status'), { force: true }); }
+  assert.equal((await launcher.stop()).stopped, true);
+});
+
+test('completed JSON and parse errors settle normally after deadline support', async t => {
+  const server = http.createServer((req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    res.end(req.url === '/valid' ? '{"ok":true}' : '{');
+  });
+  await new Promise(done => server.listen(0, '127.0.0.1', done));
+  t.after(async () => { server.closeAllConnections(); await new Promise(done => server.close(done)); });
+  const url = `http://127.0.0.1:${server.address().port}`;
+  assert.deepEqual(await requestJSON(`${url}/valid`), { ok: true });
+  await assert.rejects(requestJSON(`${url}/invalid`), SyntaxError);
+});
+
+
+test('partial JSON response followed by disconnect preserves ECONNRESET', async t => {
+  const server = http.createServer((_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.write('{"partial":');
+    const timer = setTimeout(() => res.destroy(), 50);
+    res.on('close', () => clearTimeout(timer));
+  });
+  await new Promise(done => server.listen(0, '127.0.0.1', done));
+  t.after(async () => { server.closeAllConnections(); await new Promise(done => server.close(done)); });
+  await assert.rejects(requestJSON(`http://127.0.0.1:${server.address().port}/partial`), { code: 'ECONNRESET' });
 });
