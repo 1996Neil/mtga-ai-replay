@@ -1,0 +1,94 @@
+{
+  "scope": "Single-pass actual upload from equal initial 47-match history; live public metadata differed, strict equal-output comparison failed",
+  "original_ms": 440000.836625,
+  "fixed_ms": 341980.075833,
+  "observed_reduction_percent": 22.277403275835184,
+  "strict_equal_output": false,
+  "content_hash_differing_matches": 4,
+  "matches_each": 62,
+  "states_each": 22680,
+  "actions_each": 14335,
+  "fixed_max_event_loop_delay_ms": 8170.504191,
+  "phases": {
+    "setup": {
+      "original_ms": 0.7034169999999449,
+      "fixed_ms": 0.29249999999956344
+    },
+    "scanning": {
+      "original_ms": 573.1967500000001,
+      "fixed_ms": 83.99716700000135
+    },
+    "comparing": {
+      "original_ms": 123.25879099999997,
+      "fixed_ms": 72.56341600000087
+    },
+    "remote": {
+      "original_ms": 20497.670333000016,
+      "fixed_ms": 21962.12883500004
+    },
+    "security": {
+      "original_ms": 218748.68191799993,
+      "fixed_ms": 153401.45349899994
+    },
+    "generating": {
+      "original_ms": 46293.71212500002,
+      "fixed_ms": 42810.88124999995
+    },
+    "cards": {
+      "original_ms": 137494.8439580001,
+      "fixed_ms": 108560.8725410001
+    },
+    "publishing": {
+      "original_ms": 2071.3251250000903,
+      "fixed_ms": 2147.6617090000072
+    },
+    "uploading": {
+      "original_ms": 14197.44420800003,
+      "fixed_ms": 12940.224915999977
+    }
+  },
+  "command_counts": {
+    "original": {
+      "gh:repo": 3,
+      "git:remote": 6,
+      "git:branch": 2,
+      "git:diff": 52,
+      "git:ls-files": 22,
+      "git:rev-list": 26,
+      "git:cat-file": 648,
+      "git:ls-tree": 1155,
+      "git:status": 4,
+      "git:fetch": 2,
+      "git:show-ref": 2,
+      "git:merge": 2,
+      "git:for-each-ref": 3,
+      "git:rev-parse": 2,
+      "git:show": 1,
+      "git:add": 15,
+      "git:commit": 15,
+      "git:diff-tree": 15,
+      "git:push": 1
+    },
+    "fixed": {
+      "gh:repo": 3,
+      "git:remote": 6,
+      "git:branch": 2,
+      "git:diff": 52,
+      "git:ls-files": 22,
+      "git:rev-list": 26,
+      "git:cat-file": 824,
+      "git:status": 4,
+      "git:fetch": 2,
+      "git:show-ref": 2,
+      "git:merge": 2,
+      "git:for-each-ref": 3,
+      "git:rev-parse": 2,
+      "git:ls-tree": 1,
+      "git:show": 1,
+      "git:add": 15,
+      "git:commit": 15,
+      "git:diff-tree": 15,
+      "git:push": 1
+    }
+  }
+}
