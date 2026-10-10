@@ -40,7 +40,7 @@ Dependency installation needs the npm registry or a populated cache. Tests use
 only mocked model/TTS responses, synthetic logs, temporary local repositories,
 and explicitly deidentified windows. No real GPT/TTS requests are made. `npm test`
 retains but explicitly skips eight tests requiring the private locked data
-history; `viewer:test` excludes two files importing the withheld Viewer stores.
+history; `viewer:test` excludes three files importing the withheld Viewer stores.
 No missing data is replaced by fabricated passing results. Full reproduction
 and opt-in commands are in [DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
@@ -73,3 +73,7 @@ active coaching remain unverified.
 No raw Player.log, personal SQLite history, credentials, cookies, tokens, account
 configuration, audio, card collection/cache, acceptance logs or upstream artwork
 is included. Third-party notices and dependency locks are preserved.
+
+## Replay 2.0 task and collection review
+
+The review branch adds server-owned task reconnection, completion notification attempts and an explicit collection update button. See [review evidence and limits](docs/REPLAY2_SYNC_REVIEW.md) and [Pro review prompt](docs/PRO_REVIEW_PROMPT.md). No real upload performance improvement is claimed. Restricted Viewer files remain excluded; their current local hashes are updated for authorized materialization.

@@ -9,18 +9,21 @@ const fingerprint = value => createHash('sha256').update(JSON.stringify(value)).
 export class CoachController extends EventEmitter {
   constructor({ voice, model = null, ledger = null, voiceId, now = () => performance.now(),
     candidates = generateCandidates, verify = verifyCandidate, makeAdvice = candidateToAdvice,
-    modelStatus = null, maxAudioBytes = 2 * 1024 * 1024 } = {}) {
-    super(); Object.assign(this, { voice, model, ledger, voiceId, now, candidates, verify, makeAdvice, modelStatus, maxAudioBytes });
+    modelStatus = null, outputMode = 'voice', maxAudioBytes = 2 * 1024 * 1024 } = {}) {
+    super();
+    if (!['voice', 'text'].includes(outputMode)) throw new Error('invalid_coach_output_mode');
+    Object.assign(this, { voice, model, ledger, voiceId, now, candidates, verify, makeAdvice, modelStatus, outputMode, maxAudioBytes });
     this.enabled = false; this.muted = true; this.state = null; this.current = null;
     this.spoken = new Set(); this.analyzed = new Set(); this.records = []; this.error = null; this.epoch = 0;
   }
   snapshot() {
-    return { enabled: this.enabled, muted: this.muted, generation: this.epoch,
+    return { enabled: this.enabled, muted: this.muted, generation: this.epoch, output_mode: this.outputMode,
+      standby_guard_version: this.standbyGuardVersion ?? null,
       source_mode: this.state?.source_mode ?? null, state_id: this.state?.state_id ?? null,
       match_id: this.state?.match_id ?? null, phase: this.state?.phase ?? null,
       advice: this.current?.advice ?? null, status: this.current?.phase ?? 'quiet',
-      error: this.error, voice_ready: Boolean(this.voice && this.voiceId),
-      model: this.modelStatus ?? (this.model ? `${this.model.provider ?? 'configured'} / ${this.model.model ?? 'selected model'}` : 'no model channel'),
+      error: this.error, voice_ready: this.outputMode === 'voice' && Boolean(this.voice && this.voiceId),
+      model: this.outputMode === 'text' ? '本地规则文字提示（无外部模型）' : this.modelStatus ?? (this.model ? `${this.model.provider ?? 'configured'} / ${this.model.model ?? 'selected model'}` : 'no model channel'),
       model_usage: this.modelLedger?.summary?.() ?? null,
       usage: this.ledger?.summary?.() ?? null,
       timing: this.records.slice(-30) };
@@ -56,9 +59,15 @@ export class CoachController extends EventEmitter {
     if (!this.enabled || this.muted) return;
     const options = this.candidates(state).filter(candidate => this.verify(candidate, state).valid)
       .sort((a,b) => (b.score ?? 0) - (a.score ?? 0));
-    const fresh = options.filter(candidate => !this.spoken.has(this.key(candidate, state)));
+    let fresh = options.filter(candidate => !this.spoken.has(this.key(candidate, state)));
     if (this.current && this.current.candidate?.kind === 'explanation' && fresh.some(candidate =>
       candidate.kind === 'tactic' && (candidate.score ?? 0) > (this.current.candidate.score ?? 0))) this.cancel('higher_value_current_tactic');
+    // Text has no playback-ended callback. Its displayed lease remains revocable,
+    // but a new certified opportunity can replace it without waiting for audio.
+    if (this.outputMode === 'text' && this.current?.phase === 'text_ready') {
+      const arrived = fresh.filter(candidate => !this.current.optionKeys.has(this.key(candidate, state)));
+      if (arrived.length) { this.cancel('text_replaced'); fresh = arrived; }
+    }
     if (this.current) return;
     if (!fresh.length) return;
     // No unbounded polling: a certified opportunity is the only trigger.
@@ -66,20 +75,22 @@ export class CoachController extends EventEmitter {
     if (this.analyzed.has(analysisKey)) return;
     this.analyzed.add(analysisKey);
     if (this.analyzed.size > 1000) this.analyzed.delete(this.analyzed.values().next().value);
-    void this.generate(state, fresh);
+    void this.generate(state, fresh, options);
   }
   key(candidate, state) { return fingerprint({ session: state.session_id, match: state.match_id, game: state.game_id,
     turn: state.turn, action: candidate.action_id, facts: candidate.immutable_facts, speech: candidate.speech_core }); }
-  async generate(state, options) {
+  async generate(state, options, observedOptions = options) {
     const controller = new AbortController(), record = { state_id: state.state_id, seq: state.seq,
       source_event_time: state.source_event_time ?? null, log_visible_at: state.observed_at_monotonic,
       acoustic_first_sound_at: null, critical_instruction_end_at: null, state_stable_at: this.now(), trigger_at: this.now(), source_mode: state.source_mode };
     const current = { controller, origin: state, options, candidate: null, advice: null,
-      phase: 'selecting', audio: null, generation: ++this.epoch, record };
+      phase: 'selecting', audio: null, generation: ++this.epoch, record,
+      optionKeys: new Set(observedOptions.map(candidate => this.key(candidate, state))) };
     this.error = null; this.current = current; this.records.push(record); if (this.records.length > 200) this.records.shift();
     try {
+      this.beforeGenerate?.(state, options);
       let candidate = options[0];
-      if (options.length > 1 && this.model) {
+      if (this.outputMode !== 'text' && options.length > 1 && this.model) {
         const selected = await this.model.select({ state, candidates: options, signal: controller.signal });
         record.model_completed_at = this.now();
         if (selected.action_id === null) {
@@ -97,7 +108,12 @@ export class CoachController extends EventEmitter {
       current.advice = { ...this.makeAdvice(candidate, this.state), advice_id: randomUUID() };
       const advice = current.advice;
       this.spoken.add(this.key(candidate, state));
-      current.phase = 'synthesizing'; this.publish('advice', { advice, generation: current.generation });
+      current.phase = this.outputMode === 'text' ? 'text_ready' : 'synthesizing';
+      this.publish('advice', { advice, generation: current.generation });
+      if (this.outputMode === 'text') {
+        record.text_completed_at = this.now();
+        this.publish('status', this.snapshot()); return;
+      }
       if (!this.voice || !this.voiceId) {
         current.phase = 'voice_blocked';
         this.error = '真实语音阻塞：未配置已授权的供应商账户与现成音色。字幕不算语音验收。';
@@ -105,6 +121,7 @@ export class CoachController extends EventEmitter {
       }
       const chunks = []; let bytes = 0;
       const text = [advice.speech_core, advice.speech_followup].filter(Boolean).join(' ');
+      this.beforeVoice?.(text);
       for await (const chunk of this.voice.synthesize(text, { voiceId: this.voiceId,
         emotion: advice.emotion, intensity: advice.intensity, signal: controller.signal })) {
         if (!this.valid(current)) { if (this.current === current) this.cancel('tts_expired'); return; }
@@ -127,6 +144,7 @@ export class CoachController extends EventEmitter {
   }
   audio(adviceId) { const current = this.current; return this.valid(current) && current.advice?.advice_id === adviceId ? current.audio : null; }
   acknowledge({ advice_id, generation, event, client_time, error_stage, error_name }) {
+    if (this.outputMode === 'text') return false;
     const current = this.current;
     if (!this.valid(current) || current.advice?.advice_id !== advice_id || current.generation !== generation) return false;
     if (!['first_sound','ended','playback_error','cancelled'].includes(event)) return false;

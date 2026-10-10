@@ -1,6 +1,11 @@
 import { defaultDataDir, listReplays, getReplay } from './history.mjs';
 import { buildCoachCards } from './coach-cards.mjs';
 import { buildCoachBundle } from './coach-bundle.mjs';
+import { discoverCardDatabase } from './cards.mjs';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { createSyncValidationSession } from './sync-security.mjs';
+import { coachInputFingerprint, readSyncCache, writeSyncCache, syncDigest } from './sync-cache.mjs';
 import { CoachSyncError, getCoachHistoryKey, getPublishedCoachIndex, enqueueCoachBundle, syncCoachBundles, syncErrorMessage } from './coach-sync.mjs';
 
 function generationReason(error) {
@@ -10,20 +15,40 @@ function generationReason(error) {
 }
 
 /** The same single-match pipeline for missing archives and selected-match refresh. */
-async function queueReplay(replay, options) {
+async function queueReplay(replay, options, published, receipts) {
   if (!replay?.match?.id || !Number.isFinite(Date.parse(replay.match.started_at))) throw new CoachSyncError('SYNC_REPLAY', 'Archived match has no valid identity or start time.');
   if (!replay.games?.some(game => (game.steps ?? game.replay_steps)?.length)) throw new CoachSyncError('SYNC_REPLAY', 'Archived match has no detailed game steps.');
-  const cards = await buildCoachCards(replay, { dataDir: options.dataDir, cardDb: options.cardDb });
+  const fingerprint = await coachInputFingerprint(replay, options), previous = receipts[replay.match.id];
+  if (!options.forceGeneration && fingerprint && previous?.fingerprint === fingerprint.hash && previous.content_hash === published?.content_hash &&
+      previous.history_key === published?.history_key && (previous.valid_until === null || (Number.isFinite(previous.valid_until) && previous.valid_until > Date.now()))) {
+    return { queued: false, generation_cached: true };
+  }
+  options.onProgress?.({ phase: 'cards' });
+  const observed = new Map(); let validUntil = null;
+  const cards = await buildCoachCards(replay, { ...options, onMetadata: (id, metadata) => {
+    observed.set(id, syncDigest(metadata));
+    const retry = metadata.retry_after ?? (!metadata.source ? Date.now() + 60_000 : null);
+    if (retry !== null) validUntil = Math.min(validUntil ?? Infinity, retry);
+  } });
+  options.onProgress?.({ phase: 'generating' });
   const historyKey = await getCoachHistoryKey(replay.match.id, options);
   const bundle = await buildCoachBundle(replay, { cards, multipart: true, ...(historyKey ? { historyKey } : {}) });
   const queued = await enqueueCoachBundle(bundle, options);
+  const after = await coachInputFingerprint(replay, options);
+  let stable = fingerprint && after && fingerprint.core === after.core;
+  for (const [id, hash] of observed) {
+    try { if (syncDigest(JSON.parse(await readFile(join(options.dataDir, 'cards', `${id}.json`), 'utf8'))) !== hash) stable = false; }
+    catch { stable = false; }
+  }
+  if (stable) receipts[replay.match.id] = { fingerprint: after.hash, content_hash: bundle.contentHash, history_key: bundle.historyKey, valid_until: validUntil };
+  else delete receipts[replay.match.id];
   return { ...queued, summary: bundle.summary };
 }
 
 /** Backfill every match in Viewer's canonical catalog, regardless of the match
  * selected for local export. Per-match generation failures never abort peers. */
 export async function syncCoachCatalog(options = {}) {
-  const settings = { ...options, dataDir: options.dataDir ?? defaultDataDir() };
+  const settings = { ...options, dataDir: options.dataDir ?? defaultDataDir(), validationSession: createSyncValidationSession() };
   const local = await listReplays({ dataDir: settings.dataDir, limit: null });
   const report = { local: local.length, already_published: 0, github_before: 0, missing: 0,
     published: 0, updated: 0, failed: [], skipped: [], successes: [], github_total: null, latest: null, committed: 0 };
@@ -41,18 +66,23 @@ export async function syncCoachCatalog(options = {}) {
   report.github_before = published.size;
   report.already_published = local.filter(match => published.has(match.id)).length;
   report.missing = local.length - report.already_published;
-  options.onScan?.(report);
   // Pending matches also need regeneration against a remotely established key
   // after recovery or publication from another machine. Never rename parts.
   const refresh = new Set([...(options.refreshMatchIds ?? []), ...snapshot.pending.map(item => item.match_id)]), attempted = [];
+  const pendingIds = new Set(snapshot.pending.map(item => item.match_id));
   const candidates = local.filter(match => !published.has(match.id) || refresh.has(match.id));
+  report.candidates = candidates.length;
+  options.onScan?.(report);
+  settings.cardDb = options.cardDb ?? await discoverCardDatabase();
+  const cache = await readSyncCache(settings.dataDir, 'replay-coach-generation-cache.json');
+  const receipts = Object.assign(Object.create(null), cache?.matches && typeof cache.matches === 'object' && !Array.isArray(cache.matches) ? cache.matches : {});
   let completed = 0;
   for (const match of [...local].reverse()) {
     if (published.has(match.id) && !refresh.has(match.id)) continue;
     const identity = { match_id: match.id, started_at: match.started_at, result: match.result };
     try {
       const replay = await getReplay(match.id, { dataDir: settings.dataDir });
-      const result = await queueReplay(replay, settings);
+      const result = await queueReplay(replay, { ...settings, forceGeneration: pendingIds.has(match.id) }, published.get(match.id), receipts);
       attempted.push({ ...identity, queued: result.queued });
     } catch (error) {
       const failure = { ...identity, reason: generationReason(error) };
@@ -60,6 +90,7 @@ export async function syncCoachCatalog(options = {}) {
     }
     options.onQueued?.({ completed: ++completed, total: candidates.length });
   }
+  await writeSyncCache(settings.dataDir, 'replay-coach-generation-cache.json', { matches: receipts });
   try {
     options.onPublishing?.();
     const result = await syncCoachBundles(settings);

@@ -124,7 +124,7 @@ function staticFace(face) {
 }
 
 /** Static rules for legal known identities only; no images, paths or dynamic game stats. */
-export async function buildCoachCards(replay, { dataDir = defaultDataDir(), fetchFn = fetch, displayNamesZh, cardDb } = {}) {
+export async function buildCoachCards(replay, { dataDir = defaultDataDir(), fetchFn = fetch, displayNamesZh, cardDb, onMetadata } = {}) {
   const identities = collectIdentities(replay);
   const local = await localStaticCards(identities.keys(), cardDb ?? await discoverCardDatabase());
   const chinese = displayNamesZh ?? await loadInstalledChineseDisplayNames();
@@ -135,6 +135,7 @@ export async function buildCoachCards(replay, { dataDir = defaultDataDir(), fetc
     let metadata;
     try { metadata = await getCardMetadata(id, { dataDir, fetchFn, local: { name: canonicalName ?? `Arena card ${id}` } }); }
     catch { metadata = {}; }
+    onMetadata?.(id, metadata);
     // Arena gives adventure/back faces their own IDs. Scryfall may index only
     // the primary face, whose public metadata already contains both rule faces.
     if (metadata.source !== 'scryfall' && arena?.linked_face_ids?.length) {
@@ -143,6 +144,7 @@ export async function buildCoachCards(replay, { dataDir = defaultDataDir(), fetc
         let linked;
         try { linked = await getCardMetadata(linkedId, { dataDir, fetchFn, local: { name: local.get(linkedId)?.name } }); }
         catch { continue; }
+        onMetadata?.(linkedId, linked);
         const face = linked.card_faces?.find(face => face.name === canonicalName);
         if (linked.source === 'scryfall' && face) {
           // Scryfall's top-level keyword list combines all faces. A separately
