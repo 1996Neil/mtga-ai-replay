@@ -1,3 +1,4 @@
+import { createComputePool } from './compute-pool.mjs';
 import { defaultDataDir, listReplays, getReplay } from './history.mjs';
 import { buildCoachCards } from './coach-cards.mjs';
 import { buildCoachBundle } from './coach-bundle.mjs';
@@ -33,7 +34,8 @@ async function queueReplay(replay, options, published, receipts) {
   } });
   options.onProgress?.({ phase: 'generating' });
   const historyKey = await getCoachHistoryKey(replay.match.id, options);
-  const bundle = await buildCoachBundle(replay, { cards, multipart: true, ...(historyKey ? { historyKey } : {}) });
+  const bundleOptions = { cards, multipart: true, ...(options.generatedAt ? {generatedAt:options.generatedAt} : {}), ...(historyKey ? { historyKey } : {}) };
+  const bundle = options.computePool ? await options.computePool.run('bundle', {replay,options:bundleOptions}) : await buildCoachBundle(replay,bundleOptions);
   const queued = await enqueueCoachBundle(bundle, options);
   const after = await coachInputFingerprint(replay, options);
   let stable = databaseReadComplete && fingerprint && after && fingerprint.core === after.core;
@@ -51,6 +53,11 @@ async function queueReplay(replay, options, published, receipts) {
 /** Backfill every match in Viewer's canonical catalog, regardless of the match
  * selected for local export. Per-match generation failures never abort peers. */
 export async function syncCoachCatalog(options = {}) {
+  const count=options.workerCount??2;
+  const pool = count ? createComputePool({size:count}) : null;
+  try { return await runCatalog({...options,computePool:pool}); } finally { await pool?.close(); }
+}
+async function runCatalog(options) {
   const settings = { ...options, dataDir: options.dataDir ?? defaultDataDir(), validationSession: createSyncValidationSession() };
   const local = await listReplays({ dataDir: settings.dataDir, limit: null });
   const report = { local: local.length, already_published: 0, github_before: 0, missing: 0,

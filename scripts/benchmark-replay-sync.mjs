@@ -14,9 +14,10 @@ const args = Object.fromEntries(process.argv.slice(2).map(value => {
   if (!value.startsWith('--') || equal < 0) throw new Error('Expected --name=value benchmark arguments.');
   return [value.slice(2, equal), value.slice(equal + 1)];
 }));
+if(args.freeze==='true'){const RealDate=Date;globalThis.Date=class extends RealDate{constructor(...args){super(...(args.length?args:['2026-10-01T00:00:00.000Z']));}static now(){return RealDate.now();}};}
 const source = resolve(args.source ?? dirname(dirname(fileURLToPath(import.meta.url))));
-const size = Number(args.size ?? 10), newMatches = Math.min(10, size), cacheCards = size * 10;
-if (![10, 100, 500].includes(size)) throw new Error('Benchmark size must be 10, 100 or 500.');
+const size = Number(args.size ?? 10), newMatches = Math.min(Number(args.increment ?? 10), size), cacheCards = size * 10;
+if (![10,15,100,500].includes(size)) throw new Error('Benchmark size must be 10, 100 or 500.');
 const originalOpen = fs.open, originalReadFile = fs.readFile;
 let active = false;
 const metrics = { git_commands: {}, git_stdout_bytes: 0, git_stdin_bytes: 0, git_object_reads: {},
@@ -55,7 +56,13 @@ fs.readFile = async function(path, ...rest) {
   return value;
 };
 syncBuiltinESMExports();
-globalThis.fetch = async () => { metrics.external_fetch_calls++; throw new Error('Benchmark forbids all external fetches.'); };
+globalThis.fetch = async url => {
+  if(args.cache==='cold'){
+    const id=Number(String(url).match(/^https:\/\/api\.scryfall\.com\/cards\/arena\/(\d+)$/)?.[1]);assert.ok(id>=1&&id<=8,'unexpected mock request');metrics.mock_http_requests=(metrics.mock_http_requests??0)+1;
+    await new Promise(resolve=>setTimeout(resolve,500));return new Response(JSON.stringify({name:`Synthetic Card ${id}`,mana_cost:'{1}',type_line:'Artifact',oracle_text:'Draw a card.',keywords:[]}));
+  }
+  metrics.external_fetch_calls++;throw Error('Benchmark forbids all external fetches.');
+};
 const from = file => import(pathToFileURL(join(source, file)).href);
 const [{ archiveReplays }, { buildCoachBundle, serializeCoachJson }, { buildCoachCards },
   { configureCoachSync }, { syncReplayHistory }] = await Promise.all([
@@ -93,12 +100,15 @@ function countObjects(stdout) {
     cursor = end + 2 + size;
   }
 }
+const detailedStates=Number(args.states??0);if(!Number.isSafeInteger(detailedStates)||detailedStates<0||detailedStates>1200)throw Error('Invalid synthetic state count');
 function syntheticReplay(number) {
   const cards = Array.from({ length: 8 }, (_, index) => ({ arena_id: index + 1, name: `Synthetic Card ${index + 1}`, visibility: 'player_known', quantity: 5 }));
+  const states=Object.fromEntries(Array.from({length:detailedStates},(_,i)=>[`S${i}`,{turn:Math.floor(i/10)+1,players:{me:{life:20,battlefield:cards.map(card=>({...card,instance_id:card.arena_id+100,is_tapped:i%2===0})),hand:[]},opponent:{life:20,battlefield:[],hand_count:3}},stack:[]}]));
+  const steps=Array.from({length:Math.max(1,detailedStates)},(_,i)=>({anchor:`T${Math.floor(i/10)+1}-A${i+1}`,turn:Math.floor(i/10)+1,...(detailedStates?{state_ref:`S${i}`,state_before_ref:`S${Math.max(0,i-1)}`}:{ }),event:{type:'life',life:{me:20,opponent:0}}}));
   return { schema_version: '2.0', perspective: { hidden_information: 'omitted' },
     match: { id: `synthetic-bench-${String(number).padStart(4, '0')}`, started_at: new Date(Date.UTC(2026, 9, 1, 0, number)).toISOString(),
       event: 'Jump In', is_jump_in: true, result: 'Win' }, deck: cards, warnings: [],
-    games: [{ game_number: 1, states: {}, steps: [{ anchor: 'T1-A1', turn: 1, event: { type: 'life', life: { me: 20, opponent: 0 } } }],
+    games: [{ game_number: 1, states, steps,
       turns: [{ turn_number: 1, events: [{ type: 'life', life: { me: 20, opponent: 0 } }] }], starting_hand: [],
       result: { outcome: 'Win', life: { me: 20, opponent: 0 } }, warnings: [] }] };
 }
@@ -111,13 +121,15 @@ try {
   await execute('git', ['init', '-b', 'main'], { cwd: seed });
   const replays = Array.from({ length: size }, (_, index) => syntheticReplay(index));
   for (let id = 1; id <= cacheCards; id++) {
+    if(args.cache==='cold'&&id<=8)continue;
     await fs.writeFile(join(dataDir, 'cards', `${id}.json`), JSON.stringify({ arena_id: id, name: `Synthetic Card ${id}`,
       source: 'scryfall', cache_schema: 2, rules_schema: 1, mana_cost: '{1}', type_line: 'Artifact', oracle_text: 'Draw a card.', keywords: [] }));
   }
   const options = { dataDir, cardDb: '', displayNamesZh: new Map(), fetchFn: globalThis.fetch };
-  const cards = await buildCoachCards(replays[0], options);
+  const cards = args.cache==='cold'?await buildCoachCards(replays[0],{...options,dataDir:join(fixtureDir,'seed-card-cache')}):await buildCoachCards(replays[0],options);metrics.mock_http_requests=0;
   const index = { schema: 'MTGA_COACH_INDEX_V1', matches: [] };
   const names = ['summary', 'coach', 'cards', 'manifest'];
+  let fastInput=[],seedNumber=0;
   for (const replay of replays.slice(0, size - newMatches)) {
     const bundle = await buildCoachBundle(replay, { cards, multipart: true, generatedAt: '2026-10-01T00:00:00.000Z' });
     const path = `matches/${bundle.historyKey}`;
@@ -132,14 +144,19 @@ try {
     index.latest_match_id = replay.match.id;
     index.latest = Object.fromEntries(names.map(name => [name, `latest/${name}.json`]));
     writes.set('index.json', serializeCoachJson(index)); writes.set('README.md', '# Synthetic replay benchmark\n'); writes.set('.gitignore', '\n');
-    for (const [path, content] of writes) { await fs.mkdir(dirname(join(seed, path)), { recursive: true }); await fs.writeFile(join(seed, path), content); }
-    await execute('git', ['add', '--', '.'], { cwd: seed });
-    await execute('git', ['-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', 'commit', '-q', '-m', `Add replay ${replay.match.id}`], { cwd: seed });
+    const mark=++seedNumber,msg=`Add replay ${replay.match.id}\n`;
+    fastInput.push(`commit refs/heads/main\nmark :${mark}\ncommitter mtga-replay-coach <mtga-replay-coach@users.noreply.github.com> 1790812800 +0000\ndata ${Buffer.byteLength(msg)}\n${msg}${mark>1?`from :${mark-1}\n`:''}`);
+    for(const [path,content]of writes)fastInput.push(`M 100644 inline ${path}\ndata ${Buffer.byteLength(content)}\n${content}\n`);
+    fastInput.push('\n');
   }
-  if (size > newMatches) await execute('git', ['push', bare, 'main'], { cwd: seed });
+  if(seedNumber)await execute('git',['--git-dir',bare,'fast-import','--quiet'],{input:fastInput.join('')});
+  fastInput=null;
   let lastPhase = null, lastPhaseAt = 0;
+  if(args.batch==='true'){const {createGitBatch}=await from('src/git-batch.mjs');options.gitBatchFactory=({repoDir})=>{const batch=createGitBatch({cwd:repoDir,env,onSpawn:()=>{metrics.git_batch_processes=(metrics.git_batch_processes??0)+1;}});return {run:async(command,settings)=>{const start=performance.now();const output=await batch.run(command,settings);if(active){metrics.git_stdin_bytes+=settings.input?.length??0;increment(metrics.git_commands,'cat-file');metrics.git_stdout_bytes+=output.length;if(command.includes('--batch'))countObjects(output);commandRecords.push({command:'cat-file',args:command,elapsed_ms:performance.now()-start,stdout_bytes:output.length});}return output;},close:()=>batch.close()};};}
+  options.workerCount=Number(args.workers??0);
+  if(args.freeze==='true')options.generatedAt='2026-10-01T00:00:00.000Z';
   options.onValidation = record => {
-    metrics.validation_calls++; metrics.semantic_checked += record.checked; metrics.semantic_reused += record.reused;
+    metrics.validation_calls++; metrics.validation_records??=[];metrics.validation_records.push(record); metrics.semantic_checked += record.checked; metrics.semantic_reused += record.reused;
   };
   options.onProgress = event => {
     const at = performance.now();
@@ -174,23 +191,47 @@ try {
   await configureCoachSync(repo, options); await archiveReplays(replays, options);
   const eventLoop = monitorEventLoopDelay({ resolution: 5 }); eventLoop.enable();
   await new Promise(yes => setTimeout(yes, 10));
-  active = true; const start = performance.now();
+  active = true; const start = performance.now(), cpuStart=process.cpuUsage(); let peak=process.memoryUsage().rss;const sample=setInterval(()=>peak=Math.max(peak,process.memoryUsage().rss),10);
   const result = await syncReplayHistory(options);
   const elapsed = performance.now() - start;
   if (lastPhase) increment(metrics.phase_ms, lastPhase, performance.now() - lastPhaseAt);
-  active = false; await new Promise(yes => setTimeout(yes, 10)); eventLoop.disable();
+  const cpu=process.cpuUsage(cpuStart);clearInterval(sample);active = false; await new Promise(yes => setTimeout(yes, 10)); eventLoop.disable();
   assert.equal(result.status, 'succeeded'); assert.equal(result.published, newMatches); assert.equal(result.github_matches, size);
   assert.equal(metrics.external_fetch_calls, 0);
   const remoteIndex = JSON.parse(await execute('git', ['--git-dir', bare, 'show', 'HEAD:index.json']));
   assert.equal(remoteIndex.matches.length, size); assert.equal(new Set(remoteIndex.matches.map(item => item.match_id)).size, size);
-  const output = { source, size, new_matches: newMatches, previous_matches: size - newMatches, prefilled_metadata_files: cacheCards,
-    fixture: '8 public known cards per replay; one short action; one commit per pre-existing replay; no real card DB or external network',
+  const hashes={},rawHashes={},payloads=new Map(),byteLengths={};
+  const {createHash}=await import('node:crypto');
+  const entries=String(await execute('git',['--git-dir',bare,'ls-tree','-r','HEAD'])).trim().split('\n').map(line=>{const [meta,path]=line.split('\t');return {hash:meta.split(' ')[2],path};}).filter(row=>row.path.endsWith('.json'));
+  const rawObjects=await execute('git',['--git-dir',bare,'cat-file','--batch'],{encoding:'buffer',input:Buffer.from(entries.map(row=>row.hash).join('\n')+'\n')});
+  let cursor=0;
+  for(const {path,hash} of entries){const end=rawObjects.indexOf(10,cursor),[got,type,length]=rawObjects.subarray(cursor,end).toString().split(' '),size=Number(length);assert.equal(got,hash);assert.equal(type,'blob');const raw=rawObjects.subarray(end+1,end+1+size);assert.equal(rawObjects[end+1+size],10);cursor=end+size+2;rawHashes[path]=createHash('sha256').update(raw).digest('hex');byteLengths[path]=raw.length;let value=JSON.parse(raw);payloads.set(path,structuredClone(value));if(path.endsWith('/manifest.json'))delete value.generated_at;hashes[path]=createHash('sha256').update(JSON.stringify(value)).digest('hex');}
+  assert.equal(cursor,rawObjects.length);
+  let manifests=0,states=0,actions=0,parts=0;
+  for(const [path,value] of payloads){
+    if(path.endsWith('/manifest.json')){
+      manifests++;
+      for(const [file,record] of Object.entries(value.files)){
+        const target=file.startsWith('matches/')?file:path.slice(0,path.lastIndexOf('/')+1)+file;
+        assert.equal(rawHashes[target],record.sha256,`manifest hash ${target}`);assert.equal(byteLengths[target],record.bytes,`manifest bytes ${target}`);
+      }
+    }
+    if(path.startsWith('matches/')&&path.endsWith('/summary.json')){states+=value.states;actions+=value.actions;}
+    if(value.schema==='MTGA_COACH_PART_V1')parts++;
+  }
+  assert.equal(manifests,size+1);assert.equal(actions,size*Math.max(1,detailedStates));assert.equal(states,size*detailedStates);
+  const latest=payloads.get('latest/summary.json');assert.equal(latest.match_id,syntheticReplay(size-1).match.id);
+  const commitCount=Number(String(await execute('git',['--git-dir',bare,'rev-list','--count','HEAD'])).trim());
+  assert.ok(commitCount>=size,'per-match history retained');
+  const integrity={matches:size,unique_match_ids:size,states,actions,manifests,parts,files:payloads.size,file_bytes:Object.values(byteLengths).reduce((a,b)=>a+b,0),manifest_bytes_sha256:true,latest_match_id:latest.match_id,commit_count:commitCount};
+  const output = { raw_output_hashes:rawHashes,output_hashes:hashes,integrity, source, size, new_matches: newMatches, previous_matches: size - newMatches, prefilled_metadata_files: cacheCards,
+    fixture: `8 public known cards per replay; ${detailedStates} states and ${Math.max(1,detailedStates)} actions; one commit per pre-existing replay; no real card DB or external network`,
     utc: new Date().toISOString(), elapsed_ms: elapsed, event_loop_max_ms: eventLoop.max / 1e6, event_loop_p99_ms: eventLoop.percentile(99) / 1e6,
-    ...metrics, unique_git_objects_read: objectReads.size, maximum_reads_of_one_object: Math.max(0, ...objectReads.values()),
+    cpu_ms:(cpu.user+cpu.system)/1000,peak_rss:peak,worker_count:options.workerCount,...metrics, unique_git_objects_read: objectReads.size, maximum_reads_of_one_object: Math.max(0, ...objectReads.values()),
     result: { status: result.status, published: result.published, local_matches: result.local_matches, github_matches: result.github_matches,
       failed: result.failed, timings_ms: result.timings_ms }, command_records: commandRecords };
   if (args.output) { await fs.mkdir(dirname(resolve(args.output)), { recursive: true }); await fs.writeFile(resolve(args.output), JSON.stringify(output, null, 2) + '\n'); }
-  console.log(JSON.stringify({ ...output, command_records: undefined }));
+  console.log(JSON.stringify({ ...output, command_records: undefined,raw_output_hashes:undefined,output_hashes:undefined,validation_records:undefined }));
 } finally {
   active = false;
   if (fixtureDir) await fs.rm(fixtureDir, { recursive: true, force: true });

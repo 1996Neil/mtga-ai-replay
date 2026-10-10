@@ -2,7 +2,7 @@
 import { resolve } from 'node:path';
 import { updateCollection,syncCollection,collectionStatus,collectionErrorMessage,recoverCollectionOperationLock } from '../src/collection-update.mjs';
 import { recoverCoachSyncLock } from '../src/coach-sync.mjs';
-const HELP=`mtga-gpt-collection update [--no-sync]\nmtga-gpt-collection status [--recover-lock] [--recover-sync-lock]\nmtga-gpt-collection sync\n\n保持 Arena 已登录并停在首页/收藏；仅 update 需要游戏运行。\n权限仅授予收藏读取 helper，文件保存与上传使用普通用户。\n`;
+const HELP=`mtga-gpt-collection update --confirm-account [--no-sync]\nmtga-gpt-collection status [--recover-lock] [--recover-sync-lock]\nmtga-gpt-collection sync\n\n保持 Arena 已登录并停在首页/收藏；仅 update 需要游戏运行。\n权限仅授予收藏读取 helper，文件保存与上传使用普通用户。\n`;
 function localTime(value){return value?new Date(value).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}):'无';}
 function totals(summary,inventory){
  if(!summary){console.log('本地暂无成功收藏快照。');return;}
@@ -17,7 +17,8 @@ try {
  else {
   if(typeof process.getuid==='function'&&process.getuid()===0)throw new Error('RUN_AS_USER');
   for(let i=0;i<args.length;i++) {
-    if(args[i]==='--recover-lock'&&command==='status')options.recoverLock=true;
+    if(args[i]==='--confirm-account'&&command==='update')options.confirmAccount=true;
+    else if(args[i]==='--recover-lock'&&command==='status')options.recoverLock=true;
     else if(args[i]==='--recover-sync-lock'&&command==='status')options.recoverSyncLock=true;
     else if(args[i]==='--no-sync'&&command==='update')options.noSync=true;
     else if(args[i]==='--data-dir'&&args[i+1])options.dataDir=resolve(args[++i]);

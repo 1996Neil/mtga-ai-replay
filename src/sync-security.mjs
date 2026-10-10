@@ -1,6 +1,9 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
+import { createGitBatch } from './git-batch.mjs';
+import { setImmediate as yieldLoop } from 'node:timers/promises';
+import { performance } from 'node:perf_hooks';
 
 // Opaque, invocation-only capabilities. Another loaded ruleset cannot use this
 // module's WeakMap, and callers cannot insert their own successful verdicts.
@@ -101,7 +104,7 @@ function scanText(text, path) {
   if (GITHUB_TOKEN.test(text) || PRIVATE_KEY.test(text) || JWT.test(text) || OPENAI_TOKEN.test(text) ||
       API_KEY_NAME.test(text) || CREDENTIAL_ASSIGNMENT.test(text) || LONG_BEARER.test(text) || SHORT_BEARER_VALUE.test(text) || AUTHENTICATED_URL.test(text)) reject(path, 'credential-text');
   if (LOCAL_PATH.test(text)) reject(path, 'local-machine-path');
-  if (EMAIL.test(text)) reject(path, 'email-address');
+  if (text.includes('@') && EMAIL.test(text)) reject(path, 'email-address');
 }
 function scanJsonKey(key, isStringValue, path) {
   const normalized = normalizedKey(key);
@@ -243,19 +246,21 @@ function parseRawTree(content, hash) {
 /** Read each unique tree once per guard, without one recursive Git process per
  * historical commit. Paths remain part of traversal identity: sharing a subtree
  * under a different directory must still recheck all of its leaf paths. */
-async function inspectTrees(git, roots, approvedFiles) {
+async function inspectTrees(git, roots, approvedFiles, metrics) {
   const trees = new Map(), visited = new Set(), files = [];
+  let work=0,lastYield=performance.now();
   let pending = new Map([...new Set(roots)].map(hash => [hash, new Set([''])]));
   while (pending.size) {
     await inspectObjects(git, [...pending.keys()].filter(hash => !trees.has(hash)), 'tree', (hash, content) => {
       trees.set(hash, parseRawTree(content, hash));
-    });
+    }, metrics);
     const next = new Map();
     for (const [hash, prefixes] of pending) for (const prefix of prefixes) {
       const identity = `${hash}:${prefix}`;
       if (visited.has(identity)) continue;
       visited.add(identity);
       for (const entry of trees.get(hash)) {
+        if(++work%512===0&&performance.now()-lastYield>=5){await yieldLoop();lastYield=performance.now();}
         const path = prefix + entry.name;
         if (entry.mode === '40000' || entry.mode === '040000') {
           scanText(path, path);
@@ -285,7 +290,7 @@ function entryAtPath(trees, root, path) {
 /** Bounded batches; verify framing, type, length and the Git object digest.
  * Reading/hash verification is repeated even on a cached semantic verdict,
  * so replacing a loose object under its old name cannot bypass inspection. */
-async function inspectObjects(git, hashes, kind, inspect) {
+async function inspectObjects(git, hashes, kind, inspect, metrics) {
   if (!hashes.length) return;
   const input = Buffer.from(hashes.join('\n') + '\n');
   const lines = (await git(['cat-file', '--batch-check'], input)).toString('utf8').trim().split('\n');
@@ -297,7 +302,7 @@ async function inspectObjects(git, hashes, kind, inspect) {
     if (!Number.isSafeInteger(bytes) || bytes > 512 * 1024 * 1024 - 1024) reject('', 'git-inspection-format');
     return { hash: match[1], bytes };
   });
-  let offset = 0;
+  let offset = 0,lastYield=performance.now();
   while (offset < objects.length) {
     const batch = []; let size = 0;
     while (offset < objects.length && (!batch.length || size + objects[offset].bytes < 16 * 1024 * 1024)) {
@@ -306,12 +311,15 @@ async function inspectObjects(git, hashes, kind, inspect) {
     const output = await git(['cat-file', '--batch'], Buffer.from(batch.map(item => item.hash).join('\n') + '\n'));
     let cursor = 0;
     for (const object of batch) {
+      if(performance.now()-lastYield>=5){await yieldLoop();lastYield=performance.now();}
       const end = output.indexOf(10, cursor);
       if (end < 0 || output.subarray(cursor, end).toString('ascii') !== `${object.hash} ${kind} ${object.bytes}`) reject('', 'git-inspection-format');
       cursor = end + 1;
       if (cursor + object.bytes >= output.length || output[cursor + object.bytes] !== 10) reject('', 'git-inspection-format');
       const content = output.subarray(cursor, cursor + object.bytes);
+      const hashStarted=performance.now();
       const digest = createHash(object.hash.length === 40 ? 'sha1' : 'sha256').update(`${kind} ${object.bytes}\0`).update(content).digest('hex');
+      if(metrics){metrics.hash_ms+=performance.now()-hashStarted;metrics.object_reads[kind]=(metrics.object_reads[kind]??0)+1;metrics.object_bytes[kind]=(metrics.object_bytes[kind]??0)+object.bytes;}
       if (digest !== object.hash) reject('', 'invalid-git-object');
       await inspect(object.hash, content);
       cursor += object.bytes + 1;
@@ -342,12 +350,14 @@ function validateCommitMetadata(content, approvedExistingIdentity = false) {
 }
 
 /** Read index and reachable commits as raw Git objects, never worktree links. */
-export async function validateStagedRepository(repoDir, { runGit, historyApproval, repository, branch, validationSession, onValidation } = {}) {
+export async function validateStagedRepository(repoDir, { runGit, historyApproval, repository, branch, validationSession, onValidation, gitBatchFactory, computePool } = {}) {
   const session = validationSession === undefined ? null : validationSessions.get(validationSession);
   if (validationSession !== undefined && (!session || session.failed)) reject('', 'invalid-validation-session');
   // Reject a concurrent caller before it can change the first caller's scope.
   if (session?.busy) reject('', 'concurrent-validation-session');
   if (session) session.busy = true;
+  const startedAt=performance.now(),metrics={hash_ms:0,semantic_ms:0,object_reads:{},object_bytes:{},git_calls:0,git_commands:{}};
+  let batch;
   try {
   const approval = validateSyncHistoryApproval(historyApproval, { repository, branch });
   if (session) {
@@ -357,8 +367,9 @@ export async function validateStagedRepository(repoDir, { runGit, historyApprova
   const approvedCommits = new Set(approval?.commits ?? []);
   const approvedFiles = new Map((approval?.files ?? []).map(file => [file.path, file]));
   const execute = runGit ?? defaultGit(repoDir);
+  batch=gitBatchFactory?.() ?? (!runGit ? createGitBatch({cwd:repoDir,env:{GIT_DIR:resolve(repoDir,'.git'),GIT_WORK_TREE:repoDir,GIT_INDEX_FILE:resolve(repoDir,'.git/index')}}) : null);
   const git = async (args, input) => {
-    try { return commandOutput(await execute(args, { cwd: repoDir, encoding: 'buffer', input })); }
+    try { metrics.git_calls++;metrics.git_commands[args.slice(0,args[0]==='cat-file'?2:1).join(' ')]=(metrics.git_commands[args.slice(0,args[0]==='cat-file'?2:1).join(' ')]??0)+1; return commandOutput(await (batch && args[0]==='cat-file' ? batch.run(args,{input}) : execute(args, { cwd: repoDir, encoding: 'buffer', input }))); }
     catch (error) {
       if (error?.code === 'MTGA_SYNC_SECURITY') throw error;
       // Never expose Git stderr, cwd, malformed payloads or a credential URL.
@@ -373,8 +384,8 @@ export async function validateStagedRepository(repoDir, { runGit, historyApprova
   const commits = new Map();
   await inspectObjects(git, revisions, 'commit', (hash, content) => {
     commits.set(hash, validateCommitMetadata(content, approvedCommits.has(hash)));
-  });
-  const { trees, files: historicalFiles } = await inspectTrees(git, [...commits.values()].map(commit => commit.tree), approvedFiles);
+  }, metrics);
+  const { trees, files: historicalFiles } = await inspectTrees(git, [...commits.values()].map(commit => commit.tree), approvedFiles, metrics);
   // The approved file cannot be introduced, removed, or changed by any later
   // commit, including either side of a merge. Compare already verified raw trees
   // instead of spawning diff-tree for each historical revision.
@@ -390,7 +401,9 @@ export async function validateStagedRepository(repoDir, { runGit, historyApprova
     }
   }
   const inspected = new Set(), pending = new Map();
+  let semanticYield=performance.now(),semanticEntries=0;
   for (const { path, hash } of [...index, ...historicalFiles]) {
+    if(++semanticEntries%512===0&&performance.now()-semanticYield>=5){await yieldLoop();semanticYield=performance.now();}
     // Identical bytes in JSON and README are validated under both file formats.
     const approved = approvedFiles.get(path);
     const identity = `${approved ? `approved-document:${path}` : 'data'}:${hash}:${path.endsWith('.json') ? 'json' : 'text'}`;
@@ -400,20 +413,23 @@ export async function validateStagedRepository(repoDir, { runGit, historyApprova
     pending.get(hash).push({ path, approved, identity });
   }
   let checked = 0, reused = 0;
-  await inspectObjects(git, [...pending.keys()], 'blob', (hash, content) => {
+  await inspectObjects(git, [...pending.keys()], 'blob', async (hash, content) => {
     for (const { path, approved, identity } of pending.get(hash)) {
     if (session?.verified.has(identity)) { reused++; continue; }
+    const semanticStarted=performance.now();
     if (approved) {
       if (content.length !== approved.bytes || createHash('sha256').update(content).digest('hex') !== approved.sha256) reject(path, 'changed-approved-document');
       scanText(textContent(content, path), path);
-    } else validateBundleFiles(new Map([[path, content]]));
+    } else if(computePool)await computePool.run('validate',{path,content});
+    else validateBundleFiles(new Map([[path, content]]));
+    metrics.semantic_ms+=performance.now()-semanticStarted;
     session?.verified.add(identity); checked++;
   }
-  });
-  onValidation?.({ objects: pending.size, checked, reused, commits: commits.size, trees: trees.size });
+  }, metrics);
+  onValidation?.({ objects: pending.size, checked, reused, commits: commits.size, trees: trees.size, ...metrics, duration_ms:performance.now()-startedAt, rss_bytes:process.memoryUsage().rss });
   return { ok: true, fileCount: index.length };
   } catch (error) {
     if (session) { session.verified.clear(); session.failed = true; }
     throw error;
-  } finally { if (session) session.busy = false; }
+  } finally { try { await batch?.close(); } catch {if(session){session.verified.clear();session.failed=true;}reject('', 'git-inspection-failed');} finally { if (session) session.busy = false; } }
 }

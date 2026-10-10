@@ -2,6 +2,7 @@ import { LocalTaskButton } from './LocalTaskButton';
 import type { TaskJob } from '../lib/taskClient';
 interface CollectionResult { local_updated: boolean; synced: boolean; summary: { card_kinds?: number; total_quantity?: number }; error?: string | null; }
 function label(job: TaskJob<CollectionResult>) {
+  if(job.status==='needs_recovery')return '收藏任务需要核对';
   if (job.status === 'running') return job.progress?.phase === 'uploading' ? '正在上传收藏…' : '正在更新收藏…';
   if (job.status === 'succeeded') return '收藏已更新';
   if (job.status === 'partial') return '收藏待上传';

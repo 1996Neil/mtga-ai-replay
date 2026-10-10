@@ -23,7 +23,9 @@ async function fixture(t) {
 }
 const metadata = (name, extra = {}) => ({ arena_id: 100, name, source: 'scryfall', cache_schema: 2, rules_schema: 1,
   mana_cost: '{1}', type_line: 'Artifact', oracle_text: 'Draw a card.', keywords: [], ...extra });
-const put = (options, id, value) => writeFile(join(options.dataDir, 'cards', `${id}.json`), JSON.stringify(value));
+// Each fixture file describes its own Arena ID. Explicit mismatched identities
+// are covered separately by public-card-preparation.test.mjs.
+const put = (options, id, value) => writeFile(join(options.dataDir, 'cards', `${id}.json`), JSON.stringify({ ...value, arena_id:id }));
 
 test('replay receipts ignore unrelated and hidden metadata but bind missing, changed and deleted dependencies', async t => {
   const opts = await fixture(t), item = replay();

@@ -144,7 +144,8 @@ export async function buildCoachCards(replay, { dataDir = defaultDataDir(), fetc
   const local = await localStaticCards(identities.keys(), cardDb ?? await discoverCardDatabase(), onDatabaseRead);
   const chinese = displayNamesZh ?? await loadInstalledChineseDisplayNames();
   const result = [];
-  for (const [id, observedName] of [...identities].sort(([a], [b]) => a - b)) {
+  const entries = [...identities].sort(([a], [b]) => a - b);
+  const mapped = await mapCards(entries, async ([id, observedName]) => {
     const arena = local.get(id);
     const canonicalName = observedName && !/^Arena card \d+$/.test(observedName) ? observedName : arena?.name;
     let metadata;
@@ -173,7 +174,7 @@ export async function buildCoachCards(replay, { dataDir = defaultDataDir(), fetc
         }
       }
     }
-    const publicRules = metadata.source === 'scryfall';
+    const publicRules = metadata.source === 'scryfall', printedKnown=metadata.identity_verified!==false;
     const faces = publicRules && Array.isArray(metadata.card_faces) ? metadata.card_faces.map(staticFace) : [];
     const card = {
       arena_id: id, name: canonicalName ?? metadata.name ?? `Arena card ${id}`,
@@ -182,12 +183,12 @@ export async function buildCoachCards(replay, { dataDir = defaultDataDir(), fetc
       type_line: arena?.type_line ?? (publicRules ? metadata.type_line : null) ?? null,
       oracle_text: publicRules && typeof metadata.oracle_text === 'string' ? metadata.oracle_text : arena?.rules_text ?? null,
       keywords: publicRules && Array.isArray(metadata.keywords) ? [...metadata.keywords] : arena?.keywords ?? [],
-      power: arena?.power ?? (publicRules ? metadata.power : null) ?? null,
-      toughness: arena?.toughness ?? (publicRules ? metadata.toughness : null) ?? null,
+      power: arena?.power ?? (publicRules&&printedKnown ? metadata.power : null) ?? null,
+      toughness: arena?.toughness ?? (publicRules&&printedKnown ? metadata.toughness : null) ?? null,
       card_faces: faces,
       source: publicRules ? arena ? 'local_arena+scryfall' : 'scryfall' : arena ? 'local_arena' : 'unavailable',
       certainty: { identity: 'player_known', rules: publicRules ? 'public_oracle' : arena?.rules_text ? 'local_partial' : 'unknown',
-        printed_stats: arena ? 'local_arena' : publicRules ? 'public_card_metadata' : 'unknown' },
+        printed_stats: arena ? 'local_arena' : publicRules&&printedKnown ? 'public_card_metadata' : 'unknown' },
     };
     const missing = [];
     if (/^Arena card \d+$/.test(card.name)) missing.push('name');
@@ -201,7 +202,16 @@ export async function buildCoachCards(replay, { dataDir = defaultDataDir(), fetc
     card.missing_fields = missing;
     card.metadata_complete = missing.length === 0;
     card.quality_warnings = missing.length ? ['Static card rules are incomplete; do not assume missing rules or keywords.'] : [];
-    result.push(card);
-  }
-  return result;
+    return card;
+  });
+  return mapped;
+}
+
+/** Two bounded producers; results preserve Arena ID ordering. Network start
+ * spacing is globally enforced in card-cache; linked lookups use the same gate. */
+async function mapCards(entries,callback) {
+  const output=new Array(entries.length);let cursor=0;
+  await Promise.all(Array.from({length:Math.min(2,entries.length)},async()=>{
+    while(cursor<entries.length){const index=cursor++;output[index]=await callback(entries[index]);}
+  }));return output;
 }
