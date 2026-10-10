@@ -5,7 +5,7 @@ async function body(request, maxBytes = 4096) {
   for await (const chunk of request) { text += chunk.toString('utf8'); if (Buffer.byteLength(text) > maxBytes) throw new Error('body_limit'); }
   return text ? JSON.parse(text) : {};
 }
-export function createCoachRoutes(runtime) {
+export function createCoachRoutes(runtime, { isClosing = () => false } = {}) {
   const clients = new Set();
   const forward = event => { const message = `data: ${JSON.stringify(event)}\n\n`;
     for (const client of clients) { if (client.writableLength > 128 * 1024) { client.destroy(); clients.delete(client); } else client.write(message); } };
@@ -33,6 +33,8 @@ export function createCoachRoutes(runtime) {
       }
       try {
         const input = await body(request, path === 'setup' ? 8192 : 4096);
+        // A POST accepted before shutdown may finish receiving its body later.
+        if (isClosing()) { json(response, 503, { error: 'Local replay service is shutting down; no new coach action was started.' }); return true; }
         if (runtime.setup?.reconfiguring && ['start', 'unmute', 'observe'].includes(path)) throw new Error('setup_reconfiguring');
         switch (path) {
           case 'setup':

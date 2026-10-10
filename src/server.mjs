@@ -19,11 +19,11 @@ const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; ch
 export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir = defaultViewer, port = 0, cardNames = new Map(), cardMetadata = new Map(), displayNamesZh, fetchFn = fetch, writeInfo = true, syncWorkflow, collectionUpdate, collectionSync, notifyTask = notifyViewerTask, liveCoach, replayProvider, enableReplaySync = !replayProvider, enableCollection = enableReplaySync && !replayProvider, includeLocalHistory = enableReplaySync || !replayProvider, observeLocalLogs = includeLocalHistory, localHistoryOptions = {} } = {}) {
   const root = await realpath(resolve(viewerDir)).catch(() => resolve(viewerDir));
   const chineseNames = displayNamesZh ?? await loadInstalledChineseDisplayNames();
-  let assignedPort;
+  let assignedPort, closePromise, closing = false;
   const sync = createViewerSync({ dataDir, workflow: syncWorkflow, notify: notifyTask });
   const collection = createViewerCollection({ dataDir, update: collectionUpdate, sync: collectionSync, notify: notifyTask });
   const localHistory = includeLocalHistory && observeLocalLogs ? createLocalReplayHistory({ ...localHistoryOptions, dataDir }) : null;
-  const coach = liveCoach ? createCoachRoutes(liveCoach) : null;
+  const coach = liveCoach ? createCoachRoutes(liveCoach, { isClosing: () => closing }) : null;
   function send(response, status, value, contentType = 'application/json; charset=utf-8', extraHeaders = {}) {
     response.writeHead(status, { 'Content-Type': contentType, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
       'Cross-Origin-Resource-Policy': 'same-origin', 'Referrer-Policy': 'no-referrer', ...extraHeaders });
@@ -65,7 +65,10 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
       const url = new URL(request.url, `http://127.0.0.1:${assignedPort}`);
       const path = decodeURIComponent(url.pathname);
       if (path.includes('\0') || path.includes('\\') || path.split('/').includes('..')) return send(response, 400, { error: 'Invalid path.' });
+      if (closing && !['GET', 'HEAD'].includes(request.method)) return send(response, 503, { error: 'Local replay service is shutting down; no new action was started.' });
       if (coach && await coach.handle(request, response, url)) return;
+      // The async coach dispatch may have yielded while shutdown began.
+      if (closing && !['GET', 'HEAD'].includes(request.method)) return send(response, 503, { error: 'Local replay service is shutting down; no new action was started.' });
       if (path === '/api/sync' && !enableReplaySync) return send(response, 403, { error: 'Replay synchronization is disabled in this isolated corpus server.' });
       if ((path === '/api/collection' || path === '/api/collection/sync') && !enableCollection) return send(response, 403, { error: 'Collection updates are disabled in this isolated corpus server.' });
       if ((path === '/api/collection' || path === '/api/collection/sync') && request.method === 'POST') {
@@ -153,16 +156,22 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
     await writeFile(join(dataDir, 'server.json'), JSON.stringify({ pid: process.pid, url, port: assignedPort, viewerDir: root }), { mode: 0o600 });
   }
   localHistory?.start();
-  const close = async () => {
-    await localHistory?.close();
-    // Finish a publication before shutting down; don't strand a Git write.
-    await coach?.close();
-    await Promise.all([sync.wait(), collection.wait()]);
-    server.closeAllConnections();
-    await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
-    if (writeInfo) {
-      try { if (JSON.parse(await readFile(join(dataDir, 'server.json'), 'utf8')).port === assignedPort) await rm(join(dataDir, 'server.json')); } catch { /* Already removed. */ }
-    }
+  const close = () => {
+    if (closePromise) return closePromise;
+    // Set before any await so no request can replace a captured task promise.
+    closing = true;
+    closePromise = (async () => {
+      await localHistory?.close();
+      // Finish a publication before shutting down; don't strand a Git write.
+      await coach?.close();
+      await Promise.all([sync.wait(), collection.wait()]);
+      server.closeAllConnections();
+      await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+      if (writeInfo) {
+        try { if (JSON.parse(await readFile(join(dataDir, 'server.json'), 'utf8')).port === assignedPort) await rm(join(dataDir, 'server.json')); } catch { /* Already removed. */ }
+      }
+    })();
+    return closePromise;
   };
   return { server, url, port: assignedPort, close, localHistory };
 }

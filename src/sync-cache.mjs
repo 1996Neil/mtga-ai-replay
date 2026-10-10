@@ -3,6 +3,7 @@ import { open, stat, lstat, readFile, readdir, writeFile, rename, mkdir, rm } fr
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { discoverDisplayNameDatabase } from './display-names.mjs';
+import { coachCardMetadataIds } from './coach-cards.mjs';
 
 export const syncDigest = value => createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
 
@@ -84,11 +85,13 @@ export async function coachInputFingerprint(replay, { dataDir, cardDb, displayNa
   const rules = await syncRulesFingerprint();
   if (!coreFiles || !rules) return null;
   const core = syncDigest([replay, coreFiles, rules, displayNamesZh ? [...displayNamesZh].sort((a, b) => a[0] - b[0]) : null]);
-  let names = [];
-  try { names = (await readdir(join(dataDir, 'cards'))).filter(name => /^[0-9]+\.json$/.test(name)).sort(); }
-  catch (error) { if (error.code !== 'ENOENT') throw error; }
-  const metadata = await fingerprints(names.map(name => join(dataDir, 'cards', name)));
-  return metadata ? { core, hash: syncDigest([core, metadata]) } : null;
+  const ids = await coachCardMetadataIds(replay, { cardDb });
+  if (!ids) return null;
+  // Include absent dependency files as well: a later metadata arrival must
+  // invalidate this receipt. DB/WAL, rules, replay and names retain full-byte
+  // fingerprints; no mtime-only or persistent validation shortcut is used.
+  const metadata = await fingerprints(ids.map(id => join(dataDir, 'cards', `${id}.json`)));
+  return metadata ? { core, hash: syncDigest(['replay-metadata-v2', core, metadata]), metadataIds: ids } : null;
 }
 
 /** Optimization receipts are private local files; malformed receipts are misses. */

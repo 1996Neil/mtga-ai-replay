@@ -8,12 +8,12 @@ function result(overrides: Partial<SyncResult> = {}): SyncResult {
     published: 0, failed: 0, skipped: 0, github_matches: 10, latest: null, error: null, failures: [], ...overrides };
 }
 test('no new games displays 已是最新 using structured API results', async () => {
-  const responses: SyncJob[] = [{ id: 'job', status: 'running', progress: { phase: 'scanning' } }, { id: 'job', status: 'succeeded', result: result() }];
+  const responses: SyncJob[] = [{ id: null, status: 'idle' }, { id: 'job', status: 'running', progress: { phase: 'scanning' } }, { id: 'job', status: 'succeeded', result: result() }];
   const calls: RequestInit[] = [], observed: string[] = [];
   const request = (async (_url, options) => { calls.push(options!); return new Response(JSON.stringify(responses.shift())); }) as typeof fetch;
   const job = await createReplaySyncClient(request, async () => {}).run(value => observed.push(syncButtonLabel(value)));
   assert.deepEqual(observed, ['正在扫描…', '已是最新']); assert.equal(job.result?.missing, 0);
-  assert.equal(calls[0].method, 'POST'); assert.deepEqual(calls[0].headers, { 'X-MTGA-Replay-Action': 'sync' }); assert.equal(calls[0].body, undefined);
+  assert.equal(calls[0].method, undefined); assert.equal(calls[1].method, 'POST'); assert.deepEqual(calls[1].headers, { 'X-MTGA-Replay-Action': 'sync' }); assert.equal(calls[1].body, undefined);
 });
 test('rapid calls share one task and report both new games', async () => {
   let posts = 0, release!: () => void;
@@ -24,8 +24,9 @@ test('rapid calls share one task and report both new games', async () => {
   }) as typeof fetch;
   const client = createReplaySyncClient(request, async () => {});
   const first = client.run(() => {}), second = client.run(() => {});
-  assert.equal(first, second); assert.equal(posts, 1); release();
+  assert.equal(first, second); release();
   assert.equal(syncButtonLabel(await first), '已同步 2 场');
+  assert.equal(posts, 1);
 });
 test('partial failure remains explicit while retaining successful games and short error', async () => {
   const terminal: SyncJob = { id: 'job', status: 'partial', error: '部分回放未完成同步，请查看详情。',

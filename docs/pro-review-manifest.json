@@ -1,0 +1,179 @@
+{
+  "schema": "PRO_REVIEW_CHANGE_MANIFEST_V1",
+  "base_commit": "fca87281749ae17cafac8b27974cee69203f6209",
+  "branch": "pro/replay2-sync-audit-20261010",
+  "generated_utc": "2026-10-10T04:48:11.255272+00:00",
+  "deployed": false,
+  "runtime_export_manifest": "docs/replay2-runtime-export.json still describes the original exported runtime, not this undeployed repair.",
+  "manifest_excludes_itself": true,
+  "changed_files": [
+    {
+      "path": "docs/PRO_REVIEW_RESULTS.md",
+      "before_sha256": null,
+      "after_sha256": "a39605b4fb3df5689b3f7c540b9f1b692ec7ff1a711251b3fa37ef8b72cd1705",
+      "bytes": 24017,
+      "change": "added"
+    },
+    {
+      "path": "docs/pro-review-benchmarks.json",
+      "before_sha256": null,
+      "after_sha256": "04384867198a052b592bf08405a22a444b16b29052afcc4f26f17325ed71b5b0",
+      "bytes": 32635,
+      "change": "added"
+    },
+    {
+      "path": "scripts/benchmark-local-import.mjs",
+      "before_sha256": null,
+      "after_sha256": "cfd8233216dd98db26ba28020408a5a33616ef8369f4bdfa0c53d5ab0c9ea28a",
+      "bytes": 10460,
+      "change": "added"
+    },
+    {
+      "path": "scripts/benchmark-replay-sync.mjs",
+      "before_sha256": null,
+      "after_sha256": "8fd7f7b74ffb9b276e0c8d0a084ebeba46554d243bc99ad70bd6db12e08eba35",
+      "bytes": 13011,
+      "change": "added"
+    },
+    {
+      "path": "scripts/benchmark-sync-security.mjs",
+      "before_sha256": null,
+      "after_sha256": "9812e6f1a8608075c5cc03ff0c3cf161e2226bef67804217974522d8d59378f4",
+      "bytes": 7580,
+      "change": "added"
+    },
+    {
+      "path": "scripts/reproduce-sync-tree-replacement.mjs",
+      "before_sha256": null,
+      "after_sha256": "1ee70c04dadff329eb0fc5238fadfb72025ed819eaa44cfe990685141dbb4ec2",
+      "bytes": 5634,
+      "change": "added"
+    },
+    {
+      "path": "src/coach-cards.mjs",
+      "before_sha256": "accaed17cd886666900d4d4b77616f57a6ea47c85be59431f2637b23fa2dc712",
+      "after_sha256": "77457acc62329cd8b13aa13fb81f8b4ef0bdd2c7fc76f262ce15775c6cc82e3c",
+      "bytes": 12241,
+      "change": "modified"
+    },
+    {
+      "path": "src/coach-catalog-sync.mjs",
+      "before_sha256": "8484d7f40c82f79f37af2af84282ef35bcc120e7bd1304dcabdda5950474948a",
+      "after_sha256": "3228379775155d9e31f679fd95fd19f3946ab59992ac10355c0d7913f20bbd42",
+      "bytes": 9461,
+      "change": "modified"
+    },
+    {
+      "path": "src/coach-sync.mjs",
+      "before_sha256": "e70056c4243e44120761e82fe4085b4b3d47e6ef6476691ef2698c69aea3c0b4",
+      "after_sha256": "cf0fe0e89cba44afc261a6258b661f238ad21711863236bfa825617be38964f0",
+      "bytes": 34057,
+      "change": "modified"
+    },
+    {
+      "path": "src/live-coach/routes.mjs",
+      "before_sha256": "baf0c0b1ad8d2409f30bf89afda4aa74101bfef127577ce8d55be33bd1480f26",
+      "after_sha256": "835bc18b8697dca6eadbd72313283c901124486ea98587f3fd412d008f0d7d5b",
+      "bytes": 5220,
+      "change": "modified"
+    },
+    {
+      "path": "src/server.mjs",
+      "before_sha256": "a777af3f8a48d6061f46095756f03441618d3c3e77741c8da90f53cbc0c2926f",
+      "after_sha256": "58e61b6a07964cd5415b8e799908e6b6fa1595165ee8a024cc77cbae27fd0a33",
+      "bytes": 14317,
+      "change": "modified"
+    },
+    {
+      "path": "src/sync-cache.mjs",
+      "before_sha256": "c6e43932ec6ebbccc10f9c3759834d2df9e9ef4f16d4e9e16823d1eb0825fdeb",
+      "after_sha256": "c45bc93b73d2eec14055d358f9ebf161574b98c98bec130d61e8cd5d198b135b",
+      "bytes": 6644,
+      "change": "modified"
+    },
+    {
+      "path": "src/sync-security.mjs",
+      "before_sha256": "b14b34296cf84fd89e34e36499ecadb60b8eadac606768a2df0af842bbf77fc5",
+      "after_sha256": "c120175fb7224de7286c48c3dbb2b230ed28e766584898a4b9d93577ffb5a4e9",
+      "bytes": 24213,
+      "change": "modified"
+    },
+    {
+      "path": "src/viewer-task.mjs",
+      "before_sha256": "8024079984a07c0c03ca9c70cd87e6ec55e1d202067642d30cfc07c39e3f5b19",
+      "after_sha256": "3e4dc2e61f10b54584f04a87ddeb300d74f9b64bae9459ebad46f30b320e1eda",
+      "bytes": 2352,
+      "change": "modified"
+    },
+    {
+      "path": "tests/coach-sync.test.mjs",
+      "before_sha256": "2cd93dc13082b69d6feeb0b02cfa55c7e755800c57f2b78e787b59d2ed9f1c9a",
+      "after_sha256": "522fe2257fc0b4d8b536ee22e53062efeb70abdf566b0d4c449ca7e0773a23ac",
+      "bytes": 63037,
+      "change": "modified"
+    },
+    {
+      "path": "tests/collection-sync.test.mjs",
+      "before_sha256": "8b5696c38622c7f25eb3458bbebd80aebde1c536729a47cd7e7548de80c437d2",
+      "after_sha256": "e20b5bcf02c43aee86348c3ee9bc2a0ceee76919ded1d7d291f7f5cc9e2d5c4f",
+      "bytes": 22370,
+      "change": "modified"
+    },
+    {
+      "path": "tests/export.test.mjs",
+      "before_sha256": "9b0ab811e426fa9d1c4aededec6d9219b2e299d8e2e5e2a686dab65614167ed6",
+      "after_sha256": "ef2bf908c9d1da33bc0b972f301a2aae48b7bd55e83935bcdf8ab975911ca4a5",
+      "bytes": 8095,
+      "change": "modified"
+    },
+    {
+      "path": "tests/server.test.mjs",
+      "before_sha256": "c08c15a0ed8bf1882f15b3b31502c843434968dfb89abfddd378db0b22283493",
+      "after_sha256": "da2145d27e08d4455c8c34656a782af12f3f308927b9712d803b99375bf851d6",
+      "bytes": 20745,
+      "change": "modified"
+    },
+    {
+      "path": "tests/sync-cache.test.mjs",
+      "before_sha256": null,
+      "after_sha256": "98625b4fc2951c1e4e0a0a6650487176c79884d28b2e149f84b143aee75a2188",
+      "bytes": 8813,
+      "change": "added"
+    },
+    {
+      "path": "tests/sync-security-session.test.mjs",
+      "before_sha256": null,
+      "after_sha256": "f48bfd0d8492579bb17d6985b5db6cd23ece6fd134e2655a74a77ae316763112",
+      "bytes": 14503,
+      "change": "added"
+    },
+    {
+      "path": "tests/viewer-task.test.mjs",
+      "before_sha256": "60108488f00cc8881a7cd001d6da19747a26f456d7b646271ceb9d8444dd234c",
+      "after_sha256": "31047e95edbe8c5cacaa42e37e10eeac6b93fe23164df59257ffb0b786cfcd94",
+      "bytes": 7252,
+      "change": "modified"
+    },
+    {
+      "path": "viewer/src/lib/taskClient.ts",
+      "before_sha256": "4131ed9afe370faaa006957c126bafbcc16eda7e797430827a892d8059a9bad6",
+      "after_sha256": "817b046aa315f5f7c9f92fe0ae239ef105ff104065b5cf6dc20ba5333e9ef51f",
+      "bytes": 5812,
+      "change": "modified"
+    },
+    {
+      "path": "viewer/tests/replaySync.test.ts",
+      "before_sha256": "33e80c547cc2463e61d327a57694907ed8a2bbfafbf8ffbeed765a013395b0b2",
+      "after_sha256": "a66b04f796917a20fd7259c13830adf01335ac46ff087968553ae9f2444babb5",
+      "bytes": 4332,
+      "change": "modified"
+    },
+    {
+      "path": "viewer/tests/taskClient.test.ts",
+      "before_sha256": "415dcbbe52d27dace2096d1d8abdbbebb2fb64478e6e48a5f78b56293e29165c",
+      "after_sha256": "f8824bc624b2dd84b4662139f091f99dc941b5d40c28654582e98710d13819ba",
+      "bytes": 6840,
+      "change": "modified"
+    }
+  ]
+}

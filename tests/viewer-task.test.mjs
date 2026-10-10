@@ -29,3 +29,52 @@ test('notification uses fixed argv with counts only and bounded execution; error
  assert.equal(command,'/usr/bin/osascript');assert.equal(options.timeout,3000);assert.doesNotMatch(JSON.stringify(args),/private-id|ghp_private/);assert.match(args.at(-1),/新增 2 场，更新 1 场/);
  assert.deepEqual(await notifyViewerTask('collection',{status:'failed'},{platform:'darwin',run:async()=>{throw new Error('secret stderr');}}),{attempted:true,accepted:false});
 });
+
+test('terminal state and notification are committed together before a new job can start', async () => {
+ const firstHold=gate(),secondHold=gate();let calls=0;const notifications=[];
+ const task=createViewerTask({kind:'replay',errorMessage:()=> 'Fixed',workflow:async()=>{
+  if(++calls===1)await firstHold.promise;else await secondHold.promise;return {status:'succeeded'};
+ },notify:async(_kind,job)=>{notifications.push({id:job.id,status:job.status});return {attempted:true,accepted:true};}});
+ const first=task.start(),firstDone=task.wait();await Promise.resolve();firstHold.release();
+ while(task.snapshot().status==='running')await Promise.resolve();
+ const second=task.start();await firstDone;const snapshot={...task.snapshot()};
+ secondHold.release();await task.wait();
+ assert.equal(snapshot.status,'running');assert.equal(snapshot.finished_at,undefined);assert.equal(snapshot.notification_pending,undefined);
+ assert.deepEqual(notifications,[{id:first.id,status:'succeeded'},{id:second.id,status:'succeeded'}]);
+});
+
+test('late progress from a finished workflow cannot mutate the next running job', async () => {
+ const hold=gate();let oldProgress,calls=0;
+ const task=createViewerTask({kind:'replay',errorMessage:()=> 'Fixed',workflow:async({onProgress})=>{
+  if(++calls===1)oldProgress=onProgress;else await hold.promise;return {status:'succeeded'};
+ }});
+ task.start();await task.wait();task.start();await Promise.resolve();
+ oldProgress({phase:'security',completed:999});const snapshot={...task.snapshot()};
+ hold.release();await task.wait();assert.deepEqual(snapshot.progress,{phase:'scanning'});
+});
+
+test('notification rejection preserves a completed publication and is attempted only once', async () => {
+ let calls=0;
+ const task=createViewerTask({kind:'replay',errorMessage:()=> 'Fixed',workflow:async()=>({status:'succeeded',published:3}),notify:async()=>{calls++;throw new Error('private stderr');}});
+ task.start();await task.wait();
+ for(let i=0;i<5;i++){const snapshot=task.snapshot();assert.equal(snapshot.status,'succeeded');assert.equal(snapshot.result.published,3);assert.equal(snapshot.notification_pending,false);}
+ assert.deepEqual(task.snapshot().notification,{attempted:true,accepted:false});assert.equal(calls,1);assert.doesNotMatch(JSON.stringify(task.snapshot()),/private stderr/);
+});
+
+test('closing an observer leaves the server workflow running; a new page reads the retained result', async () => {
+ const {createTaskClient}=await import('../viewer/src/lib/taskClient.ts');
+ const hold=gate();let calls=0,posts=0;
+ const task=createViewerTask({kind:'replay',errorMessage:()=> 'Fixed',workflow:async()=>{calls++;await hold.promise;return {status:'succeeded',published:2};}});
+ const request=async(_url,options)=>{
+  if(options?.method==='POST'){posts++;return new Response(JSON.stringify(task.start()));}
+  return new Response(JSON.stringify(task.snapshot()));
+ };
+ const abort=new AbortController();const first=createTaskClient('/api/sync','sync',request,async()=>{});
+ await assert.rejects(first.run(()=>abort.abort(),abort.signal),{name:'AbortError'});
+ assert.equal(task.snapshot().status,'running');assert.equal(calls,1);const id=task.snapshot().id;
+ const second=createTaskClient('/api/sync','sync',request,async()=>{});
+ const restored=await second.resume(job=>{assert.equal(job.id,id);if(job.status==='running')hold.release();});
+ assert.equal(restored.status,'succeeded');assert.equal(restored.result.published,2);assert.equal(posts,1);assert.equal(calls,1);
+ const third=await createTaskClient('/api/sync','sync',request,async()=>{}).resume(()=>{});
+ assert.equal(third.id,id);assert.equal(third.status,'succeeded');assert.equal(posts,1);
+});
