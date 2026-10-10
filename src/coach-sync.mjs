@@ -1,10 +1,12 @@
+import {CoachSyncError} from './coach-sync-error.mjs';
+import {bundleFiles} from './coach-bundle-files.mjs';
 import { execFile } from 'node:child_process';
 import { createGitBatch } from './git-batch.mjs';
 import { mkdir, readFile, writeFile, rename, open, rm, lstat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { defaultDataDir } from './history.mjs';
-import { serializeCoachJson, resolveCoachBundle } from './coach-bundle.mjs';
+import { serializeCoachJson } from './coach-bundle.mjs';
 import { validateBundleFiles, validateStagedRepository, validateSyncHistoryApproval, isCollectionSyncPath, isCoachSyncPath, createSyncValidationSession } from './sync-security.mjs';
 
 const NAMES = ['summary.json', 'coach.json', 'cards.json', 'manifest.json'];
@@ -57,9 +59,7 @@ const digest = content => createHash('sha256').update(content).digest('hex');
 const locations = dataDir => ({ root: join(resolve(dataDir), 'coach-sync'), state: join(resolve(dataDir), 'coach-sync', 'state.json'), repo: join(resolve(dataDir), 'coach-sync', 'repository') });
 const initialState = () => ({ schema: 'MTGA_LOCAL_SYNC_V1', enabled: false, repository: null, pending: [], synced: {}, last_synced: null });
 
-export class CoachSyncError extends Error {
-  constructor(code, message) { super(message); this.name = 'CoachSyncError'; this.code = code; }
-}
+export { CoachSyncError } from './coach-sync-error.mjs';
 function fail(code, message) { throw new CoachSyncError(code, message); }
 export function syncErrorMessage(error) {
   if (error instanceof CoachSyncError || error?.code === 'MTGA_SYNC_SECURITY') return error.message;
@@ -221,28 +221,8 @@ export async function getCoachHistoryKey(matchId, options = {}) {
   return state.synced[matchId]?.history_key ?? state.pending.find(item => item.match_id === matchId)?.history_key ?? state.history_keys?.[matchId] ?? null;
 }
 
-function bundleFiles(bundle) {
-  const files = new Map(NAMES.map(name => [name, serializeCoachJson(bundle[name.slice(0, -5)])]));
-  if (!HISTORY_KEY.test(bundle.historyKey ?? '') || !SHA.test(bundle.contentHash ?? '') || bundle.manifest.content_hash !== bundle.contentHash || bundle.summary.match_id !== bundle.manifest.match_id) fail('SYNC_BUNDLE', 'Coach bundle identity is invalid.');
-  const parts = bundle.parts instanceof Map ? [...bundle.parts] : Object.entries(bundle.parts ?? {});
-  for (const [name, value] of parts) {
-    if (PART_PATH.exec(name)?.[1] !== bundle.historyKey) fail('SYNC_BUNDLE', 'Coach object part path is invalid.');
-    files.set(name, typeof value === 'string' ? value : serializeCoachJson(value));
-  }
-  validateBundleFiles(new Map([...files].map(([name, content]) => [NAMES.includes(name) ? `latest/${name}` : name, content])));
-  // A secret or machine path must also be rejected if it crosses chunk boundaries.
-  // Resolve from the supplied in-memory parts only, then scan the full semantics.
-  validateBundleFiles(new Map([['latest/coach.json', serializeCoachJson(resolveCoachBundle(bundle.coach, new Map(parts)))]]));
-  const hashedNames = [...files.keys()].filter(name => name !== 'manifest.json');
-  if (Object.keys(bundle.manifest.files ?? {}).length !== hashedNames.length) fail('SYNC_BUNDLE', 'Coach manifest does not cover every bundle file.');
-  for (const name of hashedNames) {
-    if (bundle.manifest.files?.[name]?.sha256 !== digest(files.get(name)) || bundle.manifest.files?.[name]?.bytes !== Buffer.byteLength(files.get(name))) fail('SYNC_BUNDLE', 'Coach bundle integrity check failed.');
-  }
-  if (digest(serializeCoachJson(bundle.manifest.files)) !== bundle.contentHash) fail('SYNC_BUNDLE', 'Coach bundle content hash is invalid.');
-  return files;
-}
 export async function enqueueCoachBundle(bundle, options = {}) {
-  const dataDir = options.dataDir ?? defaultDataDir(), files = bundleFiles(bundle);
+  const dataDir = options.dataDir ?? defaultDataDir(), files = options.computePool ? await options.computePool.run('bundleFiles',{bundle}) : bundleFiles(bundle);
   return locked(dataDir, async () => {
     const state = await readState(dataDir), id = bundle.summary.match_id;
     const stableKey = state.synced[id]?.history_key ?? state.pending.find(item => item.match_id === id)?.history_key;
@@ -349,7 +329,7 @@ export async function assertStagedSyncOwnership(git, namespace) {
 export { locked as withCoachSyncLock, runner as coachSyncRunner, privateRepository as verifyPrivateSyncRepository,
   prepareCheckout as prepareSyncCheckout, locations as coachSyncLocations, readState as readCoachSyncState,
   atomicWrite as atomicSyncWrite, safeOutputParents as safeSyncOutputParents, verifyRemote as verifySyncRemote };
-async function queuedFiles(item, dataDir) {
+async function queuedFiles(item, dataDir, computePool) {
   if (!HISTORY_KEY.test(item.history_key ?? '') || !SHA.test(item.content_hash ?? '')) fail('SYNC_STATE', 'Invalid pending bundle reference.');
   const directory = join(locations(dataDir).root, 'bundles', item.history_key, item.content_hash);
   await safeOutputParents(locations(dataDir).root, `bundles/${item.history_key}/${item.content_hash}/summary.json`);
@@ -379,7 +359,8 @@ async function queuedFiles(item, dataDir) {
     if (!stat.isFile() || stat.isSymbolicLink()) fail('SYNC_WORKTREE', 'Pending object part must be a regular file.');
     const text = await readFile(path, 'utf8'); parts.set(name, text); files.set(name, text);
   }
-  bundleFiles({ ...values, parts, historyKey: item.history_key, contentHash: item.content_hash });
+  const bundle = { ...values, parts, historyKey: item.history_key, contentHash: item.content_hash };
+  if (computePool) await computePool.run('bundleFiles',{bundle}); else bundleFiles(bundle);
   if (values.summary.match_id !== item.match_id || values.summary.started_at !== item.started_at) fail('SYNC_STATE', 'Pending bundle metadata differs from its contents.');
   return { files, summary: values.summary };
 }
@@ -445,7 +426,7 @@ async function publishPending(state, dataDir, options) {
   if (index.schema !== 'MTGA_COACH_INDEX_V1' || !Array.isArray(index.matches)) fail('SYNC_INDEX', 'Published match index is invalid.');
   let committed = 0;
   for (const item of [...state.pending].sort((a, b) => -byDate(a, b))) {
-    const { files, summary } = await queuedFiles(item, dataDir);
+    const { files, summary } = await queuedFiles(item, dataDir, options.computePool);
     const previous = index.matches.find(match => match.match_id === item.match_id);
     if (previous && previous.history_key !== item.history_key) fail('SYNC_BUNDLE', 'Published history key differs from the queued bundle; regenerate with its existing stable history key.');
     if (previous?.content_hash === item.content_hash) continue;
@@ -459,7 +440,7 @@ async function publishPending(state, dataDir, options) {
     const writes = new Map([...files].map(([name, text]) => [NAMES.includes(name) ? `${path}/${name}` : name, text]));
     if (index.latest_match_id === item.match_id) for (const name of NAMES) writes.set(`latest/${name}`, files.get(name));
     writes.set('index.json', serializeCoachJson(index)); writes.set('README.md', README + collectionEntry); writes.set('.gitignore', GITIGNORE);
-    validateBundleFiles(writes);
+    if(options.computePool)await options.computePool.run('validateFiles',{files:writes});else validateBundleFiles(writes);
     for (const [path, text] of writes) {
       // Existing symlinks and gitlinks were rejected by the Git-object guard.
       await safeOutputParents(repoDir, path);

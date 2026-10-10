@@ -1,3 +1,4 @@
+import {CoachSyncError} from './coach-sync-error.mjs';
 import { Worker } from 'node:worker_threads';
 
 /** Bounded CPU pool. Only structured, read-only computation is accepted.
@@ -26,7 +27,7 @@ export function createComputePool({ size = 2, maxQueue = 32 } = {}) {
     slot.worker.unref();
     slot.worker.on('message', message => {
       if (slot.task?.id !== message.id) return;
-      const error=message.error?Error('CPU task failed'):null;if(error&&message.security)error.code='MTGA_SYNC_SECURITY';
+      const error=message.error?(message.code==='SYNC_BUNDLE'?new CoachSyncError('SYNC_BUNDLE','Coach bundle validation failed; no upload was attempted.'):Error('CPU task failed')):null;if(error&&message.security)error.code='MTGA_SYNC_SECURITY';
       finish(slot,error,message.value);
     });
     slot.worker.on('error', () => {
@@ -44,7 +45,7 @@ export function createComputePool({ size = 2, maxQueue = 32 } = {}) {
   return {
     run(operation, input) {
       if (closed) return Promise.reject(Error('CPU pool closed'));
-      if (!['bundle','validate'].includes(operation)) return Promise.reject(Error('Unsupported CPU operation'));
+      if (!['bundle','validate','bundleFiles','validateFiles'].includes(operation)) return Promise.reject(Error('Unsupported CPU operation'));
       if (waiting.length >= maxQueue) return Promise.reject(Error('CPU queue full'));
       return new Promise((resolve,reject) => { waiting.push({id:++sequence,operation,input,resolve,reject}); dispatch(); });
     },
