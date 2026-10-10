@@ -211,7 +211,7 @@ test('Coach Context is a native JSON attachment with exact before hand, no futur
 test('collection API rejects foreign/parameterized actions and excludes concurrent replay publication', async t => {
  let reads=0,release;const gate=new Promise(resolve=>{release=resolve;});
  const {url}=await setup(t,{collectionUpdate:async()=>{reads++;await gate;return {local_updated:true,synced:true,summary:{card_kinds:3,total_quantity:9}};}});
- const headers={Origin:new URL(url).origin,'X-MTGA-Replay-Action':'collection-update'};
+ const headers={Origin:new URL(url).origin,'X-MTGA-Replay-Action':'collection-update','X-MTGA-Replay-Account-Confirmation':'unknown-account-reviewed'};
  for(const override of [{Origin:'https://foreign.invalid'},{'X-MTGA-Replay-Action':'wrong'}])assert.equal((await fetch(url+'api/collection',{method:'POST',headers:{...headers,...override}})).status,403);
  assert.equal((await fetch(url+'api/collection?path=/private',{method:'POST',headers})).status,400);
  assert.equal((await fetch(url+'api/collection',{method:'POST',headers,body:'{}'})).status,400);assert.equal(reads,0);

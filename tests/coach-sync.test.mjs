@@ -65,7 +65,7 @@ async function harness(t) {
   t.after(() => rm(directory, { recursive: true, force: true }));
   const dataDir = join(directory, 'local-data'), bare = join(directory, 'remote.git');
   await execute('git', ['init', '--bare', '-b', 'main', bare], { env });
-  const control = { visibility: 'PRIVATE', offline: false, unavailableGh: false, rejectPush: false, calls: [], visibilityChecks: 0, publicAtCheck: Infinity, gitEnv: {} };
+  const control = { visibility: 'PRIVATE', offline: false, unavailableGh: false, rejectPush: false, losePushResponse:false,calls: [], visibilityChecks: 0, publicAtCheck: Infinity, gitEnv: {} };
   const runCommand = async (file, args, { cwd, encoding = 'utf8', env: commandEnv = {}, input } = {}) => {
     control.calls.push({ file, args: [...args] });
     if (file === 'gh') {
@@ -88,7 +88,7 @@ async function harness(t) {
     const routed = networkCommand ? ['-c', `url.${bare}.insteadOf=${REMOTE_URL}`, ...args] : args;
     return new Promise((resolve, reject) => {
       const child = execFile(file, routed, { cwd, encoding, env: { ...process.env, ...env, ...control.gitEnv, ...commandEnv },
-        timeout: 30000, maxBuffer: 32 * 1024 * 1024 }, (error, stdout, stderr) => error ? reject(error) : resolve({ stdout, stderr }));
+        timeout: 30000, maxBuffer: 32 * 1024 * 1024 }, (error, stdout, stderr) => error ? reject(error) : networkCommand==='push'&&control.losePushResponse ? reject(Error('Synthetic lost push acknowledgement')) : resolve({ stdout, stderr }));
       child.stdin.on('error', reject); child.stdin.end(input);
     });
   };
@@ -765,4 +765,9 @@ test('individually safe string chunks cannot conceal a credential after multipar
   });
   assert.equal((await getCoachSyncStatus({ ...h.options, verify: false })).pending, 0); assert.equal(await h.commits(), 0);
   assert.equal(h.control.calls.some(call => call.file === 'git'), false);
+});
+
+test('push success with lost acknowledgement is freshly reconciled without another commit or upload',async t=>{
+ const h=await harness(t);await configureCoachSync(REPOSITORY,h.options);const value=await bundle();await enqueueCoachBundle(value,h.options);h.control.losePushResponse=true;
+ const result=await syncCoachBundles(h.options);assert.equal(result.synced,true);assert.equal(result.pending,0);assert.equal(await h.commits(),1);assert.equal(h.control.calls.filter(call=>call.args.includes('push')).length,1);assert.equal(await h.published('latest/cards.json'),serializeCoachJson(value.cards));
 });

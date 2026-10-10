@@ -1,5 +1,5 @@
 export interface TaskJob<Result> {
-  id: string | null; status: 'idle' | 'running' | 'succeeded' | 'partial' | 'failed';
+  id: string | null; status: 'idle' | 'running' | 'succeeded' | 'partial' | 'failed' | 'needs_recovery';
   progress?: { phase: string; completed?: number; total?: number; timings_ms?: Record<string, number> } | null;
   result?: Result | null; error?: string | null;
   started_at?: string; finished_at?: string; elapsed_ms?: number; phase_elapsed_ms?: number;
@@ -68,6 +68,13 @@ export function createTaskClient<Result>(path: '/api/sync' | '/api/collection', 
     })();
   }
   return {
+    reconcile(onChange:(job:TaskJob<Result>)=>void,signal?:AbortSignal,connection?:(lost:boolean)=>void):Promise<TaskJob<Result>> {
+      return observe(async()=>{
+        const response=await request('/api/sync/reconcile',{method:'POST',headers:{'X-MTGA-Replay-Action':'sync-reconcile'},signal:signal?AbortSignal.any([signal,AbortSignal.timeout(10000)]):AbortSignal.timeout(10000),cache:'no-store'});
+        if(!response.ok)throw new Error('无法核对中断任务，请人工检查。');
+        return poll(onChange,signal,connection,await response.json() as TaskJob<Result>);
+      },signal);
+    },
     resume(onChange: (job: TaskJob<Result>) => void, signal?: AbortSignal, connection?: (lost: boolean) => void): Promise<TaskJob<Result>> {
       return observe(async () => poll(onChange, signal, connection, await readConnected(signal, connection)), signal);
     },
@@ -78,11 +85,12 @@ export function createTaskClient<Result>(path: '/api/sync' | '/api/collection', 
         // The page may have been idle while another window completed a job.
         // Capture a fresh baseline, not the last result this client happened to see.
         const previous = await readConnected(signal, connection);
+        if (previous.status === 'needs_recovery') { onChange(previous); throw new Error(previous.error ?? '上次任务需要人工核对后恢复。'); }
         if (previous.status === 'running') return poll(onChange, signal, connection, previous);
         const previousId = previous.id;
         let response: Response;
         let initial: TaskJob<Result> | undefined;
-        try { response = await request(retryUpload ? '/api/collection/sync' : path, { method: 'POST', headers: { 'X-MTGA-Replay-Action': retryUpload ? 'collection-sync' : action },
+        try { response = await request(retryUpload ? '/api/collection/sync' : path, { method: 'POST', headers: { 'X-MTGA-Replay-Action': retryUpload ? 'collection-sync' : action, ...(action==='collection-update'&&!retryUpload?{'X-MTGA-Replay-Account-Confirmation':'unknown-account-reviewed'}:{}) },
           signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10000)]) : AbortSignal.timeout(10000), cache: 'no-store' });
           // Headers can arrive before a socket failure truncates the JSON body.
           if (response.ok) initial = await response.json() as TaskJob<Result>;

@@ -89,3 +89,13 @@ test('an authoritative 409 is shown once without mutation retries', async () => 
  await assert.rejects(createTaskClient('/api/sync','sync',request,async()=>{}).run(()=>{}),/另一个数据任务正在运行/);
  assert.deepEqual(methods,['GET','POST']);
 });
+
+test('two reopened observers see interrupted task and neither repeats POST',async()=>{
+ const methods:string[]=[];const request=(async(_url,options)=>{methods.push(options?.method??'GET');return new Response(JSON.stringify({id:'interrupted',status:'needs_recovery',error:'人工核对'}));})as typeof fetch;
+ const clients=[createTaskClient('/api/sync','sync',request,async()=>{}),createTaskClient('/api/sync','sync',request,async()=>{})];
+ for(const client of clients){assert.equal((await client.resume(()=>{})).status,'needs_recovery');await assert.rejects(client.run(()=>{}),/人工核对/);}assert.deepEqual(methods,['GET','GET','GET','GET']);
+});
+test('explicit reconciliation invokes only the protected read-only reconcile route, never the upload route',async()=>{
+ const seen:string[]=[];const request=(async(url,options)=>{seen.push(String(url));assert.equal(options?.method,'POST');assert.deepEqual(options?.headers,{'X-MTGA-Replay-Action':'sync-reconcile'});return new Response(JSON.stringify({id:'retained',status:'succeeded'}));})as typeof fetch;
+ assert.equal((await createTaskClient('/api/sync','sync',request,async()=>{}).reconcile(()=>{})).status,'succeeded');assert.deepEqual(seen,['/api/sync/reconcile']);
+});

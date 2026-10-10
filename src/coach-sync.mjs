@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { createGitBatch } from './git-batch.mjs';
 import { mkdir, readFile, writeFile, rename, open, rm, lstat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
@@ -298,8 +299,8 @@ async function prepareCheckout(state, meta, run, repoDir, options = {}) {
   const validationSession = options.validationSession ?? createSyncValidationSession();
   const validate = async () => {
     options.onProgress?.({ phase: 'security' });
-    return validateStagedRepository(repoDir, { ...historyOptions, validationSession,
-      onValidation: options.onValidation, runGit: (args, settings) => git(args, settings.encoding, settings.input) });
+    return validateStagedRepository(repoDir, { ...historyOptions, validationSession, computePool:options.computePool,
+      onValidation: options.onValidation, gitBatchFactory: options.gitBatchFactory ? ()=>options.gitBatchFactory({repoDir}) : !options.runCommand ? ()=>createGitBatch({cwd:repoDir,gitArgs:['-c','core.hooksPath=/dev/null','-c','commit.gpgsign=false'],env:{GIT_DIR:join(repoDir,'.git'),GIT_WORK_TREE:repoDir,GIT_INDEX_FILE:join(repoDir,'.git/index'),GIT_TERMINAL_PROMPT:'0',GIT_CONFIG_NOSYSTEM:'1'}}) : undefined, runGit: (args, settings) => git(args, settings.encoding, settings.input) });
   };
   let exists = false;
   try { const stat = await lstat(join(repoDir, '.git')); exists = stat.isDirectory() && !stat.isSymbolicLink(); if (!exists) fail('SYNC_WORKTREE', 'Unexpected sync checkout metadata.'); }
@@ -426,7 +427,7 @@ export async function getPublishedCoachIndex(options = {}) {
       history_key: item.history_key, content_hash: item.content_hash, started_at: item.started_at,
     }]));
     await saveState(dataDir, state);
-    return { source: 'remote', index, commit, pending: state.pending };
+    return { source: 'remote', index, commit, pending: state.pending, destination_hash:createHash('sha256').update(`${state.repository}:${branch}`).digest('hex') };
   });
 }
 async function publishPending(state, dataDir, options) {
@@ -481,7 +482,17 @@ async function publishPending(state, dataDir, options) {
   await validate();
   await assertOutgoingSyncOwnership(git, branch, 'coach', Boolean(meta.defaultBranchRef?.name));
   const remoteCount = meta.defaultBranchRef?.name ? Number(String(await git(['rev-list', '--count', `origin/${branch}..HEAD`])).trim()) : 1;
-  if (remoteCount) { options.onProgress?.({ phase: 'uploading' }); await git(['push', '--set-upstream', 'origin', branch]); }
+  const expectedCommit=String(await git(['rev-parse','HEAD'])).trim();
+  options.onProgress?.({phase:'uploading',checkpoint:{commit:expectedCommit,destination_hash:createHash('sha256').update(`${state.repository}:${branch}`).digest('hex')}});
+  let pushError;
+  if (remoteCount) { try { await git(['push', '--set-upstream', 'origin', branch]); } catch(error) {pushError=error;} }
+  // A transport acknowledgement is not proof. Freshly fetch and validate all
+  // reachable raw objects, then require the intended immutable commit tip.
+  try {
+    await git(['fetch','--prune','origin']);await validate();
+    if(String(await git(['rev-parse',`refs/remotes/origin/${branch}`])).trim()!==expectedCommit)fail('SYNC_REMOTE_VERIFY','Remote publication could not be confirmed.');
+  } catch(error) {throw pushError ?? error;}
+
   for (const item of state.pending) state.synced[item.match_id] = { content_hash: item.content_hash, history_key: item.history_key, started_at: item.started_at };
   state.pending = []; state.last_error = null; state.visibility = 'PRIVATE'; state.verified_at = new Date().toISOString();
   state.last_synced = { match_id: index.latest_match_id, at: new Date().toISOString(), commit: String(await git(['rev-parse', 'HEAD'])).trim() };

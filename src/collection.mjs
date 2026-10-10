@@ -1,3 +1,4 @@
+import { withCollectionLock } from './collection-lock.mjs';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile, rename, lstat, open, rm, link } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -275,15 +276,9 @@ async function regularText(path) {
   const info = await lstat(path); requireValue(info.isFile() && !info.isSymbolicLink());
   return readFile(path, 'utf8');
 }
-async function localLock(root, callback) {
-  const path = join(root, 'save.lock'); let handle;
-  try { handle = await open(path, 'wx', 0o600); }
-  catch (error) {
-    if (error.code !== 'EEXIST') throw error;
-    fail('COLLECTION_BUSY', 'A collection save lock was retained; confirm no collection operation is running, then use mtga-gpt-collection status --recover-lock.');
-  }
-  try { await handle.writeFile(String(process.pid)); return await callback(); }
-  finally { await handle.close(); await rm(path, { force: true }); }
+async function localLock(root,callback) {
+  try { return await withCollectionLock(root,'save.lock',callback); }
+  catch(error) { if(error.code==='COLLECTION_BUSY') fail('COLLECTION_BUSY','A collection save/recovery lock is retained; confirm no operation is running before explicit recovery.'); throw error; }
 }
 function comparePrevious(previous, next) {
   if (!previous) return;

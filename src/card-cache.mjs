@@ -3,28 +3,38 @@ import { join } from 'node:path';
 import { defaultDataDir } from './history.mjs';
 
 const pending = new Map();
-let requestQueue = Promise.resolve(), lastRequest = 0;
+let requestQueue = Promise.resolve(), lastRequest = -Infinity;
 const failedImages = new Map();
+let metadataActive = 0; const metadataWaiters = [];
+async function metadataSlot(callback) {
+  if(metadataWaiters.length>=32)throw Error('Public metadata queue is full');
+  if (metadataActive >= 2) await new Promise(resolve => metadataWaiters.push(resolve));
+  else metadataActive++;
+  try { return await callback(); }
+  finally { const next = metadataWaiters.shift(); if(next)next(); else metadataActive--; }
+}
 const cachePath = (dataDir, arenaId, extension) => join(dataDir, 'cards', `${arenaId}.${extension}`);
 function validateId(id) {
   if (!Number.isSafeInteger(id) || id <= 0) throw new Error('Invalid Arena card ID.');
 }
+let imageActive=0;const imageWaiters=[];
+async function imageSlot(callback){if(imageWaiters.length>=32)throw Error('Public image queue is full');if(imageActive>=2)await new Promise(resolve=>imageWaiters.push(resolve));else imageActive++;try{return await callback();}finally{const next=imageWaiters.shift();if(next)next();else imageActive--;}}
 async function request(url, fetchFn) {
-  const result = requestQueue.then(async () => {
-    const delay = Math.max(0, 120 - (Date.now() - lastRequest));
+  const start = requestQueue.then(async () => {
+    const delay = Math.max(0, 120 - (performance.now() - lastRequest));
     if (delay) await new Promise(resolve => setTimeout(resolve, delay));
-    lastRequest = Date.now();
-    return fetchFn(url, { headers: { 'User-Agent': 'mtga-gpt-replay/0.2 (private local replay viewer)', Accept: 'application/json,image/*' }, signal: AbortSignal.timeout(8000) });
+    lastRequest = performance.now();
   });
-  requestQueue = result.then(() => {}, () => {});
-  return result;
+  requestQueue = start.catch(() => {});
+  await start;
+  return fetchFn(url, { headers: { 'User-Agent': 'mtga-gpt-replay/0.2 (private local replay viewer)', Accept: 'application/json,image/*' }, signal: AbortSignal.timeout(8000) });
 }
 async function atomicWrite(path, value) {
   const temporary = `${path}.${process.pid}.tmp`;
   await writeFile(temporary, value, { mode: 0o600 });
   await rename(temporary, path);
 }
-function normalizeCard(card, id, local) {
+function normalizeCard(card, id, local, identityVerified) {
   const face = card.card_faces?.[0];
   const image = card.image_uris?.normal ?? face?.image_uris?.normal;
   return { ...local, arena_id: id, name: card.name ?? local.name,
@@ -35,7 +45,7 @@ function normalizeCard(card, id, local) {
     oracle_text: card.oracle_text ?? (card.card_faces?.map(face => `${face.name}\n${face.oracle_text ?? ''}`).join('\n\n')),
     keywords: Array.isArray(card.keywords) ? [...card.keywords] : undefined,
     layout: card.layout,
-    scryfall_id: card.id, image_source: image,
+    scryfall_id: card.id, image_source: image, identity_verified:identityVerified,
     card_faces: card.card_faces?.map(face => ({ name: face.name, mana_cost: face.mana_cost, type_line: face.type_line,
       oracle_text: face.oracle_text, power: face.power, toughness: face.toughness,
       keywords: face.keywords,
@@ -51,6 +61,7 @@ export async function getCardMetadata(arenaId, { dataDir = defaultDataDir(), loc
   let previousSafeMetadata;
   try {
     const cached = JSON.parse(await readFile(filename, 'utf8'));
+    if(cached.arena_id!==undefined&&cached.arena_id!==arenaId)throw new SyntaxError('Mismatched cached identity');
     const safePrinted = cached.source === 'scryfall' && cached.cache_schema === 2;
     if ((cached.source !== 'scryfall' || (safePrinted && (cached.rules_schema === 1 || cached.retry_after > Date.now())))
       && (!cached.retry_after || cached.retry_after > Date.now())) return cached;
@@ -58,21 +69,22 @@ export async function getCardMetadata(arenaId, { dataDir = defaultDataDir(), loc
   } catch (error) { if (error.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error; }
   const key = `${dataDir}:${arenaId}:metadata`;
   if (pending.has(key)) return pending.get(key);
-  const task = (async () => {
+  const task = metadataSlot(async () => {
     await mkdir(join(dataDir, 'cards'), { recursive: true, mode: 0o700 });
-    let card;
+    let card,namedLookup=false;
     try {
       let response = await request(`https://api.scryfall.com/cards/arena/${arenaId}`, fetchFn);
       if (!response.ok && local.name && !/^Arena card \d+$/.test(local.name)) {
+        namedLookup=true;
         response = await request(`https://api.scryfall.com/cards/named?exact=${encodeURIComponent(local.name)}`, fetchFn);
       }
-      if (response.ok) card = await response.json();
+      if (response.ok) {card=await response.json();if(namedLookup&&card.name!==local.name&&!card.card_faces?.some(face=>face.name===local.name))card=undefined;}
     } catch { /* Offline/rate limited: the local board remains usable. */ }
-    const metadata = card ? normalizeCard(card, arenaId, local) : previousSafeMetadata ? { ...previousSafeMetadata, retry_after: Date.now() + 60_000 } : { ...local, arena_id: arenaId, name: local.name ?? `Arena card ${arenaId}`,
+    const metadata = card ? normalizeCard(card, arenaId, local, !namedLookup||card.arena_id===arenaId) : previousSafeMetadata ? { ...previousSafeMetadata, arena_id:arenaId,retry_after: Date.now() + 60_000 } : { ...local, arena_id: arenaId, name: local.name ?? `Arena card ${arenaId}`,
       source: 'local', image_available: false, retry_after: Date.now() + 60_000 };
     await atomicWrite(filename, JSON.stringify(metadata));
     return metadata;
-  })();
+  });
   pending.set(key, task);
   try { return await task; } finally { pending.delete(key); }
 }
@@ -88,7 +100,7 @@ export async function getCardImage(arenaId, options = {}) {
   const key = `${dataDir}:${arenaId}:image`;
   if ((failedImages.get(key) ?? 0) > Date.now()) return null;
   if (pending.has(key)) return pending.get(key);
-  const task = (async () => {
+  const task = imageSlot(async () => {
     const metadata = await getCardMetadata(arenaId, options);
     if (!metadata.image_source) return null;
     let url;
@@ -105,7 +117,7 @@ export async function getCardImage(arenaId, options = {}) {
       await atomicWrite(cachePath(dataDir, arenaId, 'json'), JSON.stringify({ ...metadata, image_content_type: contentType }));
       return { data, contentType };
     } catch { failedImages.set(key, Date.now() + 60_000); return null; }
-  })();
+  });
   pending.set(key, task);
   try { return await task; } finally { pending.delete(key); }
 }

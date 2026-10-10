@@ -1,3 +1,4 @@
+import { createTaskJournal } from './task-journal.mjs';
 import { createServer } from 'node:http';
 import { readFile, stat, realpath, mkdir, writeFile, rm } from 'node:fs/promises';
 import { resolve, join, extname, sep } from 'node:path';
@@ -20,8 +21,9 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
   const root = await realpath(resolve(viewerDir)).catch(() => resolve(viewerDir));
   const chineseNames = displayNamesZh ?? await loadInstalledChineseDisplayNames();
   let assignedPort, closePromise, closing = false;
-  const sync = createViewerSync({ dataDir, workflow: syncWorkflow, notify: notifyTask });
-  const collection = createViewerCollection({ dataDir, update: collectionUpdate, sync: collectionSync, notify: notifyTask });
+  const journal = enableReplaySync || enableCollection ? createTaskJournal(dataDir) : null;
+  const sync = createViewerSync({ dataDir, workflow: syncWorkflow, notify: notifyTask, journal });
+  const collection = createViewerCollection({ dataDir, update: collectionUpdate, sync: collectionSync, notify: notifyTask, journal });
   const localHistory = includeLocalHistory && observeLocalLogs ? createLocalReplayHistory({ ...localHistoryOptions, dataDir }) : null;
   const coach = liveCoach ? createCoachRoutes(liveCoach, { isClosing: () => closing }) : null;
   function send(response, status, value, contentType = 'application/json; charset=utf-8', extraHeaders = {}) {
@@ -69,14 +71,22 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
       if (coach && await coach.handle(request, response, url)) return;
       // The async coach dispatch may have yielded while shutdown began.
       if (closing && !['GET', 'HEAD'].includes(request.method)) return send(response, 503, { error: 'Local replay service is shutting down; no new action was started.' });
-      if (path === '/api/sync' && !enableReplaySync) return send(response, 403, { error: 'Replay synchronization is disabled in this isolated corpus server.' });
+      if ((path === '/api/sync'||path==='/api/sync/reconcile') && !enableReplaySync) return send(response, 403, { error: 'Replay synchronization is disabled in this isolated corpus server.' });
       if ((path === '/api/collection' || path === '/api/collection/sync') && !enableCollection) return send(response, 403, { error: 'Collection updates are disabled in this isolated corpus server.' });
       if ((path === '/api/collection' || path === '/api/collection/sync') && request.method === 'POST') {
         const operation = path.endsWith('/sync') ? 'sync' : 'update';
         if (request.headers.origin !== `http://${request.headers.host}` || request.headers['x-mtga-replay-action'] !== `collection-${operation}`) return send(response, 403, { error: 'Same-origin collection action required.' });
         if (url.search || request.headers['transfer-encoding'] || Number(request.headers['content-length'] ?? 0) !== 0) return send(response, 400, { error: 'Collection update does not accept parameters.' });
+        if(operation==='update'&&request.headers['x-mtga-replay-account-confirmation']!=='unknown-account-reviewed')return send(response,409,{error:'无法自动识别账户；请确认当前 Arena 账户后再更新。'});
         if (sync.snapshot().status === 'running') return send(response, 409, { error: 'Replay upload is running; retry after completion.' });
+        if(collection.snapshot().status==='needs_recovery'||sync.snapshot().status==='needs_recovery')return send(response,409,{error:'服务中断后的任务需要人工核对，请勿重复上传。'});
         return send(response, 202, collection.start(operation));
+      }
+      if(path==='/api/sync/reconcile'&&request.method==='POST') {
+        if(request.headers.origin!==`http://${request.headers.host}`||request.headers['x-mtga-replay-action']!=='sync-reconcile')return send(response,403,{error:'Same-origin reconciliation required.'});
+        if(url.search||request.headers['transfer-encoding']||Number(request.headers['content-length']??0)!==0)return send(response,400,{error:'No parameters accepted.'});
+        if(collection.snapshot().status==='running')return send(response,409,{error:'Collection task is running.'});
+        return send(response,202,sync.reconcile());
       }
       if (path === '/api/sync' && request.method === 'POST') {
         // No body, paths, repository or command accepted. A non-simple header
@@ -85,6 +95,7 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
         if (request.headers.origin !== `http://${request.headers.host}` || request.headers['x-mtga-replay-action'] !== 'sync') return send(response, 403, { error: 'Same-origin replay action required.' });
         if (url.search || request.headers['transfer-encoding'] || Number(request.headers['content-length'] ?? 0) !== 0) return send(response, 400, { error: 'Replay sync does not accept parameters.' });
         if (collection.snapshot().status === 'running') return send(response, 409, { error: 'Collection update is running; retry after completion.' });
+        if(collection.snapshot().status==='needs_recovery'||sync.snapshot().status==='needs_recovery')return send(response,409,{error:'服务中断后的任务需要人工核对，请勿重复上传。'});
         return send(response, 202, sync.start());
       }
       if (request.method !== 'GET' && request.method !== 'HEAD') return send(response, 405, { error: 'Unsupported replay action.' });
@@ -165,6 +176,7 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
       // Finish a publication before shutting down; don't strand a Git write.
       await coach?.close();
       await Promise.all([sync.wait(), collection.wait()]);
+        journal?.close();
       server.closeAllConnections();
       await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
       if (writeInfo) {
