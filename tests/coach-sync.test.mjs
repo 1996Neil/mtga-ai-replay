@@ -748,6 +748,8 @@ test('actual multipart codec survives enqueue, Git staging, publish and lossless
 });
 
 test('individually safe string chunks cannot conceal a credential after multipart resolution', async t => {
+  const {createComputePool}=await import('../src/compute-pool.mjs');
+  const pool=createComputePool({size:2});t.after(()=>pool.close());
   const h = await harness(t); await configureCoachSync(REPOSITORY, h.options); const value = await multipartBundle();
   const [firstPath, secondPath] = value.parts.keys();
   value.parts = new Map([
@@ -762,6 +764,9 @@ test('individually safe string chunks cannot conceal a credential after multipar
   assert.equal(resolveCoachBundle(value.coach, value.parts).coachNotes[0].text, 'ghp_SyntheticSecretMustNotEscape');
   await assert.rejects(enqueueCoachBundle(value, h.options), error => {
     assert.equal(error.code, 'MTGA_SYNC_SECURITY'); assert.doesNotMatch(error.message, /SyntheticSecret/); return true;
+  });
+  await assert.rejects(enqueueCoachBundle(value, {...h.options,computePool:pool}),error=>{
+    assert.equal(error.code,'MTGA_SYNC_SECURITY');assert.doesNotMatch(error.message,/SyntheticSecret/);return true;
   });
   assert.equal((await getCoachSyncStatus({ ...h.options, verify: false })).pending, 0); assert.equal(await h.commits(), 0);
   assert.equal(h.control.calls.some(call => call.file === 'git'), false);
