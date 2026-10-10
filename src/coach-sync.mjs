@@ -286,7 +286,9 @@ async function prepareCheckout(state, meta, run, repoDir, options = {}) {
     '-c', `user.email=${email}`,
     // A real large HTTPS push returned HTTP 400 on this Mac. Use a bounded
     // transport buffer, retain TLS checks, and leave global Git config untouched.
-    ...(args[0] === 'push' ? ['-c', 'http.version=HTTP/1.1', '-c', 'http.postBuffer=67108864'] : []),
+    // Publish only the requested data branch. A user's followTags preference
+    // must not attach local annotated tags whose metadata is not in this guard.
+    ...(args[0] === 'push' ? ['-c', 'http.version=HTTP/1.1', '-c', 'http.postBuffer=67108864', '-c', 'push.followTags=false'] : []),
     ...args], { cwd: repoDir, encoding, input,
     env: { GIT_AUTHOR_NAME: author, GIT_AUTHOR_EMAIL: email, GIT_COMMITTER_NAME: author, GIT_COMMITTER_EMAIL: email,
       GIT_DIR: join(repoDir, '.git'), GIT_WORK_TREE: repoDir, GIT_INDEX_FILE: join(repoDir, '.git', 'index') } });

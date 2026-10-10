@@ -28,7 +28,7 @@ function fixture() {
 
 test('Markdown includes match, opening, chronological actions, result and compact deck', () => {
   const md = toMarkdown(fixture());
-  assert.match(md, /# MTGA Jump In Replay/);
+  assert.match(md, /^# MTGA Replay\n/);
   assert.match(md, /Event: Jump In \(JumpIn/);
   assert.match(md, /On the play: Yes/);
   assert.match(md, /Mountain; Lightning Bolt/);

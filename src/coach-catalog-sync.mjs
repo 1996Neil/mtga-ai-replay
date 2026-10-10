@@ -24,8 +24,9 @@ async function queueReplay(replay, options, published, receipts) {
     return { queued: false, generation_cached: true };
   }
   options.onProgress?.({ phase: 'cards' });
-  const observed = new Map(); let validUntil = null;
-  const cards = await buildCoachCards(replay, { ...options, onMetadata: (id, metadata) => {
+  const observed = new Map(); let validUntil = null, databaseReadComplete = false;
+  const cards = await buildCoachCards(replay, { ...options,
+    onDatabaseRead: complete => { databaseReadComplete = complete; }, onMetadata: (id, metadata) => {
     observed.set(id, syncDigest(metadata));
     const retry = metadata.retry_after ?? (!metadata.source ? Date.now() + 60_000 : null);
     if (retry !== null) validUntil = Math.min(validUntil ?? Infinity, retry);
@@ -35,8 +36,10 @@ async function queueReplay(replay, options, published, receipts) {
   const bundle = await buildCoachBundle(replay, { cards, multipart: true, ...(historyKey ? { historyKey } : {}) });
   const queued = await enqueueCoachBundle(bundle, options);
   const after = await coachInputFingerprint(replay, options);
-  let stable = fingerprint && after && fingerprint.core === after.core;
+  let stable = databaseReadComplete && fingerprint && after && fingerprint.core === after.core;
+  const dependencies = new Set(after?.metadataIds ?? []);
   for (const [id, hash] of observed) {
+    if (!dependencies.has(id)) stable = false;
     try { if (syncDigest(JSON.parse(await readFile(join(options.dataDir, 'cards', `${id}.json`), 'utf8'))) !== hash) stable = false; }
     catch { stable = false; }
   }

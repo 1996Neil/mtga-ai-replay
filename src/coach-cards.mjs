@@ -73,10 +73,10 @@ function rulesText(value) {
   return plainText(value).replace(/\{(o[^}]+)\}/g, (match, encoded) => manaSymbols(encoded) ?? match);
 }
 
-async function localStaticCards(ids, path) {
+async function localStaticCards(ids, path, onDatabaseRead) {
   const result = new Map();
-  if (!path) return result;
-  let database;
+  if (!path) { onDatabaseRead?.(true); return result; }
+  let database, complete = false;
   try {
     if (!(await stat(path)).isFile()) return result;
     const { DatabaseSync } = await import('node:sqlite');
@@ -110,8 +110,9 @@ async function localStaticCards(ids, path) {
         has_linked_faces: Boolean(card.LinkedFaceGrpIds), linked_face_ids: linkedFaces,
       });
     }
+    complete = true;
   } catch { /* Optional local static data must not block the public metadata fallback. */ }
-  finally { database?.close(); }
+  finally { database?.close(); onDatabaseRead?.(complete); }
   return result;
 }
 
@@ -123,10 +124,24 @@ function staticFace(face) {
   return result;
 }
 
-/** Static rules for legal known identities only; no images, paths or dynamic game stats. */
-export async function buildCoachCards(replay, { dataDir = defaultDataDir(), fetchFn = fetch, displayNamesZh, cardDb, onMetadata } = {}) {
+/** A conservative superset of every metadata file buildCoachCards can read.
+ * Share the identity/linked-face resolver with generation so hidden identities
+ * and unrelated cached cards cannot enlarge or invalidate a replay receipt. */
+export async function coachCardMetadataIds(replay, { cardDb } = {}) {
   const identities = collectIdentities(replay);
-  const local = await localStaticCards(identities.keys(), cardDb ?? await discoverCardDatabase());
+  let complete = false;
+  const local = await localStaticCards(identities.keys(), cardDb ?? await discoverCardDatabase(), value => { complete = value; });
+  // A transient optional DB failure is acceptable for display generation, but
+  // cannot establish a complete dependency set for a reusable receipt.
+  if (!complete) return null;
+  return [...new Set([...identities.keys(), ...local.keys(),
+    ...[...local.values()].flatMap(card => card.linked_face_ids ?? [])])].sort((a, b) => a - b);
+}
+
+/** Static rules for legal known identities only; no images, paths or dynamic game stats. */
+export async function buildCoachCards(replay, { dataDir = defaultDataDir(), fetchFn = fetch, displayNamesZh, cardDb, onMetadata, onDatabaseRead } = {}) {
+  const identities = collectIdentities(replay);
+  const local = await localStaticCards(identities.keys(), cardDb ?? await discoverCardDatabase(), onDatabaseRead);
   const chinese = displayNamesZh ?? await loadInstalledChineseDisplayNames();
   const result = [];
   for (const [id, observedName] of [...identities].sort(([a], [b]) => a - b)) {

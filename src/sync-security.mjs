@@ -200,19 +200,86 @@ function parseEntries(output, kind, approvedFiles = new Map()) {
     if (tab < 0) reject('', 'git-inspection-format');
     const path = record.slice(tab + 1), fields = record.slice(0, tab).split(' ');
     const [mode, middle, last] = fields;
-    const approved = approvedFiles.get(path);
-    if (!allowedPath(path) && !approved) reject(path, 'unapproved-file-path');
-    if (!MODES.has(mode)) reject(path, 'symlink-or-gitlink');
     if (kind === 'index' && last !== '0') reject(path, 'unmerged-index-entry');
     if (kind === 'tree' && middle !== 'blob') reject(path, 'non-blob-git-entry');
     const hash = kind === 'index' ? middle : last;
-    if (!/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(hash ?? '')) reject(path, 'invalid-git-object');
-    if (approved && (mode !== approved.mode || hash !== approved.blob)) reject(path, 'changed-approved-document');
-    // Paths must be scanned even when another path uses an identical blob.
-    scanText(path, path);
-    result.push({ path, hash });
+    result.push(validateFileEntry(path, mode, hash, approvedFiles));
   }
   return result;
+}
+
+function validateFileEntry(path, mode, hash, approvedFiles) {
+  const approved = approvedFiles.get(path);
+  if (!allowedPath(path) && !approved) reject(path, 'unapproved-file-path');
+  if (!MODES.has(mode)) reject(path, 'symlink-or-gitlink');
+  if (!OBJECT_HASH.test(hash ?? '')) reject(path, 'invalid-git-object');
+  if (approved && (mode !== approved.mode || hash !== approved.blob)) reject(path, 'changed-approved-document');
+  // A new path never inherits the permission of another path with the same bytes.
+  scanText(path, path);
+  return { path, hash };
+}
+
+function parseRawTree(content, hash) {
+  const entries = [], names = new Set(), hashBytes = hash.length / 2;
+  let cursor = 0;
+  while (cursor < content.length) {
+    const space = content.indexOf(32, cursor), nul = content.indexOf(0, space + 1);
+    if (space < cursor || nul < space + 1 || nul + 1 + hashBytes > content.length) reject('', 'git-inspection-format');
+    const mode = content.subarray(cursor, space).toString('utf8');
+    const nameBytes = content.subarray(space + 1, nul);
+    const name = textContent(nameBytes, '');
+    // Path permissions apply to the exact Git bytes. TextDecoder may strip a
+    // leading UTF-8 BOM, which must never turn a different name into an allowed
+    // README or data directory. JSON body decoding keeps its existing behavior.
+    if (!Buffer.from(name, 'utf8').equals(nameBytes)) reject('', 'git-inspection-format');
+    if (!/^[0-7]{5,6}$/.test(mode) || !name || name === '.' || name === '..' || name.includes('/') || names.has(name)) reject('', 'git-inspection-format');
+    names.add(name);
+    entries.push({ mode, name, hash: content.subarray(nul + 1, nul + 1 + hashBytes).toString('hex') });
+    cursor = nul + 1 + hashBytes;
+  }
+  return entries;
+}
+
+/** Read each unique tree once per guard, without one recursive Git process per
+ * historical commit. Paths remain part of traversal identity: sharing a subtree
+ * under a different directory must still recheck all of its leaf paths. */
+async function inspectTrees(git, roots, approvedFiles) {
+  const trees = new Map(), visited = new Set(), files = [];
+  let pending = new Map([...new Set(roots)].map(hash => [hash, new Set([''])]));
+  while (pending.size) {
+    await inspectObjects(git, [...pending.keys()].filter(hash => !trees.has(hash)), 'tree', (hash, content) => {
+      trees.set(hash, parseRawTree(content, hash));
+    });
+    const next = new Map();
+    for (const [hash, prefixes] of pending) for (const prefix of prefixes) {
+      const identity = `${hash}:${prefix}`;
+      if (visited.has(identity)) continue;
+      visited.add(identity);
+      for (const entry of trees.get(hash)) {
+        const path = prefix + entry.name;
+        if (entry.mode === '40000' || entry.mode === '040000') {
+          scanText(path, path);
+          if (!next.has(entry.hash)) next.set(entry.hash, new Set());
+          next.get(entry.hash).add(`${path}/`);
+        } else files.push(validateFileEntry(path, entry.mode, entry.hash, approvedFiles));
+      }
+    }
+    pending = next;
+  }
+  return { trees, files };
+}
+
+function entryAtPath(trees, root, path) {
+  let hash = root;
+  const components = path.split('/');
+  for (let index = 0; index < components.length; index++) {
+    const entry = trees.get(hash)?.find(value => value.name === components[index]);
+    if (!entry) return null;
+    if (index === components.length - 1) return `${entry.mode}:${entry.hash}`;
+    if (entry.mode !== '40000' && entry.mode !== '040000') return null;
+    hash = entry.hash;
+  }
+  return null;
 }
 
 /** Bounded batches; verify framing, type, length and the Git object digest.
@@ -224,7 +291,7 @@ async function inspectObjects(git, hashes, kind, inspect) {
   const lines = (await git(['cat-file', '--batch-check'], input)).toString('utf8').trim().split('\n');
   if (lines.length !== hashes.length) reject('', 'git-inspection-format');
   const objects = lines.map((line, index) => {
-    const match = line.match(/^([a-f0-9]{40}(?:[a-f0-9]{24})?) (blob|commit) ([0-9]+)$/);
+    const match = line.match(/^([a-f0-9]{40}(?:[a-f0-9]{24})?) (blob|commit|tree) ([0-9]+)$/);
     if (!match || match[1] !== hashes[index] || match[2] !== kind) reject('', 'invalid-git-object');
     const bytes = Number(match[3]);
     if (!Number.isSafeInteger(bytes) || bytes > 512 * 1024 * 1024 - 1024) reject('', 'git-inspection-format');
@@ -268,6 +335,10 @@ function validateCommitMetadata(content, approvedExistingIdentity = false) {
     headers[index] = headers[index].replace(`<${identity[2]}>`, '<git-noreply>');
   }
   scanText(`${headers.join('\n')}\n\n${text.slice(boundary + 2)}`, path);
+  const tree = headers.filter(line => line.startsWith('tree '));
+  const parents = headers.filter(line => line.startsWith('parent ')).map(line => line.slice(7));
+  if (tree.length !== 1 || !OBJECT_HASH.test(tree[0].slice(5)) || parents.some(hash => !OBJECT_HASH.test(hash))) reject(path, 'invalid-commit-metadata');
+  return { tree: tree[0].slice(5), parents };
 }
 
 /** Read index and reachable commits as raw Git objects, never worktree links. */
@@ -299,18 +370,27 @@ export async function validateStagedRepository(repoDir, { runGit, historyApprova
   const index = parseEntries(await git(['ls-files', '--stage', '-z']), 'index', approvedFiles);
   const revisions = (await git(['rev-list', '--all'])).toString('utf8').trim().split('\n').filter(Boolean);
   for (const revision of revisions) if (!OBJECT_HASH.test(revision)) reject('', 'invalid-git-revision');
-  const trees = [];
-  await inspectObjects(git, revisions, 'commit', (hash, content) => validateCommitMetadata(content, approvedCommits.has(hash)));
-  for (const revision of revisions) {
-    const approved = approvedCommits.has(revision);
-    if (!approved && approvedFiles.size) {
-      const changed = await git(['diff-tree', '--root', '--no-commit-id', '--name-only', '-z', '--no-renames', '-m', '-r', revision]);
-      if (changed.toString('utf8').split('\0').some(path => approvedFiles.has(path))) reject('', 'changed-approved-document');
+  const commits = new Map();
+  await inspectObjects(git, revisions, 'commit', (hash, content) => {
+    commits.set(hash, validateCommitMetadata(content, approvedCommits.has(hash)));
+  });
+  const { trees, files: historicalFiles } = await inspectTrees(git, [...commits.values()].map(commit => commit.tree), approvedFiles);
+  // The approved file cannot be introduced, removed, or changed by any later
+  // commit, including either side of a merge. Compare already verified raw trees
+  // instead of spawning diff-tree for each historical revision.
+  if (approvedFiles.size) for (const [hash, commit] of commits) {
+    if (approvedCommits.has(hash)) continue;
+    for (const parent of commit.parents.length ? commit.parents : [null]) {
+      const previous = parent === null ? null : commits.get(parent);
+      if (parent !== null && !previous) reject('', 'incomplete-git-history');
+      for (const path of approvedFiles.keys()) {
+        const before = previous ? entryAtPath(trees, previous.tree, path) : null;
+        if (before !== entryAtPath(trees, commit.tree, path)) reject('', 'changed-approved-document');
+      }
     }
-    trees.push(...parseEntries(await git(['ls-tree', '-r', '-z', '--full-tree', revision]), 'tree', approvedFiles));
   }
   const inspected = new Set(), pending = new Map();
-  for (const { path, hash } of [...index, ...trees]) {
+  for (const { path, hash } of [...index, ...historicalFiles]) {
     // Identical bytes in JSON and README are validated under both file formats.
     const approved = approvedFiles.get(path);
     const identity = `${approved ? `approved-document:${path}` : 'data'}:${hash}:${path.endsWith('.json') ? 'json' : 'text'}`;
@@ -330,7 +410,7 @@ export async function validateStagedRepository(repoDir, { runGit, historyApprova
     session?.verified.add(identity); checked++;
   }
   });
-  onValidation?.({ objects: pending.size, checked, reused });
+  onValidation?.({ objects: pending.size, checked, reused, commits: commits.size, trees: trees.size });
   return { ok: true, fileCount: index.length };
   } catch (error) {
     if (session) { session.verified.clear(); session.failed = true; }

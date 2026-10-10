@@ -66,7 +66,7 @@ async function harness(t) {
   const dataDir = join(directory, 'local-data'), bare = join(directory, 'remote.git');
   await execute('git', ['init', '--bare', '-b', 'main', bare], { env });
   const control = { visibility: 'PRIVATE', offline: false, unavailableGh: false, rejectPush: false, calls: [], visibilityChecks: 0, publicAtCheck: Infinity, gitEnv: {} };
-  const runCommand = async (file, args, { cwd, encoding = 'utf8', env: commandEnv = {} } = {}) => {
+  const runCommand = async (file, args, { cwd, encoding = 'utf8', env: commandEnv = {}, input } = {}) => {
     control.calls.push({ file, args: [...args] });
     if (file === 'gh') {
       assert.deepEqual(args.slice(0, 3), ['repo', 'view', REPOSITORY]);
@@ -86,7 +86,11 @@ async function harness(t) {
     // The stored origin stays canonical. Only network commands get a per-command
     // rewrite to a fresh local bare repository; no synthetic data reaches GitHub.
     const routed = networkCommand ? ['-c', `url.${bare}.insteadOf=${REMOTE_URL}`, ...args] : args;
-    return execute(file, routed, { cwd, encoding, env: { ...process.env, ...env, ...control.gitEnv, ...commandEnv }, maxBuffer: 32 * 1024 * 1024 });
+    return new Promise((resolve, reject) => {
+      const child = execFile(file, routed, { cwd, encoding, env: { ...process.env, ...env, ...control.gitEnv, ...commandEnv },
+        timeout: 30000, maxBuffer: 32 * 1024 * 1024 }, (error, stdout, stderr) => error ? reject(error) : resolve({ stdout, stderr }));
+      child.stdin.on('error', reject); child.stdin.end(input);
+    });
   };
   const options = { dataDir, runCommand };
   const published = async path => (await execute('git', ['--git-dir', bare, 'show', `HEAD:${path}`], { env })).stdout;
@@ -113,11 +117,22 @@ test('running Viewer discovers two later log matches without restart and continu
   await writeFile(join(viewerDir, 'index.html'), '<title>Synthetic sync integration</title>');
   const logPath = join(logDir, 'Player.log');
   await writeFile(logPath, syntheticLog([['synthetic-A', 0]]));
-  const options = { ...h.options, logDir };
-  assert.equal((await syncReplayHistory(options)).published, 1);
+  // Bind discovery to synthetic files even when this test runs on an Arena Mac.
+  const cardDb = join(h.dataDir, 'synthetic-cards.mtga'), { DatabaseSync } = await import('node:sqlite');
+  const database = new DatabaseSync(cardDb);
+  database.exec('CREATE TABLE Cards (GrpId INTEGER, TitleId INTEGER); CREATE TABLE Localizations_enUS (LocId INTEGER, Formatted INTEGER, Loc TEXT);');
+  database.close();
+  const options = { ...h.options, logDir, cardDb, displayNamesZh: new Map(), fetchFn: async () => { throw new Error('Synthetic test forbids metadata network'); } };
   const running = await startReplayServer({ dataDir: h.dataDir, viewerDir, displayNamesZh: new Map(),
+    localHistoryOptions: { logDir, cardDb, pollIntervalMs: 60000, settleMs: 0, minImportIntervalMs: 0 },
+    notifyTask: async () => ({ attempted: false, accepted: false }),
     syncWorkflow: request => syncReplayHistory({ ...options, ...request }) });
   t.after(() => running.close());
+  // The independent observer imports; upload consumes the current archive.
+  // Drive its ticks explicitly so the integration does not depend on wall time.
+  assert.equal((await running.localHistory.check({ immediate: true })).status, 'succeeded');
+  assert.equal((await listReplays({ ...h.options, limit: null })).length, 1);
+  assert.equal((await syncReplayHistory(options)).published, 1);
   const post = () => fetch(running.url + 'api/sync', { method: 'POST', headers: { Origin: new URL(running.url).origin, 'X-MTGA-Replay-Action': 'sync' } }).then(r => r.json());
   async function finish() {
     for (let i = 0; i < 1200; i++) {
@@ -132,16 +147,20 @@ test('running Viewer discovers two later log matches without restart and continu
   assert.equal(unchanged.result.published, 0); assert.equal(await h.commits(), commits);
   // A newly rotated file did not exist when the server started.
   await writeFile(join(logDir, 'Player-prev.log'), syntheticLog([['synthetic-B', 1], ['synthetic-C', 2]]));
+  assert.equal((await running.localHistory.check({ immediate: true })).status, 'succeeded');
+  assert.equal((await listReplays({ ...h.options, limit: null })).length, 3);
   const [first, duplicate] = await Promise.all([post(), post()]); assert.equal(first.id, duplicate.id);
   const added = await finish(); assert.equal(added.status, 'succeeded');
   assert.equal(added.result.local_matches, 3); assert.equal(added.result.already_published, 1);
-  assert.equal(added.result.missing, 2); assert.equal(added.result.published, 2); assert.equal(added.result.new_matches, 2);
+  assert.equal(added.result.missing, 2); assert.equal(added.result.published, 2); assert.equal(added.result.new_matches, 0);
   assert.equal(added.result.github_matches, 3);
   assert.deepEqual((await fetch(running.url + 'api/matches').then(r => r.json())).map(m => m.id), ['synthetic-C', 'synthetic-B', 'synthetic-A']);
   assert.equal(JSON.parse(await h.published('index.json')).matches.length, 3);
   const bad = catalogReplay('synthetic-bad', 4); bad.games[0].steps = [];
   await archiveReplays([bad], h.options);
   await writeFile(logPath, syntheticLog([['synthetic-A', 0], ['synthetic-D', 3]]));
+  assert.equal((await running.localHistory.check({ immediate: true })).status, 'succeeded');
+  assert.equal((await listReplays({ ...h.options, limit: null })).length, 5);
   await post(); const partial = await finish();
   assert.equal(partial.status, 'partial'); assert.equal(partial.result.published, 1);
   assert.equal(partial.result.failed, 1); assert.equal(partial.result.failures[0].match_id, 'synthetic-bad');
@@ -555,6 +574,46 @@ test('a second origin push URL is rejected before fetch or push even when the fi
   await assert.rejects(syncCoachBundles(h.options), error => error.code === 'SYNC_REMOTE');
   assert.equal(h.control.calls.slice(callCount).some(call => call.args.includes('fetch') || call.args.includes('push')), false);
   assert.equal(await h.commits(), 1); assert.equal(await h.published('latest/coach.json'), serializeCoachJson(first.coach));
+  assert.equal((await getCoachSyncStatus({ ...h.options, verify: false })).pending, 1);
+});
+
+test('an inherited followTags setting cannot publish uninspected annotated tag metadata', async t => {
+  const h = await harness(t); await configureCoachSync(REPOSITORY, h.options);
+  await enqueueCoachBundle(await bundle(), h.options);
+  let injected = false;
+  const options = { ...h.options, runCommand: async (file, args, settings) => {
+    const result = await h.options.runCommand(file, args, settings);
+    if (!injected && file === 'git' && args.includes('commit')) {
+      injected = true;
+      await execute('git', ['config', '--local', 'push.followTags', 'true'], { cwd: h.checkout, env });
+      await execute('git', ['-c', 'user.name=Synthetic Tagger', '-c', 'user.email=synthetic-personal@example.invalid',
+        'tag', '-a', 'synthetic-private-tag', '-m', 'ghp_SYNTHETIC_TAG_SECRET'], { cwd: h.checkout, env });
+    }
+    return result;
+  } };
+  const result = await syncCoachBundles(options); assert.equal(result.synced, true); assert.equal(injected, true);
+  assert.equal(await h.commits(), 1);
+  assert.equal((await execute('git', ['--git-dir', h.bare, 'for-each-ref', '--format=%(refname)', 'refs/tags'], { env })).stdout, '');
+  assert.equal((await execute('git', ['config', '--local', '--get', 'push.followTags'], { cwd: h.checkout, env })).stdout.trim(), 'true');
+});
+
+test('a post-stage private payload is rechecked before any commit or push and remains pending', async t => {
+  const h = await harness(t); await configureCoachSync(REPOSITORY, h.options);
+  await enqueueCoachBundle(await bundle(), h.options); await syncCoachBundles(h.options);
+  await enqueueCoachBundle(await bundle({ richer: true }), h.options);
+  const callCount = h.control.calls.length; let injected = false;
+  const options = { ...h.options, runCommand: async (file, args, settings) => {
+    const result = await h.options.runCommand(file, args, settings);
+    if (!injected && file === 'git' && args.includes('add') && args.includes('--')) {
+      injected = true;
+      await writeFile(join(h.checkout, 'latest/coach.json'), '{"password":"synthetic-post-stage-secret"}');
+      await execute('git', ['add', '--', 'latest/coach.json'], { cwd: h.checkout, env });
+    }
+    return result;
+  } };
+  await assert.rejects(syncCoachBundles(options), error => error.code === 'MTGA_SYNC_SECURITY' && error.rule === 'credential-key');
+  assert.equal(injected, true); assert.equal(await h.commits(), 1);
+  assert.equal(h.control.calls.slice(callCount).some(call => call.args.includes('commit') || call.args.includes('push')), false);
   assert.equal((await getCoachSyncStatus({ ...h.options, verify: false })).pending, 1);
 });
 
