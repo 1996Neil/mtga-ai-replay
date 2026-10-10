@@ -5,7 +5,7 @@
   "files": [
     {
       "path": "viewer/src/components/GameBoard.tsx",
-      "sha256": "5cab1d4bc9200172b9439ede1c2c776e3472411e438541d480e37cc9408d1f4e"
+      "sha256": "7d577b0d3c8302fce623a23343bc001315500b755745676ded1187e2e982093d"
     },
     {
       "path": "viewer/src/components/BattlefieldZone.tsx",
@@ -25,7 +25,7 @@
     },
     {
       "path": "viewer/src/components/PlayerInfo.tsx",
-      "sha256": "6917bdf452752741b4269a9da50b1580aba521f624ead8a61e6fa689ab8c4700"
+      "sha256": "8b036502f340e49f1b8ccd79e303e7f44bd06080d668a9a7a0de951a8c2a7199"
     },
     {
       "path": "viewer/src/components/ReplayControls.tsx",
@@ -41,7 +41,7 @@
     },
     {
       "path": "viewer/src/components/CardImage.tsx",
-      "sha256": "5123b24e844d30dd3b26d8a9d9ac7d310b51cbf311872463318b770efb4a33ff"
+      "sha256": "2c077bdb723031249ad4bfacf325ddff06aff38b286c503ecc5c2ee3302ed241"
     },
     {
       "path": "viewer/src/components/GameLog.tsx",
@@ -49,7 +49,7 @@
     },
     {
       "path": "viewer/src/store/replayStore.ts",
-      "sha256": "95013e15bf6dbc940865af8cf1b0bc9031c06b39aa01e9525b424395b11348f9"
+      "sha256": "bdc3a39f12ac9afd45381ccf3adeb0f3b402d817081cc72dbc4023f829524e04"
     },
     {
       "path": "viewer/src/store/cardCacheStore.ts",
@@ -73,11 +73,11 @@
     },
     {
       "path": "viewer/src/types/game.ts",
-      "sha256": "29650286694847450a9cb4bbfbff13409d4207c7a9da0e0ec8ab2004014da13a"
+      "sha256": "0083d994eadf7e94cd86373cbadda8fad2e32d63b8ccc014b6b076a1dd600caa"
     },
     {
       "path": "viewer/src/index.css",
-      "sha256": "5377f9810c08a81355962f614f13eb3014d8d73e5c533855b1cb27054c9dd40a"
+      "sha256": "30c7c691e20fc234bdfd8e861c134dc47854e7a0d669d2bd027b88a93742789a"
     }
   ]
 }

@@ -7,17 +7,22 @@ import { getCardMetadata, getCardImage, cardImageIsCached } from './card-cache.m
 import { createCoachContext } from './coach-context.mjs';
 import { loadInstalledChineseDisplayNames } from './display-names.mjs';
 import { createViewerSync } from './viewer-sync.mjs';
+import { createViewerCollection } from './viewer-collection.mjs';
+import { notifyViewerTask } from './task-notification.mjs';
+import { createLocalReplayHistory } from './viewer-local-history.mjs';
 import { createCoachRoutes } from './live-coach/routes.mjs';
 
 const defaultViewer = fileURLToPath(new URL('../viewer/dist/', import.meta.url));
 const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.ico': 'image/x-icon', '.woff2': 'font/woff2' };
 
-export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir = defaultViewer, port = 0, cardNames = new Map(), cardMetadata = new Map(), displayNamesZh, fetchFn = fetch, writeInfo = true, syncWorkflow, liveCoach, replayProvider, enableReplaySync = !replayProvider } = {}) {
+export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir = defaultViewer, port = 0, cardNames = new Map(), cardMetadata = new Map(), displayNamesZh, fetchFn = fetch, writeInfo = true, syncWorkflow, collectionUpdate, collectionSync, notifyTask = notifyViewerTask, liveCoach, replayProvider, enableReplaySync = !replayProvider, enableCollection = enableReplaySync && !replayProvider, includeLocalHistory = enableReplaySync || !replayProvider, observeLocalLogs = includeLocalHistory, localHistoryOptions = {} } = {}) {
   const root = await realpath(resolve(viewerDir)).catch(() => resolve(viewerDir));
   const chineseNames = displayNamesZh ?? await loadInstalledChineseDisplayNames();
   let assignedPort;
-  const sync = createViewerSync({ dataDir, workflow: syncWorkflow });
+  const sync = createViewerSync({ dataDir, workflow: syncWorkflow, notify: notifyTask });
+  const collection = createViewerCollection({ dataDir, update: collectionUpdate, sync: collectionSync, notify: notifyTask });
+  const localHistory = includeLocalHistory && observeLocalLogs ? createLocalReplayHistory({ ...localHistoryOptions, dataDir }) : null;
   const coach = liveCoach ? createCoachRoutes(liveCoach) : null;
   function send(response, status, value, contentType = 'application/json; charset=utf-8', extraHeaders = {}) {
     response.writeHead(status, { 'Content-Type': contentType, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
@@ -41,18 +46,18 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
       ...(cardNames.has(arenaId) ? { name: cardNames.get(arenaId) } : {}) };
   }
   // Keep the immutable coaching source authoritative for its recorded matches.
-  // Manual replay sync adds local Viewer history only; it never extends the
+  // Local log observation adds Viewer history only; it never extends the
   // coach's locked inference corpus or starts model/TTS work.
   async function replayCatalog() {
     const recorded = replayProvider ? await replayProvider.list() : [];
-    if (replayProvider && !enableReplaySync) return recorded;
+    if (replayProvider && !includeLocalHistory) return recorded;
     const catalog = new Map((await listReplays({ dataDir, limit: null })).map(entry => [entry.id, entry]));
     for (const entry of recorded) catalog.set(entry.id, entry);
     return [...catalog.values()].sort((a, b) => Date.parse(b.started_at) - Date.parse(a.started_at) || b.id.localeCompare(a.id));
   }
   async function replayById(id) {
     const recorded = replayProvider ? await replayProvider.get(id) : null;
-    return recorded ?? (enableReplaySync || !replayProvider ? await getReplay(id, { dataDir }) : null);
+    return recorded ?? (includeLocalHistory ? await getReplay(id, { dataDir }) : null);
   }
   const server = createServer(async (request, response) => {
     if (!trustedRequest(request)) return send(response, 403, { error: 'Local replay access only.' });
@@ -62,21 +67,32 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
       if (path.includes('\0') || path.includes('\\') || path.split('/').includes('..')) return send(response, 400, { error: 'Invalid path.' });
       if (coach && await coach.handle(request, response, url)) return;
       if (path === '/api/sync' && !enableReplaySync) return send(response, 403, { error: 'Replay synchronization is disabled in this isolated corpus server.' });
+      if ((path === '/api/collection' || path === '/api/collection/sync') && !enableCollection) return send(response, 403, { error: 'Collection updates are disabled in this isolated corpus server.' });
+      if ((path === '/api/collection' || path === '/api/collection/sync') && request.method === 'POST') {
+        const operation = path.endsWith('/sync') ? 'sync' : 'update';
+        if (request.headers.origin !== `http://${request.headers.host}` || request.headers['x-mtga-replay-action'] !== `collection-${operation}`) return send(response, 403, { error: 'Same-origin collection action required.' });
+        if (url.search || request.headers['transfer-encoding'] || Number(request.headers['content-length'] ?? 0) !== 0) return send(response, 400, { error: 'Collection update does not accept parameters.' });
+        if (sync.snapshot().status === 'running') return send(response, 409, { error: 'Replay upload is running; retry after completion.' });
+        return send(response, 202, collection.start(operation));
+      }
       if (path === '/api/sync' && request.method === 'POST') {
         // No body, paths, repository or command accepted. A non-simple header
         // forces foreign pages through a rejected CORS preflight; also require
         // exact same origin to block forged same-site/cross-origin POSTs.
         if (request.headers.origin !== `http://${request.headers.host}` || request.headers['x-mtga-replay-action'] !== 'sync') return send(response, 403, { error: 'Same-origin replay action required.' });
         if (url.search || request.headers['transfer-encoding'] || Number(request.headers['content-length'] ?? 0) !== 0) return send(response, 400, { error: 'Replay sync does not accept parameters.' });
+        if (collection.snapshot().status === 'running') return send(response, 409, { error: 'Collection update is running; retry after completion.' });
         return send(response, 202, sync.start());
       }
       if (request.method !== 'GET' && request.method !== 'HEAD') return send(response, 405, { error: 'Unsupported replay action.' });
+      if (path === '/api/local-history') return send(response, 200, request.method === 'HEAD' ? '' : localHistory?.snapshot() ?? { status: 'disabled' });
+      if (path === '/api/collection') return send(response, 200, request.method === 'HEAD' ? '' : collection.snapshot());
       if (path === '/api/sync') return send(response, 200, request.method === 'HEAD' ? '' : sync.snapshot());
-      if (path === '/api/health') return send(response, 200, { service: 'mtga-gpt-replay', pid: process.pid, port: assignedPort, capabilities: [...(enableReplaySync ? ['replay-sync'] : []), ...(coach ? ['live-coach'] : [])] });
+      if (path === '/api/health') return send(response, 200, { service: 'mtga-gpt-replay', pid: process.pid, port: assignedPort, capabilities: [...(enableReplaySync ? ['replay-sync'] : []), ...(enableCollection ? ['collection-update'] : []), ...(coach ? ['live-coach'] : [])] });
       if (path === '/api/matches') return send(response, 200, await replayCatalog());
       if (path === '/api/matches/latest') {
         const entries = await replayCatalog();
-        const replay = replayProvider && !enableReplaySync ? await replayProvider.latest() : entries.length ? await replayById(entries[0].id) : null;
+        const replay = replayProvider && !includeLocalHistory ? await replayProvider.latest() : entries.length ? await replayById(entries[0].id) : null;
         return send(response, replay ? 200 : 404, replay ?? { error: 'No archived matches.' });
       }
       const contextRoute = path.match(/^\/api\/matches\/([^/]+)\/context$/);
@@ -136,17 +152,19 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
     await mkdir(dataDir, { recursive: true, mode: 0o700 });
     await writeFile(join(dataDir, 'server.json'), JSON.stringify({ pid: process.pid, url, port: assignedPort, viewerDir: root }), { mode: 0o600 });
   }
+  localHistory?.start();
   const close = async () => {
+    await localHistory?.close();
     // Finish a publication before shutting down; don't strand a Git write.
     await coach?.close();
-    await sync.wait();
+    await Promise.all([sync.wait(), collection.wait()]);
     server.closeAllConnections();
     await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     if (writeInfo) {
       try { if (JSON.parse(await readFile(join(dataDir, 'server.json'), 'utf8')).port === assignedPort) await rm(join(dataDir, 'server.json')); } catch { /* Already removed. */ }
     }
   };
-  return { server, url, port: assignedPort, close };
+  return { server, url, port: assignedPort, close, localHistory };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

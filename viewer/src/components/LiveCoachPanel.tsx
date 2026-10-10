@@ -7,7 +7,7 @@ import { LiveCoachSetup } from './LiveCoachSetup';
 import './LiveCoachPopover.css';
 
 type PopoverBounds = { left: number; top: number; width: number; maxHeight: number };
-type Status = { generation?: number; enabled?: boolean; muted?: boolean; voice_ready?: boolean; error?: string | null; status?: string;
+type Status = { output_mode?: 'voice' | 'text'; generation?: number; enabled?: boolean; muted?: boolean; voice_ready?: boolean; error?: string | null; status?: string;
   source_mode?: string; model?: string; usage?: Record<string, unknown> | null; model_usage?: Record<string, unknown> | null; advice?: { subtitle?: string; speech_core?: string } | null };
 const post = async (action: string, value: unknown = {}) => {
   const response = await fetch(`/api/live-coach/${action}`, { method: 'POST', headers: {
@@ -23,6 +23,7 @@ export function LiveCoachPanel({ view }: { view: CoachView | null }) {
   const [sourceMode, setSourceMode] = useState<'replay' | 'live' | null>(null);
   const [panelBounds, setPanelBounds] = useState<PopoverBounds | null>(null);
   const toolbar = useRef<HTMLDivElement>(null), entry = useRef<HTMLButtonElement>(null), panel = useRef<HTMLElement>(null);
+  const textOnly = useRef(false);
   const sink = useRef<CoachAudioSink | null>(null);
   const views = useRef<CoachViewGuard<Status> | null>(null);
   views.current ??= new CoachViewGuard<Status>(post);
@@ -41,16 +42,17 @@ export function LiveCoachPanel({ view }: { view: CoachView | null }) {
         const guard = views.current!;
         if (event.type === 'cancel' && guard.acceptGeneration(event.generation)) { guard.forgetAdvice(); audio.stop(); setSubtitle(''); }
         if (event.type === 'status' && guard.acceptGeneration(event.generation)) {
+          textOnly.current = event.output_mode === 'text';
           const firstStatus = !modeKnown && (event.source_mode === 'live' || event.source_mode === 'replay');
           if (firstStatus) { modeKnown = true; guard.setMode(event.source_mode); setSourceMode(event.source_mode); }
           if (guard.ready || firstStatus) {
             applyStatus(event); if (event.muted || !event.enabled) { guard.forgetAdvice(); audio.mute(); setSubtitle(''); }
           }
         }
-        if (event.type === 'advice' && intent.current.mode === 'enable' && guard.acceptAdvice(event)) { setSubtitle(event.advice.subtitle || event.advice.speech_core); }
-        if (event.type === 'audio' && intent.current.mode === 'enable' && guard.acceptAudio(event)) void audio.play(event);
+        if (event.type === 'advice' && intent.current.mode === 'enable' && guard.acceptAdvice(event)) { setSubtitle(textOnly.current ? [event.advice.speech_core, event.advice.speech_followup].filter(Boolean).join(' ') : event.advice.subtitle || event.advice.speech_core); }
+        if (event.type === 'audio' && !textOnly.current && intent.current.mode === 'enable' && guard.acceptAudio(event)) void audio.play(event);
       };
-      events.onerror = () => { if (abort.signal.aborted) return; intent.current = { epoch: intent.current.epoch + 1, mode: 'mute' }; views.current?.forgetAdvice(); audio.mute(); setSubtitle(''); void post('mute').catch(() => {}); setStatus(old => ({ ...old, error: '教练连接中断，语音已停止。', muted: true })); };
+      events.onerror = () => { if (abort.signal.aborted) return; intent.current = { epoch: intent.current.epoch + 1, mode: 'mute' }; views.current?.forgetAdvice(); audio.mute(); setSubtitle(''); void post('mute').catch(() => {}); setStatus(old => ({ ...old, error: '教练连接中断，提示已暂停。', muted: true })); };
     }).catch(() => {});
     return () => { intent.current = { epoch: intent.current.epoch + 1, mode: 'stop' }; abort.abort(); events?.close(); void audio.close(); sink.current = null; };
   }, []);
@@ -143,11 +145,13 @@ export function LiveCoachPanel({ view }: { view: CoachView | null }) {
   }, [available]);
   if (!available) return null;
   const enable = async () => {
+    if (status.output_mode !== 'text' && status.output_mode !== 'voice') return;
     const wasEnabled = Boolean(status.enabled);
     const epoch = intent.current.epoch + 1; intent.current = { epoch, mode: 'enable' };
     const stillCurrent = () => epoch === intent.current.epoch && intent.current.mode === 'enable';
     try {
-      if (!await sink.current?.enable() || !stillCurrent()) return;
+      if (status.output_mode !== 'text' && !await sink.current?.enable()) return;
+      if (!stillCurrent()) return;
       const guard = views.current!;
       if (guard.needsInvalidation) await guard.invalidate();
       if (!stillCurrent() || !guard.ready) return;
@@ -164,26 +168,28 @@ export function LiveCoachPanel({ view }: { view: CoachView | null }) {
       }
     } catch (error) {
       if (!stillCurrent()) return;
-      quiet('mute'); setStatus(old => ({ ...old, error: error instanceof Error ? error.message : '无法启用音频。', muted: true }));
+      quiet('mute'); setStatus(old => ({ ...old, error: error instanceof Error ? error.message : '无法启用教练。', muted: true }));
     }
   };
-  const compactStatus = status.error ? '需检查' : status.enabled ? (status.muted ? '已静音' : '正在观察') : '未启用';
+  const isText = status.output_mode === 'text';
+  const compactStatus = status.error ? '需检查' : status.enabled ? (status.muted ? '已暂停' : '正在观察') : '未启用';
   return <div className="live-coach-toolbar" ref={toolbar}>
     <button type="button" className="coach-toolbar-button" ref={entry} aria-expanded={panelOpen} aria-controls="live-coach-popover"
-      aria-haspopup="dialog" onClick={() => { if (panelOpen) dismiss(); else { positionPanel(); setPanelOpen(true); } }} title={subtitle || status.error || '语音教练与连接设置 · M / Esc 立即静音'}>
-      语音教练 <span role="status" aria-live="polite">{compactStatus}</span></button>
+      aria-haspopup="dialog" onClick={() => { if (panelOpen) dismiss(); else { positionPanel(); setPanelOpen(true); } }} title={subtitle || status.error || '本地教练 · M / Esc 立即暂停'}>
+      {isText ? '文字教练' : status.output_mode === 'voice' ? '语音教练' : '教练'} <span role="status" aria-live="polite">{compactStatus}</span></button>
     {panelOpen && panelBounds && createPortal(<section id="live-coach-popover" className="live-coach-panel live-coach-popover" style={panelBounds} ref={panel} tabIndex={-1} role="dialog" aria-labelledby="live-coach-title">
-    <div className="coach-popover-heading"><strong id="live-coach-title">自动语音教练 · {status.source_mode === 'live' ? '可控练习' : '回放'}</strong>
-      <button type="button" onClick={() => dismiss(true)} aria-label="关闭语音教练面板">关闭</button></div>
+    <div className="coach-popover-heading"><strong id="live-coach-title">{isText ? '本地规则文字提示' : '自动语音教练'} · {status.source_mode === 'live' ? '实时日志观察' : '回放'}</strong>
+      <button type="button" onClick={() => dismiss(true)} aria-label="关闭教练面板">关闭</button></div>
     <div>
-      <button type="button" onClick={() => { void enable(); }} disabled={setupSaving || (!view && sourceMode !== 'live') || (status.enabled && !status.muted)}>{status.enabled ? '恢复声音' : '启用本次会话'}</button>
-      <button type="button" onClick={mute}>立即静音 <small>M / Esc</small></button>
+      <button type="button" onClick={() => { void enable(); }} disabled={!status.output_mode || setupSaving || (!view && sourceMode !== 'live') || (status.enabled && !status.muted)}>{status.enabled ? '恢复教练' : '启用本次会话'}</button>
+      <button type="button" onClick={mute}>{isText ? '暂停提示' : '立即静音'} <small>M / Esc</small></button>
       <button type="button" onClick={() => quiet('stop')}>退出教练</button>
-      <button type="button" onClick={() => setSetupOpen(open => !open)} aria-expanded={setupOpen} aria-controls="live-coach-setup" disabled={setupSaving}>{setupOpen ? '收起设置' : '语音与连接设置'}</button></div>
-    <p role="status" aria-live="polite">{subtitle || (status.enabled ? '正在观察。没有已核验机会时保持安静。' : '启用一次后，随当前回放自动观察与提醒。')}</p>
+      {!isText && <button type="button" onClick={() => setSetupOpen(open => !open)} aria-expanded={setupOpen} aria-controls="live-coach-setup" disabled={setupSaving}>{setupOpen ? '收起设置' : '语音与连接设置'}</button>}</div>
+    <p role="status" aria-live="polite">{subtitle || (status.enabled ? status.muted ? '教练已暂停，不会生成提示。' : '正在观察。没有已核验机会时保持安静。' : status.source_mode === 'live' ? '启用后，只读观察日志中的新局面。' : '启用后，随当前回放观察与提醒。')}</p>
     {status.error && <p role="alert">{status.error}</p>}
-    {status.enabled && !status.voice_ready && !status.error && <p>真实语音尚未配置；此状态不能算语音验收完成。</p>}
-    {setupOpen && <div id="live-coach-setup" className="live-coach-setup-container"><LiveCoachSetup onBeforeSave={() => quiet('mute')} onSavingChange={setSetupSaving} /></div>}
+    {!isText && status.enabled && !status.voice_ready && !status.error && <p>真实语音尚未配置；此状态不能算语音验收完成。</p>}
+    {isText && <p>仅使用本地已核验规则；不调用 AI 或语音服务，无法提供完整战术策略。暂停会停止全部提示。</p>}
+    {!isText && setupOpen && <div id="live-coach-setup" className="live-coach-setup-container"><LiveCoachSetup onBeforeSave={() => quiet('mute')} onSavingChange={setSetupSaving} /></div>}
     <details><summary>证据与用量</summary><pre>{JSON.stringify({ model: status.model, advice: status.advice, usage: status.usage, model_usage: status.model_usage }, null, 2)}</pre></details>
     </section>, document.body)}
   </div>;

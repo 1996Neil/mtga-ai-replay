@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { defaultDataDir } from './history.mjs';
 import { serializeCoachJson, resolveCoachBundle } from './coach-bundle.mjs';
-import { validateBundleFiles, validateStagedRepository, validateSyncHistoryApproval, isCollectionSyncPath, isCoachSyncPath } from './sync-security.mjs';
+import { validateBundleFiles, validateStagedRepository, validateSyncHistoryApproval, isCollectionSyncPath, isCoachSyncPath, createSyncValidationSession } from './sync-security.mjs';
 
 const NAMES = ['summary.json', 'coach.json', 'cards.json', 'manifest.json'];
 const SHA = /^[a-f0-9]{64}$/;
@@ -149,11 +149,14 @@ export async function recoverCoachSyncLock(options = {}) {
   } finally { await removeOwnedLock(recovery, gate); }
 }
 
-function execute(file, args, { cwd, encoding = 'utf8', env = {} } = {}) {
-  return new Promise((yes, no) => execFile(file, args, {
+function execute(file, args, { cwd, encoding = 'utf8', env = {}, input } = {}) {
+  return new Promise((yes, no) => {
+  const child = execFile(file, args, {
     cwd, encoding, timeout: 30000, maxBuffer: 512 * 1024 * 1024,
     env: { ...process.env, ...env, GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1' },
-  }, (error, stdout) => error ? no(error) : yes(stdout)));
+  }, (error, stdout) => error ? no(error) : yes(stdout));
+  child.stdin.on('error', no); child.stdin.end(input);
+  });
 }
 function runner(options) {
   const run = options.runCommand ?? execute;
@@ -275,22 +278,27 @@ async function verifyRemote(git, repository) {
     if (urls.length !== 1 || urls[0] !== expected) fail('SYNC_REMOTE', 'Sync remote differs from the verified private repository.');
   }
 }
-async function prepareCheckout(state, meta, run, repoDir) {
+async function prepareCheckout(state, meta, run, repoDir, options = {}) {
   await safeDirectory(repoDir);
   const { name: author, email } = SYNC_IDENTITY;
-  const git = (args, encoding = 'utf8') => run('git', ['-c', 'credential.helper=', '-c', 'credential.helper=!gh auth git-credential',
+  const git = (args, encoding = 'utf8', input) => run('git', ['-c', 'credential.helper=', '-c', 'credential.helper=!gh auth git-credential',
     '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', '-c', `user.name=${author}`,
     '-c', `user.email=${email}`,
     // A real large HTTPS push returned HTTP 400 on this Mac. Use a bounded
     // transport buffer, retain TLS checks, and leave global Git config untouched.
     ...(args[0] === 'push' ? ['-c', 'http.version=HTTP/1.1', '-c', 'http.postBuffer=67108864'] : []),
-    ...args], { cwd: repoDir, encoding,
+    ...args], { cwd: repoDir, encoding, input,
     env: { GIT_AUTHOR_NAME: author, GIT_AUTHOR_EMAIL: email, GIT_COMMITTER_NAME: author, GIT_COMMITTER_EMAIL: email,
       GIT_DIR: join(repoDir, '.git'), GIT_WORK_TREE: repoDir, GIT_INDEX_FILE: join(repoDir, '.git', 'index') } });
   const remote = `https://github.com/${meta.nameWithOwner}.git`, branch = meta.defaultBranchRef?.name || 'main';
   const historyOptions = { repository: meta.nameWithOwner, branch,
     historyApproval: validateSyncHistoryApproval(state.history_approval, { repository: meta.nameWithOwner, branch }) };
-  const validate = () => validateStagedRepository(repoDir, { ...historyOptions, runGit: (args, settings) => git(args, settings.encoding) });
+  const validationSession = options.validationSession ?? createSyncValidationSession();
+  const validate = async () => {
+    options.onProgress?.({ phase: 'security' });
+    return validateStagedRepository(repoDir, { ...historyOptions, validationSession,
+      onValidation: options.onValidation, runGit: (args, settings) => git(args, settings.encoding, settings.input) });
+  };
   let exists = false;
   try { const stat = await lstat(join(repoDir, '.git')); exists = stat.isDirectory() && !stat.isSymbolicLink(); if (!exists) fail('SYNC_WORKTREE', 'Unexpected sync checkout metadata.'); }
   catch (error) { if (error.code !== 'ENOENT') throw error; }
@@ -301,6 +309,7 @@ async function prepareCheckout(state, meta, run, repoDir) {
   // another writer's staged, ignored or otherwise uncommitted files.
   await validate();
   if (String(await git(['status', '--porcelain', '--untracked-files=all', '--ignored=matching'])).trim()) fail('SYNC_DIRTY', 'Sync checkout contains uncommitted files; no files were overwritten.');
+  options.onProgress?.({ phase: 'remote' });
   await git(['fetch', '--prune', 'origin']);
   await validate();
   if (meta.defaultBranchRef?.name) {
@@ -398,8 +407,9 @@ export async function getPublishedCoachIndex(options = {}) {
   return locked(dataDir, async () => {
     const state = await readState(dataDir);
     if (!state.enabled) fail('SYNC_REPOSITORY', 'Private replay sync is not configured.');
-    const run = runner(options), meta = await privateRepository(state.repository, run);
-    const { git, branch } = await prepareCheckout(state, meta, run, locations(dataDir).repo);
+    const run = runner(options); options.onProgress?.({ phase: 'remote' });
+    const meta = await privateRepository(state.repository, run);
+    const { git, branch } = await prepareCheckout(state, meta, run, locations(dataDir).repo, options);
     await assertOutgoingSyncOwnership(git, branch, 'coach', Boolean(meta.defaultBranchRef?.name));
     let index = { schema: 'MTGA_COACH_INDEX_V1', matches: [] }, commit = null;
     if (meta.defaultBranchRef?.name) {
@@ -418,8 +428,10 @@ export async function getPublishedCoachIndex(options = {}) {
   });
 }
 async function publishPending(state, dataDir, options) {
-  const run = runner(options), meta = await privateRepository(state.repository, run), repoDir = locations(dataDir).repo;
-  const { git, branch, validate } = await prepareCheckout(state, meta, run, repoDir);
+  const run = runner(options); options.onProgress?.({ phase: 'remote' });
+  const meta = await privateRepository(state.repository, run), repoDir = locations(dataDir).repo;
+  const { git, branch, validate } = await prepareCheckout(state, meta, run, repoDir, options);
+  options.onProgress?.({ phase: 'publishing' });
   await assertOutgoingSyncOwnership(git, branch, 'coach', Boolean(meta.defaultBranchRef?.name));
   let collectionEntry = '';
   try { await readFile(join(repoDir, 'collection', 'README.md'), 'utf8'); collectionEntry = COLLECTION_ENTRY; }
@@ -461,12 +473,13 @@ async function publishPending(state, dataDir, options) {
     }
   }
   // Recheck visibility and outgoing history immediately before the network mutation.
+  options.onProgress?.({ phase: 'remote' });
   await privateRepository(state.repository, run);
   await verifyRemote(git, meta.nameWithOwner);
   await validate();
   await assertOutgoingSyncOwnership(git, branch, 'coach', Boolean(meta.defaultBranchRef?.name));
   const remoteCount = meta.defaultBranchRef?.name ? Number(String(await git(['rev-list', '--count', `origin/${branch}..HEAD`])).trim()) : 1;
-  if (remoteCount) await git(['push', '--set-upstream', 'origin', branch]);
+  if (remoteCount) { options.onProgress?.({ phase: 'uploading' }); await git(['push', '--set-upstream', 'origin', branch]); }
   for (const item of state.pending) state.synced[item.match_id] = { content_hash: item.content_hash, history_key: item.history_key, started_at: item.started_at };
   state.pending = []; state.last_error = null; state.visibility = 'PRIVATE'; state.verified_at = new Date().toISOString();
   state.last_synced = { match_id: index.latest_match_id, at: new Date().toISOString(), commit: String(await git(['rev-parse', 'HEAD'])).trim() };

@@ -2,6 +2,7 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseAllLogsWithDebug, MatchFilters } from 'mtga-log-parser';
+import { describeMatchMode } from './match-mode.mjs';
 import { PerspectiveState } from './perspective.mjs';
 import { visualSnapshot, visibleStateSignature } from './visual-state.mjs';
 
@@ -81,6 +82,9 @@ export async function buildReplays(records, names = new Map(), { counterNames = 
         for (const p of config.reservedPlayers ?? []) {
           p.platformId = p.systemSeatId === seat ? 'Mac' : 'Other';
           p.userId = `seat-${p.systemSeatId}`;
+          // Upstream requires a string eventId even for MatchFilters.all.
+          // Empty preserves unknown metadata instead of dropping that match.
+          if (typeof p.eventId !== 'string') p.eventId = '';
         }
       }
       sanitized.push(copy); continue;
@@ -336,12 +340,13 @@ export async function buildReplays(records, names = new Map(), { counterNames = 
       if (!game.starting_hand.length) game.warnings.push('Kept starting hand unavailable in this log.');
       if (!states.get(`${match.id}:${game.game_number}`)?.ended) game.warnings.push('Terminal GRE state unavailable; final life and trailing operations may be incomplete.');
     }
-    const eventId = player?.eventId ?? match.eventId;
+    const config = meta.get(match.id)?.config;
+    const mode = describeMatchMode({ event_id: player?.eventId ?? match.eventId,
+      queue_id: config?.queueId });
     const deckCounts = new Map();
     for (const card of parsed.myDeckListMap.get(match.id)?.main ?? []) deckCounts.set(card.cardId, (deckCounts.get(card.cardId) ?? 0) + card.quantity);
     replays.push({ schema_version: '2.0', perspective: { policy: 'Only identities legally visible to the local player at that event; no future backfill.', hidden_information: 'omitted', post_game_reveals: 'omitted' },
-      match: { id: match.id, started_at: new Date(match.timestamp).toISOString(), event_id: eventId, event: isJumpIn(eventId) ? 'Jump In' : eventId,
-        is_jump_in: isJumpIn(eventId), result: match.matchResult, on_play: match.onPlay, player: player?.playerName ?? 'Me', opponent: opponent?.playerName ?? 'Opponent' },
+      match: { id: match.id, started_at: new Date(match.timestamp).toISOString(), ...mode, result: match.matchResult, on_play: match.onPlay, player: player?.playerName ?? 'Me', opponent: opponent?.playerName ?? 'Opponent' },
       deck: [...deckCounts].map(([id, quantity]) => ({ name: names.get(id) ?? `Arena card ${id}`, arena_id: id, quantity })),
       games: matchGames, warnings: ['Turns use global Arena numbering (each player turn increments it).', 'Legal alternatives/priority windows are not reconstructed; ability text and counter names may be incomplete.'] });
   }
