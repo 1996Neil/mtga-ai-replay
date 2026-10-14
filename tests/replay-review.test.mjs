@@ -70,6 +70,17 @@ test('invalid anchors and missing before-states are not relocated or fabricated'
   assert.equal(context.game_state.me.hand[0].name, 'Spell Snare');
 });
 
+test('unresolved published state references are not treated as observed pre-action boards', () => {
+  const pending = replay();
+  pending.games[0].steps[0].state_before = undefined;
+  pending.games[0].steps[0].before_state_id = 'S7';
+  pending.games[0].states.S7 = { $ref: { file: 'part.json', key: 'G1:S7' } };
+  assert.equal(selectReviewDecisions(pending.games[0]).length, 0);
+  assert.equal(reviewDecisionContext(pending, 1, pending.games[0].steps[0]), null);
+  const note = normalizeReplayReview(pending, 1, sample);
+  assert.equal(note.notes.length, 0);
+});
+
 test('an updated replay invalidates annotations rather than showing them at an unrelated action', () => {
   const original = replay(), record = normalizeReplayReview(original, 1, sample);
   assert.equal(record.fingerprint, reviewFingerprint(original.games[0]));
