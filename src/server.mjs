@@ -70,7 +70,7 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
       const path = decodeURIComponent(url.pathname);
       if (path.includes('\0') || path.includes('\\') || path.split('/').includes('..')) return send(response, 400, { error: 'Invalid path.' });
       if (coach && await coach.handle(request, response, url)) return;
-      const generateRoute = path.match(/^\\/api\\/matches\\/([^/]+)\\/review\\/generate$/);
+      const generateRoute = path.match(/^\/api\/matches\/([^/]+)\/review\/generate$/);
       if (generateRoute && request.method === 'POST') {
         // Explicit user click only. No request body, no raw logs, no silent API spending.
         if (request.headers.origin !== `http://${request.headers.host}` ||
@@ -120,7 +120,7 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
       if (path === '/api/sync') return send(response, 200, request.method === 'HEAD' ? '' : sync.snapshot());
       if (path === '/api/health') return send(response, 200, { service: 'mtga-gpt-replay', pid: process.pid, port: assignedPort, capabilities: [...(enableReplaySync ? ['replay-sync'] : []), ...(enableCollection ? ['collection-update'] : []), ...(coach ? ['live-coach'] : []), ...(reviewGenerator ? ['replay-review-generate'] : []), 'replay-review-read'] });
       if (path === '/api/matches') return send(response, 200, await replayCatalog());
-      const reviewRoute = path.match(/^\\/api\\/matches\\/([^/]+)\\/review$/);
+      const reviewRoute = path.match(/^\/api\/matches\/([^/]+)\/review$/);
       if (reviewRoute) {
         const gameNumber = Number(url.searchParams.get('game') ?? 1);
         if (!Number.isSafeInteger(gameNumber) || gameNumber < 1 || url.searchParams.size > 1) return send(response, 400, { error: 'Invalid review game.' });
