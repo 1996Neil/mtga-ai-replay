@@ -19,9 +19,9 @@ const replay = () => ({
   match: { id: 'synthetic-123' }, warnings: ['Some steps share a GRE message.'],
   games: [{ game_number: 1, states: {}, result: { outcome: 'Loss' },
     steps: [{ anchor: 'T3-A1', turn: 3, event: { actor: 'me', type: 'cast', card: { name: 'Spell Snare' } },
-      state_before: before, state: { ...before, turn: 4 } },
+      state_before: structuredClone(before), state: { ...before, turn: 4 } },
       { anchor: 'T3-A2', turn: 3, event: { actor: 'opponent', type: 'cast',
-        card: { hidden: true, name: 'Secret Opponent Bomb' } }, state_before: before },
+        card: { hidden: true, name: 'Secret Opponent Bomb' } }, state_before: structuredClone(before) },
       { anchor: 'T5-A1', turn: 5, event: { actor: 'me', type: 'attack' },
         state: { ...before, turn: 5 } /* no true before-state */ },
     ] }],
@@ -83,7 +83,7 @@ test('unresolved published state references are not treated as observed pre-acti
 
 test('an updated replay invalidates annotations rather than showing them at an unrelated action', () => {
   const original = replay(), record = normalizeReplayReview(original, 1, sample);
-  assert.equal(record.fingerprint, reviewFingerprint(original.games[0]));
+  assert.equal(record.fingerprint, reviewFingerprint(original.games[0], original.warnings));
   const changed = structuredClone(original);
   changed.games[0].steps[0].state_before.turn = 99;
   assert.equal(reviewIsCurrent(changed, record), false);

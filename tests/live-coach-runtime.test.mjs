@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CoachController } from '../src/live-coach/controller.mjs';
 import { LiveCoachRuntime } from '../src/live-coach/runtime.mjs';
-import { startReplayServer } from '../src/server.mjs';
+import { startLegacyCoachServer as startReplayServer } from '../src/legacy-coach-server.mjs';
 
 const repoDir = process.env.MTGA_PRIVATE_CORPUS_DIR ?? fileURLToPath(new URL('../../../', import.meta.url));
 const seed = '32cdbcfa-61f6-4a18-a0a1-afad6dab3062';

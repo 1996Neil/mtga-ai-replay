@@ -56,7 +56,7 @@
 
 1. 修复上下文、任务生命周期、失效判定、证据不足的严重错误展示；保留按节点独立请求、8 节点两并发的上限，无 provider fallback。
 2. “重建说明”改成“数据完整性”：常见 warnings 有确定中文；未知项显示中文说明并提供原文，不猜译。新增默认折叠“高级工具”，迁入锚点调试、Coach Context 下载。
-3. Replay App 不 import 实时 Coach UI；Replay backend 仅显式 legacy 参数才动态加载 Coach；新版独立入口直接 startReplayServer，不需要 enable/standby，也不授予语音权限。历史代码及原启动器保留于 Git 和 legacy 入口，文档给出回退步骤。
+3. Replay App 不 import 实时 Coach UI；最终实现中 Replay backend 完全不导入 Coach，由独立 legacy wrapper 注入通用扩展；新版独立入口直接 startReplayServer，不需要 enable/standby，也不授予语音权限。历史代码及原启动器保留于 Git 和 legacy 入口，文档给出回退步骤。
 4. 使用本机真实 Quick Draft 的 340、387、545、548、561、807 等动作回放；数据只读，报告写入隔离 sidecar。验证浮窗、锚点 before/after、同局 revision、过期报告、失败和取消。模拟模型只证明任务/性能边界，不能当真实模型质量或网络时延。
 5. 本轮禁止收费模型请求。真实模型质量、token/费用、网络性能若无法得到授权，不宣称验收完成。
 6. 源码仓库改名仅在代码及实机验收全部满足后进行。改名目标是 source repo，数据仓库与同步目标保持原身份；先检查所有 remote、配置、文档和同步任务。条件未满足时交付核查清单，不提前改名。

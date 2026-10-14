@@ -1,4 +1,8 @@
 import { createHash } from 'node:crypto';
+import { setImmediate as yieldToIO } from 'node:timers/promises';
+import { createCoachContext } from '../coach-context.mjs';
+
+export const REVIEW_POLICY = 'visible-context/2;sample8;unproved-errors-are-tips';
 
 const severities = new Set(['critical', 'major', 'tip', 'positive']);
 const confidences = new Set(['high', 'medium', 'low']);
@@ -10,12 +14,26 @@ export function findReviewGame(replay, gameNumber) {
   return replay?.games?.find((g, i) => Number(g.game_number ?? i + 1) === gameNumber) ?? null;
 }
 
-export function reviewFingerprint(game) {
-  // Reimport may keep the same anchors but correct previously missing state.
-  // Hash every recorded frame, not only its anchor count.
-  return createHash('sha256').update(JSON.stringify({
-    steps: game?.steps ?? [], states: game?.states ?? {}, result: game?.result ?? {},
-  })).digest('hex');
+function* fingerprintParts(game, replayWarnings = []) {
+  // Frame-sized serialization avoids a second giant string for large matches.
+  yield JSON.stringify([REVIEW_POLICY, game?.result ?? {}, game?.warnings ?? [], replayWarnings]);
+  for (const step of game?.steps ?? []) yield JSON.stringify(step);
+  for (const [id, state] of Object.entries(game?.states ?? {})) {
+    yield JSON.stringify(id); yield JSON.stringify(state);
+  }
+}
+export function reviewFingerprint(game, replayWarnings = []) {
+  const hash = createHash('sha256');
+  for (const part of fingerprintParts(game, replayWarnings)) hash.update(part).update('\n');
+  return hash.digest('hex');
+}
+export async function reviewFingerprintAsync(game, replayWarnings = [], signal) {
+  const hash = createHash('sha256'); let batch = 0;
+  for (const part of fingerprintParts(game, replayWarnings)) {
+    signal?.throwIfAborted(); hash.update(part).update('\n');
+    if (++batch % 16 === 0) await yieldToIO();
+  }
+  signal?.throwIfAborted(); return hash.digest('hex');
 }
 
 function observedState(value) {
@@ -34,14 +52,14 @@ function afterOf(game, step) {
 function isHidden(card) {
   return !card || card.hidden === true || /hidden|post.?game/i.test(String(card.visibility ?? ''));
 }
-function visibleCardNames(snapshot) {
+export function visibleCardNames(snapshot) {
   // Only card-bearing player-visible zones. Do NOT traverse full snapshots:
   // opponent hidden-hand entries or player names might otherwise look like cards.
   const names = new Set();
   const collect = (items) => {
     for (const card of Array.isArray(items) ? items : []) {
       if (!isHidden(card) && typeof card.name === 'string' && card.name &&
-        !card.name.startsWith('Arena card ')) names.add(card.name);
+        verifiedEnglishName(card.name)) names.add(card.name);
     }
   };
   const me = snapshot?.players?.me ?? {};
@@ -53,7 +71,7 @@ function visibleCardNames(snapshot) {
 }
 
 /** Strict, source-anchored report. Never silently remap an invalid anchor to a nearby frame. */
-export function normalizeReplayReview(replay, gameNumber, raw, { source = 'imported', now = new Date().toISOString() } = {}) {
+export function normalizeReplayReview(replay, gameNumber, raw, { source = 'imported', now = new Date().toISOString(), fingerprint } = {}) {
   const game = findReviewGame(replay, gameNumber);
   if (!game) throw new Error('Review game is not present in this replay.');
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Review payload must be an object.');
@@ -77,10 +95,8 @@ export function normalizeReplayReview(replay, gameNumber, raw, { source = 'impor
     const boundary = input.boundary === 'after' ? 'after' : 'before';
     if (!step || !severities.has(severity) || !confidences.has(confidence) || seen.has(anchor)) continue;
     // Strong red warnings are never based on explicitly low-confidence model claims.
-    const safeSeverity = severity === 'critical' && confidence !== 'high'
-      ? confidence === 'medium' ? 'major' : 'tip'
-      : severity === 'major' && confidence === 'low' ? 'tip' : severity;
-    if (boundary === 'before' && !beforeOf(game, step)) continue; // Never display a post-action frame as a pre-action one.
+    const safeSeverity = ['critical', 'major'].includes(severity) ? 'tip' : severity;
+    if (!(boundary === 'before' ? beforeOf(game, step) : afterOf(game, step))) continue; // Never display a post-action frame as a pre-action one.
     const title = text(input.title, 160), observation = text(input.observation, 1400),
       suggestion = text(input.suggestion, 1400);
     if (!title || !observation || !suggestion) continue;
@@ -95,13 +111,13 @@ export function normalizeReplayReview(replay, gameNumber, raw, { source = 'impor
   }
   return { schema_version: 'replay-review/1.0', match_id: String(replay.match?.id ?? ''),
     game_number: gameNumber, source: text(source, 100), created_at: now,
-    fingerprint: reviewFingerprint(game), summary, notes };
+    policy_version: REVIEW_POLICY, fingerprint: fingerprint ?? reviewFingerprint(game, replay.warnings), summary, notes };
 }
 
 export function reviewIsCurrent(replay, review) {
   const game = findReviewGame(replay, review?.game_number);
   return Boolean(game && review?.schema_version === 'replay-review/1.0' &&
-    review.match_id === replay?.match?.id && review.fingerprint === reviewFingerprint(game));
+    review.match_id === replay?.match?.id && review.policy_version === REVIEW_POLICY && review.fingerprint === reviewFingerprint(game, replay.warnings));
 }
 
 const priority = { mulligan: 9, block: 8, cast: 7, attack: 6, activate: 6,
@@ -129,29 +145,46 @@ export function selectReviewDecisions(game, limit = 10) {
   return chosen.slice(0, limit).sort((a, b) => a.index - b.index).map(row => row.step);
 }
 
+function verifiedEnglishName(name) {
+  return typeof name === 'string' && name.length > 0 && name.length < 180 &&
+    !/^(Arena card |Unknown )/.test(name) && !/[\u3400-\u9fff]/u.test(name);
+}
 function compactCard(card) {
   if (isHidden(card)) return { hidden: true };
-  return { name: card.name ?? null, arena_id: card.arena_id ?? null,
-    power: card.power ?? null, toughness: card.toughness ?? null,
-    is_tapped: Boolean(card.is_tapped), counters: card.counters ?? [],
-    is_attacking: Boolean(card.is_attacking), is_blocking: Boolean(card.is_blocking) };
+  const value = { name: verifiedEnglishName(card.name) ? card.name : null };
+  // Field allowlist retains combat/target identities, never arbitrary log data.
+  for (const key of ['arena_id', 'instance_id', 'logical_id', 'owner', 'controller', 'power', 'toughness',
+    'damage_marked', 'has_summoning_sickness', 'card_types', 'colors', 'is_tapped', 'counters',
+    'is_attacking', 'is_blocking', 'attacking_target_id', 'blocked_attacker_ids', 'attached_to', 'attachments']) {
+    if (card[key] !== undefined) value[key] = card[key];
+  }
+  if (Array.isArray(card.targets)) value.targets = card.targets.map(compactCard);
+  if (card.ability_source) value.ability_source = compactCard(card.ability_source);
+  return value;
+}
+export function reviewActionContext(step) {
+  const event = step.event ?? {};
+  return { type: event.type, actor: event.actor, amount: event.amount ?? null,
+    card: event.card ? compactCard(event.card) : null,
+    targets: Array.isArray(event.targets) ? event.targets.map(compactCard) : [] };
 }
 export function reviewDecisionContext(replay, gameNumber, step) {
   const game = findReviewGame(replay, gameNumber);
-  const snapshot = game && beforeOf(game, step);
-  if (!snapshot) return null;
-  const players = snapshot.players ?? {};
+  if (!game || !beforeOf(game, step)) return null;
+  const shared = createCoachContext(replay, { gameNumber, anchor: step.anchor, boundary: 'before' });
+  if (!shared || shared.state_boundary !== 'before_gre_message') return null;
+  const snapshot = shared.state, players = snapshot.players ?? {};
   const player = p => ({ life: p?.life ?? null, hand_size: p?.handSize ?? p?.hand_size ?? null,
+    mana_pool: p?.mana_pool ?? null, mana_pool_source: p?.mana_pool_source ?? 'unknown',
     battlefield: (p?.battlefield ?? []).map(compactCard),
-    graveyard: (p?.graveyard ?? []).slice(-12).map(compactCard),
-    exile: (p?.exile ?? []).slice(-12).map(compactCard) });
-  return { anchor: step.anchor, turn: step.turn, action: step.event,
-    boundary: 'before_gre_message', grouped_frame: Boolean(step.grouped_frame),
+    graveyard: (p?.graveyard ?? []).map(compactCard), exile: (p?.exile ?? []).map(compactCard) });
+  return { anchor: step.anchor, turn: step.turn, action: reviewActionContext(step),
+    boundary: shared.state_boundary, grouped_frame: shared.grouped_frame,
     game_state: { turn: snapshot.turn ?? null, phase: snapshot.phase ?? null, step: snapshot.step ?? null,
-      active_player: snapshot.active_player ?? null, priority_player: snapshot.priority_player ?? null,
+      active_player: snapshot.activePlayer ?? snapshot.active_player ?? null,
+      priority_player: snapshot.priorityPlayer ?? snapshot.priority_player ?? null,
       me: { ...player(players.me), hand: (players.me?.hand ?? []).map(compactCard) },
-      opponent: { ...player(players.opponent), hand_size: players.opponent?.handSize ?? players.opponent?.hand_size ?? null },
-      stack: (snapshot.stack ?? []).map(compactCard) },
-    warnings: [...new Set([...(game.warnings ?? []), ...(snapshot.warnings ?? [])])],
-    policy: 'No future states or unrevealed opponent hand. Priority/legal alternatives are not proved.' };
+      opponent: player(players.opponent), stack: (snapshot.stack ?? []).map(compactCard) },
+    warnings: shared.warnings,
+    policy: 'Only observed player-visible state. Mana/priority are last observed, not proof of legal alternatives. Unknown English identities remain null.' };
 }

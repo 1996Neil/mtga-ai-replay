@@ -41,9 +41,12 @@ test('review HTTP endpoints are same-origin opt-in, cached, game-specific and st
   const options = { method: 'POST', headers: {
     'Origin': runtime.url.slice(0, -1), 'X-MTGA-Replay-Action': 'review-generate' } };
   const first = await ask(generate, options);
-  assert.equal(first.status, 200); assert.equal(first.value.review.notes[0].anchor, 'T2-A1');
+  assert.equal(first.status, 202);
+  const wait = async () => { for (let i = 0; i < 100; i++) { const r = await ask(target); if (r.value.status !== 'running') return r.value; await new Promise(done => setTimeout(done, 5)); } throw new Error('Review did not finish'); };
+  assert.equal((await wait()).review.notes[0].anchor, 'T2-A1');
   assert.equal(calls, 1);
-  assert.equal((await ask(generate, options)).value.cached, true);
+  assert.equal((await ask(generate, options)).status, 202);
+  await wait();
   assert.equal(calls, 1);
   assert.equal((await ask(target)).value.status, 'ready');
   recorded = structuredClone(recorded);
