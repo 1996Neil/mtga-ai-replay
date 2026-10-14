@@ -40,8 +40,23 @@ test('review stores exact English names and rejects unobserved opponent cards', 
   assert.equal(record.notes.length, 1);
   assert.deepEqual(record.notes[0].cards, ['Spell Snare']);
   assert.equal(record.notes[0].boundary, 'before');
+  const unflagged = replay();
+  // Even malformed logs with an unflagged opponent hand name must not certify
+  // that name as visible to the local player.
+  unflagged.games[0].steps[0].state_before.players.opponent.hand = [
+    { name: 'Secret Opponent Bomb' },
+  ];
+  const safe = normalizeReplayReview(unflagged, 1, sample);
+  assert.deepEqual(safe.notes[0].cards, ['Spell Snare']);
   assert.equal(record.summary.headline, sample.summary.headline);
   assert.equal(reviewIsCurrent(replay(), record), true);
+});
+
+test('low-confidence critical advice is downgraded rather than painted red', () => {
+  const record = normalizeReplayReview(replay(), 1, {
+    ...sample, notes: [{ ...sample.notes[0], severity: 'critical', confidence: 'low' }],
+  });
+  assert.equal(record.notes[0].severity, 'tip');
 });
 
 test('invalid anchors and missing before-states are not relocated or fabricated', () => {
