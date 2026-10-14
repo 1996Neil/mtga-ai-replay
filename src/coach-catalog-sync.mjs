@@ -16,12 +16,16 @@ function generationReason(error) {
 }
 
 /** The same single-match pipeline for missing archives and selected-match refresh. */
-async function queueReplay(replay, options, published, receipts) {
+async function queueReplay(replay, options, published, receipts, pendingBundle) {
   if (!replay?.match?.id || !Number.isFinite(Date.parse(replay.match.started_at))) throw new CoachSyncError('SYNC_REPLAY', 'Archived match has no valid identity or start time.');
   if (!replay.games?.some(game => (game.steps ?? game.replay_steps)?.length)) throw new CoachSyncError('SYNC_REPLAY', 'Archived match has no detailed game steps.');
   const fingerprint = await coachInputFingerprint(replay, options), previous = receipts[replay.match.id];
-  if (!options.forceGeneration && fingerprint && previous?.fingerprint === fingerprint.hash && previous.content_hash === published?.content_hash &&
-      previous.history_key === published?.history_key && (previous.valid_until === null || (Number.isFinite(previous.valid_until) && previous.valid_until > Date.now()))) {
+  const expectedBundle = pendingBundle ?? published;
+  const remoteConfirmsPending = Boolean(pendingBundle && published?.content_hash === pendingBundle.content_hash &&
+    published.history_key === pendingBundle.history_key);
+  if (fingerprint && previous?.fingerprint === fingerprint.hash && previous.content_hash === expectedBundle?.content_hash &&
+      previous.history_key === expectedBundle?.history_key && (remoteConfirmsPending || previous.valid_until === null ||
+        (Number.isFinite(previous.valid_until) && previous.valid_until > Date.now()))) {
     return { queued: false, generation_cached: true };
   }
   options.onProgress?.({ phase: 'cards' });
@@ -58,7 +62,8 @@ export async function syncCoachCatalog(options = {}) {
   try { return await runCatalog({...options,computePool:pool}); } finally { await pool?.close(); }
 }
 async function runCatalog(options) {
-  const settings = { ...options, dataDir: options.dataDir ?? defaultDataDir(), validationSession: createSyncValidationSession() };
+  const settings = { ...options, dataDir: options.dataDir ?? defaultDataDir(), validationSession: createSyncValidationSession(),
+    deferFullHistoryValidation: true };
   const local = await listReplays({ dataDir: settings.dataDir, limit: null });
   const report = { local: local.length, already_published: 0, github_before: 0, missing: 0,
     published: 0, updated: 0, failed: [], skipped: [], successes: [], github_total: null, latest: null, committed: 0 };
@@ -79,7 +84,7 @@ async function runCatalog(options) {
   // Pending matches also need regeneration against a remotely established key
   // after recovery or publication from another machine. Never rename parts.
   const refresh = new Set([...(options.refreshMatchIds ?? []), ...snapshot.pending.map(item => item.match_id)]), attempted = [];
-  const pendingIds = new Set(snapshot.pending.map(item => item.match_id));
+  const pendingBundles = new Map(snapshot.pending.map(item => [item.match_id, item]));
   const candidates = local.filter(match => !published.has(match.id) || refresh.has(match.id));
   report.candidates = candidates.length;
   options.onScan?.(report);
@@ -92,7 +97,7 @@ async function runCatalog(options) {
     const identity = { match_id: match.id, started_at: match.started_at, result: match.result };
     try {
       const replay = await getReplay(match.id, { dataDir: settings.dataDir });
-      const result = await queueReplay(replay, { ...settings, forceGeneration: pendingIds.has(match.id) }, published.get(match.id), receipts);
+      const result = await queueReplay(replay, settings, published.get(match.id), receipts, pendingBundles.get(match.id));
       attempted.push({ ...identity, queued: result.queued });
     } catch (error) {
       const failure = { ...identity, reason: generationReason(error) };
