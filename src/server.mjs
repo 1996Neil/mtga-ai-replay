@@ -11,12 +11,15 @@ import { createViewerCollection } from './viewer-collection.mjs';
 import { notifyViewerTask } from './task-notification.mjs';
 import { createLocalReplayHistory } from './viewer-local-history.mjs';
 import { createCoachRoutes } from './live-coach/routes.mjs';
+import { readReplayReview, writeReplayReview } from './review/review-store.mjs';
+import { findReviewGame, normalizeReplayReview, reviewIsCurrent } from './review/review-model.mjs';
+import { createReplayReviewGenerator } from './review/review-generator.mjs';
 
 const defaultViewer = fileURLToPath(new URL('../viewer/dist/', import.meta.url));
 const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.ico': 'image/x-icon', '.woff2': 'font/woff2' };
 
-export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir = defaultViewer, port = 0, cardNames = new Map(), cardMetadata = new Map(), displayNamesZh, fetchFn = fetch, writeInfo = true, syncWorkflow, collectionUpdate, collectionSync, notifyTask = notifyViewerTask, liveCoach, replayProvider, enableReplaySync = !replayProvider, enableCollection = enableReplaySync && !replayProvider, includeLocalHistory = enableReplaySync || !replayProvider, observeLocalLogs = includeLocalHistory, localHistoryOptions = {} } = {}) {
+export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir = defaultViewer, port = 0, cardNames = new Map(), cardMetadata = new Map(), displayNamesZh, fetchFn = fetch, writeInfo = true, syncWorkflow, collectionUpdate, collectionSync, notifyTask = notifyViewerTask, liveCoach, replayProvider, enableReplaySync = !replayProvider, enableCollection = enableReplaySync && !replayProvider, includeLocalHistory = enableReplaySync || !replayProvider, observeLocalLogs = includeLocalHistory, localHistoryOptions = {}, reviewGenerator = createReplayReviewGenerator() } = {}) {
   const root = await realpath(resolve(viewerDir)).catch(() => resolve(viewerDir));
   const chineseNames = displayNamesZh ?? await loadInstalledChineseDisplayNames();
   let assignedPort;
@@ -24,6 +27,7 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
   const collection = createViewerCollection({ dataDir, update: collectionUpdate, sync: collectionSync, notify: notifyTask });
   const localHistory = includeLocalHistory && observeLocalLogs ? createLocalReplayHistory({ ...localHistoryOptions, dataDir }) : null;
   const coach = liveCoach ? createCoachRoutes(liveCoach) : null;
+  const activeReviews = new Set();
   function send(response, status, value, contentType = 'application/json; charset=utf-8', extraHeaders = {}) {
     response.writeHead(status, { 'Content-Type': contentType, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
       'Cross-Origin-Resource-Policy': 'same-origin', 'Referrer-Policy': 'no-referrer', ...extraHeaders });
@@ -66,6 +70,32 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
       const path = decodeURIComponent(url.pathname);
       if (path.includes('\0') || path.includes('\\') || path.split('/').includes('..')) return send(response, 400, { error: 'Invalid path.' });
       if (coach && await coach.handle(request, response, url)) return;
+      const generateRoute = path.match(/^\/api\/matches\/([^/]+)\/review\/generate$/);
+      if (generateRoute && request.method === 'POST') {
+        // Explicit user click only. No request body, no raw logs, no silent API spending.
+        if (request.headers.origin !== `http://${request.headers.host}` ||
+          request.headers['x-mtga-replay-action'] !== 'review-generate') return send(response, 403, { error: 'Same-origin review action required.' });
+        if (request.headers['transfer-encoding'] || Number(request.headers['content-length'] ?? 0) !== 0 ||
+          url.searchParams.size !== 1 || !url.searchParams.has('game')) return send(response, 400, { error: 'Invalid review request.' });
+        const gameNumber = Number(url.searchParams.get('game'));
+        if (!Number.isSafeInteger(gameNumber) || gameNumber < 1) return send(response, 400, { error: 'Invalid game number.' });
+        const replay = await replayById(generateRoute[1]);
+        if (!findReviewGame(replay, gameNumber)) return send(response, 404, { error: 'Unknown game.' });
+        const cached = await readReplayReview(generateRoute[1], gameNumber, { dataDir });
+        if (reviewIsCurrent(replay, cached)) return send(response, 200, { status: 'ready', review: cached, cached: true });
+        if (!reviewGenerator) return send(response, 501, { error: 'AI review requires a separately configured API key; no model request was sent.' });
+        const key = `${generateRoute[1]}:${gameNumber}`;
+        if (activeReviews.size || activeReviews.has(key)) return send(response, 409, { error: 'A review is already being generated.' });
+        activeReviews.add(key);
+        try {
+          const generated = await reviewGenerator(replay, { gameNumber });
+          const review = normalizeReplayReview(replay, gameNumber, generated, { source: generated?.source ?? 'ai:custom' });
+          await writeReplayReview(review, { dataDir });
+          return send(response, 200, { status: 'ready', review, cached: false });
+        } catch {
+          return send(response, 502, { error: 'AI review failed or timed out; existing replay was not changed.' });
+        } finally { activeReviews.delete(key); }
+      }
       if (path === '/api/sync' && !enableReplaySync) return send(response, 403, { error: 'Replay synchronization is disabled in this isolated corpus server.' });
       if ((path === '/api/collection' || path === '/api/collection/sync') && !enableCollection) return send(response, 403, { error: 'Collection updates are disabled in this isolated corpus server.' });
       if ((path === '/api/collection' || path === '/api/collection/sync') && request.method === 'POST') {
@@ -88,8 +118,19 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
       if (path === '/api/local-history') return send(response, 200, request.method === 'HEAD' ? '' : localHistory?.snapshot() ?? { status: 'disabled' });
       if (path === '/api/collection') return send(response, 200, request.method === 'HEAD' ? '' : collection.snapshot());
       if (path === '/api/sync') return send(response, 200, request.method === 'HEAD' ? '' : sync.snapshot());
-      if (path === '/api/health') return send(response, 200, { service: 'mtga-gpt-replay', pid: process.pid, port: assignedPort, capabilities: [...(enableReplaySync ? ['replay-sync'] : []), ...(enableCollection ? ['collection-update'] : []), ...(coach ? ['live-coach'] : [])] });
+      if (path === '/api/health') return send(response, 200, { service: 'mtga-gpt-replay', pid: process.pid, port: assignedPort, capabilities: [...(enableReplaySync ? ['replay-sync'] : []), ...(enableCollection ? ['collection-update'] : []), ...(coach ? ['live-coach'] : []), ...(reviewGenerator ? ['replay-review-generate'] : []), 'replay-review-read'] });
       if (path === '/api/matches') return send(response, 200, await replayCatalog());
+      const reviewRoute = path.match(/^\/api\/matches\/([^/]+)\/review$/);
+      if (reviewRoute) {
+        const gameNumber = Number(url.searchParams.get('game') ?? 1);
+        if (!Number.isSafeInteger(gameNumber) || gameNumber < 1 || url.searchParams.size > 1) return send(response, 400, { error: 'Invalid review game.' });
+        const replay = await replayById(reviewRoute[1]);
+        if (!findReviewGame(replay, gameNumber)) return send(response, 404, { error: 'Unknown game.' });
+        const review = await readReplayReview(reviewRoute[1], gameNumber, { dataDir });
+        if (!review) return send(response, 200, { status: 'missing', can_generate: Boolean(reviewGenerator) });
+        if (!reviewIsCurrent(replay, review)) return send(response, 200, { status: 'stale', can_generate: Boolean(reviewGenerator) });
+        return send(response, 200, request.method === 'HEAD' ? '' : { status: 'ready', can_generate: Boolean(reviewGenerator), review });
+      }
       if (path === '/api/matches/latest') {
         const entries = await replayCatalog();
         const replay = replayProvider && !includeLocalHistory ? await replayProvider.latest() : entries.length ? await replayById(entries[0].id) : null;
