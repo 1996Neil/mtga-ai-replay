@@ -265,6 +265,7 @@ test('shutdown rejects new work while a completed task notification is still dra
 });
 
 test('shutdown rejects a coach POST whose body finishes after the coach was stopped', async t => {
+  const { startLegacyCoachServer } = await import('../src/legacy-coach-server.mjs');
   const directory = await mkdtemp(join(tmpdir(), 'mtga-shutdown-coach-test-'));
   const viewerDir = join(directory, 'viewer');
   await mkdir(viewerDir); await writeFile(join(viewerDir, 'index.html'), 'Synthetic shutdown fixture');
@@ -273,7 +274,7 @@ test('shutdown rejects a coach POST whose body finishes after the coach was stop
   const didSync = new Promise(resolve => { syncEntered = resolve; });
   const runtime = { controller: new EventEmitter(), snapshot: () => ({ enabled: starts > stops }),
     start: async () => { starts++; }, stop: async () => { stops++; } };
-  const running = await startReplayServer({ dataDir: join(directory, 'data'), viewerDir, writeInfo: false,
+  const running = await startLegacyCoachServer({ dataDir: join(directory, 'data'), viewerDir, writeInfo: false,
     displayNamesZh: new Map(), observeLocalLogs: false, liveCoach: runtime,
     syncWorkflow: async () => { syncEntered(); await syncGate; return { status: 'succeeded' }; },
     notifyTask: async () => ({ attempted: false, accepted: false }) });

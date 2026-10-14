@@ -1,8 +1,11 @@
 # MTGA AI Replay source
 
-Replay 2.0 now has a separate post-game UI and server entry: `npm run replay:serve`.
-See [independent Phase 1 audit and reuse comparison](docs/REPLAY_AI_AUDIT_20261014.md)
-and [task API, operation and rollback](docs/REPLAY_AI_HARDENING.md).
+Replay 2.0 reads cloud-generated reviews from the private data repository. Its
+separate server entry is `npm run replay:serve`; it does not load a local model
+generator or require model API keys. See the [cloud V1 protocol](docs/CLOUD_REVIEW_PROTOCOL_V1.md),
+[Agent write contract](docs/CLOUD_AGENT_REVIEW_CONTRACT.md), and [P0 review](docs/CLOUD_REVIEW_P0_PLAN_20261015.md).
+The [Phase 1 audit](docs/REPLAY_AI_AUDIT_20261014.md) and
+[previous lifecycle/rollback notes](docs/REPLAY_AI_HARDENING.md) remain historical evidence.
 The legacy voice code and launcher remain in Git; the original desktop checkout is not replaced.
 
 

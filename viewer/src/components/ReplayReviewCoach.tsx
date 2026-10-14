@@ -16,21 +16,23 @@ const symbol: Record<Severity, string> = { critical: '!', major: '!', tip: 'i', 
 const severityOrder: Severity[] = ['critical', 'major', 'tip', 'positive'];
 const confidence = { high: '较高', medium: '中等', low: '较低' };
 const bounded = (value: number, max: number) => Math.max(8, Math.min(Math.max(8, max), value));
+const displayDate = (value?: string | null) => value && Number.isFinite(Date.parse(value))
+  ? new Date(value).toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai' }) : '未知日期';
 
 export function ReplayReviewCoach({ match, currentStepIndex, viewBefore, onJump }: {
   match: Match; currentStepIndex: number; viewBefore: boolean; onJump: (anchor: string, boundary: Boundary) => void;
 }) {
   const [review, setReview] = useState<Review | null>(null);
-  const [state, setState] = useState<'loading'|'missing'|'stale'|'running'|'ready'|'error'>('loading');
-  const [canGenerate, setCanGenerate] = useState(false);
+  const [state, setState] = useState<'loading'|'missing'|'stale'|'syncing'|'ready'|'error'>('loading');
+  const [canSync, setCanSync] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState('');
+  const [checkedAt, setCheckedAt] = useState<string | null>(null);
   const [open, setOpen] = useState(false), [folded, setFolded] = useState(false);
   const [selectedAnchor, setSelectedAnchor] = useState<string | null>(null);
   const [position, setPosition] = useState({ x: -1, y: 130 });
   const [track, setTrack] = useState<Rect | null>(null);
   const drag = useRef<{ pointer: number; startX: number; startY: number; x: number; y: number } | null>(null);
-  const [progress, setProgress] = useState({ phase: '', completed: 0, total: 0 });
   const [pollVersion, setPollVersion] = useState(0);
   const panel = useRef<HTMLElement | null>(null);
   const epoch = useRef(0), previousStep = useRef<string | null>(null);
@@ -40,7 +42,7 @@ export function ReplayReviewCoach({ match, currentStepIndex, viewBefore, onJump 
   useEffect(() => {
     const controller = new AbortController(); const ticket = ++epoch.current;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    setReview(null); setState('loading'); setCanGenerate(false); setError('');
+    setReview(null); setState('loading'); setCanSync(false); setError(''); setCheckedAt(null);
     setSelectedAnchor(null); setGenerating(false); previousStep.current = null;
     async function read() {
       try {
@@ -48,20 +50,21 @@ export function ReplayReviewCoach({ match, currentStepIndex, viewBefore, onJump 
         if (!res.ok) throw new Error(`复盘服务不可用（${res.status}）。`);
         const value = await res.json();
         if (controller.signal.aborted || ticket !== epoch.current) return;
-        setCanGenerate(Boolean(value.can_generate));
+        setCanSync(Boolean(value.can_sync));
+        setCheckedAt(typeof value.checked_at === 'string' ? value.checked_at : null);
         if (value.status === 'ready' && value.review?.match_id === id && value.review.game_number === game) {
-          setReview(value.review as Review); setState('ready'); setGenerating(false); setOpen(true);
-        } else if (value.status === 'running') {
-          setState('running'); setGenerating(true); setProgress(value.task?.progress ?? { phase: '', completed: 0, total: 0 });
+          setReview(value.review as Review); setState('ready'); setGenerating(false); setOpen(true); if (value.offline || value.error) setError(value.error ?? '当前离线，显示上次校验的云端复盘。');
+        } else if (value.status === 'syncing') {
+          setState('syncing'); setGenerating(true);
           timer = setTimeout(() => { void read(); }, 800);
         } else {
-          setReview(null); setGenerating(false); setState(value.status === 'stale' || value.task?.status === 'stale' ? 'stale' : 'missing');
-          if (value.task?.error) setError(value.task.error);
+          setReview(null); setGenerating(false); setState(value.status === 'stale' ? 'stale' : value.status === 'error' ? 'error' : 'missing');
+          if (value.error) setError(value.error);
         }
       } catch (err) {
         if (!controller.signal.aborted && ticket === epoch.current) {
           setState('error'); setError(err instanceof Error ? err.message : String(err));
-          // Reconnect to the same server-owned job; never resubmit a paid request.
+          // Reconnect to the same read-only sync; never start a model request.
           timer = setTimeout(() => { void read(); }, 2000);
         }
       }
@@ -156,18 +159,18 @@ export function ReplayReviewCoach({ match, currentStepIndex, viewBefore, onJump 
       (selectedIndex + direction + ordered.length) % ordered.length;
     choose(ordered[i]);
   };
-  async function generate() {
-    if (generating || !canGenerate) return;
+  async function syncCloudReview() {
+    if (generating || !canSync) return;
     const ticket = epoch.current;
     setGenerating(true); setError('');
     try {
-      const response = await fetch(`/api/matches/${encodeURIComponent(id)}/review/generate?game=${game}`, {
-        method: 'POST', headers: { 'X-MTGA-Replay-Action': 'review-generate' },
+      const response = await fetch(`/api/matches/${encodeURIComponent(id)}/review/sync?game=${game}`, {
+        method: 'POST', headers: { 'X-MTGA-Replay-Action': 'review-sync' },
       });
       const result = await response.json();
-      if (!response.ok) throw new Error(result.error ?? `生成失败（${response.status}）`);
+      if (!response.ok) throw new Error(result.error ?? `同步失败（${response.status}）`);
       if (ticket !== epoch.current) return;
-      setState('running'); setProgress(result.task?.progress ?? { phase: 'preparing', completed: 0, total: 0 });
+      setState('syncing');
       setOpen(true); setPollVersion(v => v + 1);
     } catch (err) { if (ticket === epoch.current) { setError(err instanceof Error ? err.message : String(err)); setPollVersion(v => v + 1); } }
     finally { if (ticket === epoch.current) setGenerating(false); }
@@ -206,12 +209,13 @@ export function ReplayReviewCoach({ match, currentStepIndex, viewBefore, onJump 
         <button type="button" aria-label="关闭 AI 复盘" onClick={() => setOpen(false)}>×</button>
       </header>
       {!folded && <div className="replay-review-content">
-        {generating || state === 'running' ? <div role="status"><p>正在分析：{progress.phase === 'summary' ? '生成本局总结' : '逐节点检查'} · {progress.completed}/{progress.total || '…'}</p><button type="button" onClick={async () => { try { const res = await fetch(url.replace('/review?', '/review/cancel?'), { method: 'POST', headers: { 'X-MTGA-Replay-Action': 'review-cancel' } }); if (!res.ok) throw new Error('取消请求未确认，请重试。'); setPollVersion(v => v + 1); } catch (err) { setError(err instanceof Error ? err.message : String(err)); } }}>取消分析</button></div> : state === 'loading' ? <p role="status">正在读取已保存的复盘…</p> : !review ? <>
-          <p>{state === 'stale' ? '回放内容已经更新，原 AI 建议不能再安全定位。请重新分析。' :
-            '这场比赛尚无 AI 复盘。只有你主动点击生成，才会请求模型。'}</p>
-          {canGenerate ? <button type="button" className="replay-review-generate" disabled={generating} onClick={generate}>
-            {generating ? '正在逐节点分析，请勿重复点击…' : '生成本局 AI 复盘（可能产生 API 费用）'}
-          </button> : <p>自动生成功能未配置。需要在本机设置独立的复盘模型 API 密钥。</p>}
+        {generating || state === 'syncing' ? <p role="status">正在检查云端复盘…</p> : state === 'loading' ? <p role="status">正在读取已保存的复盘…</p> : !review ? <>
+          <p>{state === 'stale' ? '比赛数据或分析政策已经更新，原云端建议不能再安全定位。' :
+            '这场比赛尚无已校验的云端 AI 复盘。'}</p>
+          <button type="button" className="replay-review-generate" disabled={generating || !canSync} onClick={syncCloudReview}>
+            检查/同步云端复盘
+          </button>
+          {!canSync && <p>云端复盘使用已有私有数据仓库连接；本地无需模型密钥。</p>}
         </> : selected ? <>
           <div className="replay-review-meta"><span className={`severity-text-${selected.severity}`}>
             {symbol[selected.severity]} {label[selected.severity]}</span>
@@ -238,8 +242,9 @@ export function ReplayReviewCoach({ match, currentStepIndex, viewBefore, onJump 
           </div>
           <nav className="replay-review-nav"><button type="button" disabled={!ordered.length} onClick={() => changeSelected(1)}>查看第一条建议 →</button></nav>
         </>}
+        {review && <button type="button" disabled={generating || !canSync} onClick={syncCloudReview}>检查/同步云端复盘</button>}
         {error && <p className="replay-review-error" role="alert">{error}</p>}
-        {state === 'ready' && <small className="replay-review-footnote">{review?.source} · {review?.created_at?.slice(0, 10)} · AI 建议不是确定的合法行动证明。</small>}
+        {state === 'ready' && <small className="replay-review-footnote">{review?.source} · {displayDate(review?.created_at)}{checkedAt ? ` · 上次校验 ${displayDate(checkedAt)}` : ''} · AI 建议不是确定的合法行动证明。</small>}
       </div>}
     </section>, document.body)}
     {!!markerButtons.length && (track ?

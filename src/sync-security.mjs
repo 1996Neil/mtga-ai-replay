@@ -4,6 +4,8 @@ import { resolve } from 'node:path';
 import { createGitBatch } from './git-batch.mjs';
 import { setImmediate as yieldLoop } from 'node:timers/promises';
 import { performance } from 'node:perf_hooks';
+import { isReviewSyncPath, parseCloudReview } from './review/cloud-review-contract.mjs';
+export { isReviewSyncPath } from './review/cloud-review-contract.mjs';
 
 // Opaque, invocation-only capabilities. Another loaded ruleset cannot use this
 // module's WeakMap, and callers cannot insert their own successful verdicts.
@@ -55,7 +57,7 @@ const RAW_KEYS = new Set([
 const IMAGE_KEYS = new Set(['image', 'images', 'imageuris', 'imageurls', 'imageurl', 'imagepath', 'imagecache',
   'cardimage', 'cardimages', 'cachedimages', 'binarydata', 'imagedata', 'imagebase64', 'rawbytes']);
 const normalizedKey = value => value.toLowerCase().replace(/[^a-z0-9]/g, '');
-const allowedPath = path => typeof path === 'string' && (ALLOWED_ROOT.has(path) || BUNDLE_PATH.test(path) || PART_PATH.test(path) || COLLECTION_PATH.test(path));
+export const allowedPath = path => typeof path === 'string' && (ALLOWED_ROOT.has(path) || BUNDLE_PATH.test(path) || PART_PATH.test(path) || COLLECTION_PATH.test(path) || isReviewSyncPath(path));
 const RESEARCH_PATH = /^docs\/research\/live-coach\/[A-Za-z0-9_-]{1,128}\.md$/;
 const OBJECT_HASH = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/;
 
@@ -164,6 +166,10 @@ export function validateBundleFiles(filesMap) {
     // Match keys must not themselves carry a credential.
     scanText(path, path);
     const text = textContent(content, path);
+    if (isReviewSyncPath(path)) {
+      try { parseCloudReview(content, { path }); }
+      catch { reject(path, 'invalid-cloud-review'); }
+    }
     if (path.endsWith('.json')) {
       let value;
       try { value = JSON.parse(text); } catch { reject(path, 'invalid-json'); }
@@ -215,6 +221,7 @@ function validateFileEntry(path, mode, hash, approvedFiles) {
   const approved = approvedFiles.get(path);
   if (!allowedPath(path) && !approved) reject(path, 'unapproved-file-path');
   if (!MODES.has(mode)) reject(path, 'symlink-or-gitlink');
+  if (isReviewSyncPath(path) && mode !== '100644') reject(path, 'review-file-mode');
   if (!OBJECT_HASH.test(hash ?? '')) reject(path, 'invalid-git-object');
   if (approved && (mode !== approved.mode || hash !== approved.blob)) reject(path, 'changed-approved-document');
   // A new path never inherits the permission of another path with the same bytes.
@@ -406,7 +413,7 @@ export async function validateStagedRepository(repoDir, { runGit, historyApprova
     if(++semanticEntries%512===0&&performance.now()-semanticYield>=5){await yieldLoop();semanticYield=performance.now();}
     // Identical bytes in JSON and README are validated under both file formats.
     const approved = approvedFiles.get(path);
-    const identity = `${approved ? `approved-document:${path}` : 'data'}:${hash}:${path.endsWith('.json') ? 'json' : 'text'}`;
+    const identity = `${approved ? `approved-document:${path}` : isReviewSyncPath(path) ? `review:${path}` : 'data'}:${hash}:${path.endsWith('.json') ? 'json' : 'text'}`;
     if (inspected.has(identity)) continue;
     inspected.add(identity);
     if (!pending.has(hash)) pending.set(hash, []);

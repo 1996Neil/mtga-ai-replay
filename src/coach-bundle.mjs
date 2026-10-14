@@ -24,23 +24,28 @@ const isReference = value => plain(value) && Object.keys(value).length === 1 && 
   && typeof value.$ref.file === 'string' && typeof value.$ref.key === 'string';
 
 /** Resolves only supplied JSON objects; never reads a path, makes a request or guesses a board. */
-export function resolveCoachBundle(coach, parts = new Map()) {
+export function resolveCoachBundle(coach, parts = new Map(), limits = {}) {
   const files = parts instanceof Map ? parts : new Map(Object.entries(parts));
   const active = new Set();
-  const resolve = value => {
+  let nodes = 0, stringBytes = 0;
+  const resolve = (value, depth = 0) => {
+    if (++nodes > (limits.maxNodes ?? Infinity)) throw new Error('Coach reference node limit.');
+    if (depth > (limits.maxDepth ?? Infinity)) throw new Error('Coach reference depth limit.');
+    if (typeof value === 'string') { stringBytes += Buffer.byteLength(value); if (stringBytes > (limits.maxStringBytes ?? Infinity)) throw new Error('Coach reference expansion limit.'); }
     if (isReference(value)) {
       const { file, key } = value.$ref, token = `${file}:${key}`;
       if (active.has(token)) throw new Error('Cyclic Coach part reference.');
       let part = files.get(file);
       if (typeof part === 'string') part = JSON.parse(part);
       if (part?.schema !== 'MTGA_COACH_PART_V1' || !own(part.records, key)) throw new Error('Missing Coach part reference.');
-      active.add(token); const result = resolve(part.records[key]); active.delete(token); return result;
+      active.add(token); const result = resolve(part.records[key], depth + 1); active.delete(token); return result;
     }
     if (plain(value) && Array.isArray(value.$chunks) && ['array', 'object', 'string'].includes(value.type)) {
-      const chunks = value.$chunks.map(resolve);
+      const chunks = value.$chunks.map(child => resolve(child, depth + 1));
       return value.type === 'array' ? chunks.flat() : value.type === 'string' ? chunks.join('') : Object.assign({}, ...chunks);
     }
-    return Array.isArray(value) ? value.map(resolve) : plain(value) ? Object.fromEntries(Object.entries(value).map(([key, child]) => [key, resolve(child)])) : value;
+    if (limits.strict && plain(value) && ('$ref' in value || '$chunks' in value)) throw new Error('Malformed Coach reference.');
+    return Array.isArray(value) ? value.map(child => resolve(child, depth + 1)) : plain(value) ? Object.fromEntries(Object.entries(value).map(([key, child]) => [key, resolve(child, depth + 1)])) : value;
   };
   const input = { ...coach }; if (input.reference_encoding?.schema === REF_SCHEMA) delete input.reference_encoding;
   return resolve(input);
