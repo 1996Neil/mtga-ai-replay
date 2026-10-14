@@ -1,3 +1,4 @@
+import { createComputePool } from './compute-pool.mjs';
 import { defaultDataDir, listReplays, getReplay } from './history.mjs';
 import { buildCoachCards } from './coach-cards.mjs';
 import { buildCoachBundle } from './coach-bundle.mjs';
@@ -15,28 +16,36 @@ function generationReason(error) {
 }
 
 /** The same single-match pipeline for missing archives and selected-match refresh. */
-async function queueReplay(replay, options, published, receipts) {
+async function queueReplay(replay, options, published, receipts, pendingBundle) {
   if (!replay?.match?.id || !Number.isFinite(Date.parse(replay.match.started_at))) throw new CoachSyncError('SYNC_REPLAY', 'Archived match has no valid identity or start time.');
   if (!replay.games?.some(game => (game.steps ?? game.replay_steps)?.length)) throw new CoachSyncError('SYNC_REPLAY', 'Archived match has no detailed game steps.');
   const fingerprint = await coachInputFingerprint(replay, options), previous = receipts[replay.match.id];
-  if (!options.forceGeneration && fingerprint && previous?.fingerprint === fingerprint.hash && previous.content_hash === published?.content_hash &&
-      previous.history_key === published?.history_key && (previous.valid_until === null || (Number.isFinite(previous.valid_until) && previous.valid_until > Date.now()))) {
+  const expectedBundle = pendingBundle ?? published;
+  const remoteConfirmsPending = Boolean(pendingBundle && published?.content_hash === pendingBundle.content_hash &&
+    published.history_key === pendingBundle.history_key);
+  if (fingerprint && previous?.fingerprint === fingerprint.hash && previous.content_hash === expectedBundle?.content_hash &&
+      previous.history_key === expectedBundle?.history_key && (remoteConfirmsPending || previous.valid_until === null ||
+        (Number.isFinite(previous.valid_until) && previous.valid_until > Date.now()))) {
     return { queued: false, generation_cached: true };
   }
   options.onProgress?.({ phase: 'cards' });
-  const observed = new Map(); let validUntil = null;
-  const cards = await buildCoachCards(replay, { ...options, onMetadata: (id, metadata) => {
+  const observed = new Map(); let validUntil = null, databaseReadComplete = false;
+  const cards = await buildCoachCards(replay, { ...options,
+    onDatabaseRead: complete => { databaseReadComplete = complete; }, onMetadata: (id, metadata) => {
     observed.set(id, syncDigest(metadata));
     const retry = metadata.retry_after ?? (!metadata.source ? Date.now() + 60_000 : null);
     if (retry !== null) validUntil = Math.min(validUntil ?? Infinity, retry);
   } });
   options.onProgress?.({ phase: 'generating' });
   const historyKey = await getCoachHistoryKey(replay.match.id, options);
-  const bundle = await buildCoachBundle(replay, { cards, multipart: true, ...(historyKey ? { historyKey } : {}) });
+  const bundleOptions = { cards, multipart: true, ...(options.generatedAt ? {generatedAt:options.generatedAt} : {}), ...(historyKey ? { historyKey } : {}) };
+  const bundle = options.computePool ? await options.computePool.run('bundle', {replay,options:bundleOptions}) : await buildCoachBundle(replay,bundleOptions);
   const queued = await enqueueCoachBundle(bundle, options);
   const after = await coachInputFingerprint(replay, options);
-  let stable = fingerprint && after && fingerprint.core === after.core;
+  let stable = databaseReadComplete && fingerprint && after && fingerprint.core === after.core;
+  const dependencies = new Set(after?.metadataIds ?? []);
   for (const [id, hash] of observed) {
+    if (!dependencies.has(id)) stable = false;
     try { if (syncDigest(JSON.parse(await readFile(join(options.dataDir, 'cards', `${id}.json`), 'utf8'))) !== hash) stable = false; }
     catch { stable = false; }
   }
@@ -48,7 +57,13 @@ async function queueReplay(replay, options, published, receipts) {
 /** Backfill every match in Viewer's canonical catalog, regardless of the match
  * selected for local export. Per-match generation failures never abort peers. */
 export async function syncCoachCatalog(options = {}) {
-  const settings = { ...options, dataDir: options.dataDir ?? defaultDataDir(), validationSession: createSyncValidationSession() };
+  const count=options.workerCount??2;
+  const pool = count ? createComputePool({size:count}) : null;
+  try { return await runCatalog({...options,computePool:pool}); } finally { await pool?.close(); }
+}
+async function runCatalog(options) {
+  const settings = { ...options, dataDir: options.dataDir ?? defaultDataDir(), validationSession: createSyncValidationSession(),
+    deferFullHistoryValidation: true };
   const local = await listReplays({ dataDir: settings.dataDir, limit: null });
   const report = { local: local.length, already_published: 0, github_before: 0, missing: 0,
     published: 0, updated: 0, failed: [], skipped: [], successes: [], github_total: null, latest: null, committed: 0 };
@@ -69,7 +84,7 @@ export async function syncCoachCatalog(options = {}) {
   // Pending matches also need regeneration against a remotely established key
   // after recovery or publication from another machine. Never rename parts.
   const refresh = new Set([...(options.refreshMatchIds ?? []), ...snapshot.pending.map(item => item.match_id)]), attempted = [];
-  const pendingIds = new Set(snapshot.pending.map(item => item.match_id));
+  const pendingBundles = new Map(snapshot.pending.map(item => [item.match_id, item]));
   const candidates = local.filter(match => !published.has(match.id) || refresh.has(match.id));
   report.candidates = candidates.length;
   options.onScan?.(report);
@@ -82,7 +97,7 @@ export async function syncCoachCatalog(options = {}) {
     const identity = { match_id: match.id, started_at: match.started_at, result: match.result };
     try {
       const replay = await getReplay(match.id, { dataDir: settings.dataDir });
-      const result = await queueReplay(replay, { ...settings, forceGeneration: pendingIds.has(match.id) }, published.get(match.id), receipts);
+      const result = await queueReplay(replay, settings, published.get(match.id), receipts, pendingBundles.get(match.id));
       attempted.push({ ...identity, queued: result.queued });
     } catch (error) {
       const failure = { ...identity, reason: generationReason(error) };

@@ -2,7 +2,7 @@
 
 This is a private local adaptation of [m1kk3l/mtg-replay-viewer](https://github.com/m1kk3l/mtg-replay-viewer), inspected at commit [`472969b805c1e62e17797c7cdac7f69f3670597c`](https://github.com/m1kk3l/mtg-replay-viewer/tree/472969b805c1e62e17797c7cdac7f69f3670597c).
 
-No code license was declared in that repository at inspection. The user explicitly authorized useful local source copying with clear attribution for this private tool. This file records that provenance; it does not claim the upstream code is MIT licensed.
+No code license was declared in that repository at inspection. The user explicitly authorized useful local source copying with clear attribution for this private tool. This file records that provenance; it does not claim the upstream code is MIT licensed. The user authorized these 19 existing adapted files to be included in private repository PR #3 for review on 2026-10-14. That authorization does not establish an upstream license or public redistribution rights.
 
 ## Reused and adapted source
 
