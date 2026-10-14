@@ -1,4 +1,10 @@
-# MTGA Live Coach — private source development
+# MTGA AI Replay source
+
+Replay 2.0 now has a separate post-game UI and server entry: `npm run replay:serve`.
+See [independent Phase 1 audit and reuse comparison](docs/REPLAY_AI_AUDIT_20261014.md)
+and [task API, operation and rollback](docs/REPLAY_AI_HARDENING.md).
+The legacy voice code and launcher remain in Git; the original desktop checkout is not replaced.
+
 
 This repository contains the latest owned replay/Live Coach backend, model and
 speech adapters, owned Viewer integration, tests, three lockfiles and local

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useMemo } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
 import './ReplayReviewCoach.css';
@@ -17,11 +17,11 @@ const severityOrder: Severity[] = ['critical', 'major', 'tip', 'positive'];
 const confidence = { high: '较高', medium: '中等', low: '较低' };
 const bounded = (value: number, max: number) => Math.max(8, Math.min(Math.max(8, max), value));
 
-export function ReplayReviewCoach({ match, currentStepIndex, onJump }: {
-  match: Match; currentStepIndex: number; onJump: (anchor: string, boundary: Boundary) => void;
+export function ReplayReviewCoach({ match, currentStepIndex, viewBefore, onJump }: {
+  match: Match; currentStepIndex: number; viewBefore: boolean; onJump: (anchor: string, boundary: Boundary) => void;
 }) {
   const [review, setReview] = useState<Review | null>(null);
-  const [state, setState] = useState<'loading'|'missing'|'stale'|'ready'|'error'>('loading');
+  const [state, setState] = useState<'loading'|'missing'|'stale'|'running'|'ready'|'error'>('loading');
   const [canGenerate, setCanGenerate] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState('');
@@ -30,45 +30,70 @@ export function ReplayReviewCoach({ match, currentStepIndex, onJump }: {
   const [position, setPosition] = useState({ x: -1, y: 130 });
   const [track, setTrack] = useState<Rect | null>(null);
   const drag = useRef<{ pointer: number; startX: number; startY: number; x: number; y: number } | null>(null);
+  const [progress, setProgress] = useState({ phase: '', completed: 0, total: 0 });
+  const [pollVersion, setPollVersion] = useState(0);
+  const panel = useRef<HTMLElement | null>(null);
   const epoch = useRef(0), previousStep = useRef<string | null>(null);
   const id = match.matchId, game = match.gameNumber;
   const url = `/api/matches/${encodeURIComponent(id)}/review?game=${game}`;
 
   useEffect(() => {
-    const controller = new AbortController();
-    const ticket = ++epoch.current;
+    const controller = new AbortController(); const ticket = ++epoch.current;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     setReview(null); setState('loading'); setCanGenerate(false); setError('');
-    setSelectedAnchor(null); setOpen(false); setGenerating(false);
-    previousStep.current = null;
-    void fetch(url, { cache: 'no-store', signal: controller.signal }).then(async res => {
-      if (!res.ok) throw new Error(`复盘服务不可用（${res.status}）。`);
-      return await res.json();
-    }).then(value => {
-      if (controller.signal.aborted || ticket !== epoch.current) return;
-      if (value.status === 'ready' && value.review?.match_id === id && value.review.game_number === game) {
-        setReview(value.review as Review); setState('ready'); setOpen(true);
-      } else setState(value.status === 'stale' ? 'stale' : 'missing');
-      setCanGenerate(Boolean(value.can_generate));
-    }).catch(err => { if (!controller.signal.aborted && ticket === epoch.current) { setState('error'); setError(String(err.message)); } });
-    return () => { controller.abort(); epoch.current++; };
-  }, [id, game, url]);
+    setSelectedAnchor(null); setGenerating(false); previousStep.current = null;
+    async function read() {
+      try {
+        const res = await fetch(url, { cache: 'no-store', signal: controller.signal });
+        if (!res.ok) throw new Error(`复盘服务不可用（${res.status}）。`);
+        const value = await res.json();
+        if (controller.signal.aborted || ticket !== epoch.current) return;
+        setCanGenerate(Boolean(value.can_generate));
+        if (value.status === 'ready' && value.review?.match_id === id && value.review.game_number === game) {
+          setReview(value.review as Review); setState('ready'); setGenerating(false); setOpen(true);
+        } else if (value.status === 'running') {
+          setState('running'); setGenerating(true); setProgress(value.task?.progress ?? { phase: '', completed: 0, total: 0 });
+          timer = setTimeout(() => { void read(); }, 800);
+        } else {
+          setReview(null); setGenerating(false); setState(value.status === 'stale' || value.task?.status === 'stale' ? 'stale' : 'missing');
+          if (value.task?.error) setError(value.task.error);
+        }
+      } catch (err) {
+        if (!controller.signal.aborted && ticket === epoch.current) {
+          setState('error'); setError(err instanceof Error ? err.message : String(err));
+          // Reconnect to the same server-owned job; never resubmit a paid request.
+          timer = setTimeout(() => { void read(); }, 2000);
+        }
+      }
+    }
+    void read();
+    return () => { controller.abort(); clearTimeout(timer); epoch.current++; };
+  }, [id, game, url, match.steps, pollVersion]);
 
   useEffect(() => {
-    const key = `${id}:${game}:${currentStepIndex}`;
+    const key = `${id}:${game}:${currentStepIndex}:${viewBefore}`;
     const prev = previousStep.current; previousStep.current = key;
     if (!prev || prev === key || !prev.startsWith(`${id}:${game}:`) || !review) return;
     const anchor = match.steps[currentStepIndex]?.anchor;
-    if (anchor && review.notes.some(n => n.anchor === anchor)) {
+    if (anchor && review.notes.some(n => n.anchor === anchor && n.boundary === (viewBefore ? 'before' : 'after'))) {
       setSelectedAnchor(anchor); setOpen(true); setFolded(false);
-    }
-  }, [id, game, currentStepIndex, review, match.steps]);
+    } else setSelectedAnchor(null);
+  }, [id, game, currentStepIndex, viewBefore, review, match.steps]);
 
-  useEffect(() => {
-    const resize = () => setPosition(p => ({ x: p.x < 0 ? Math.max(8, window.innerWidth - 410) :
-      bounded(p.x, window.innerWidth - 365), y: bounded(p.y, window.innerHeight - 180) }));
-    resize(); window.addEventListener('resize', resize);
-    return () => window.removeEventListener('resize', resize);
-  }, []);
+  useLayoutEffect(() => {
+    function clamp() {
+      const r = panel.current?.getBoundingClientRect();
+      setPosition(p => {
+        const x = p.x < 0 ? Math.max(8, window.innerWidth - (r?.width ?? 375) - 24) : bounded(p.x, window.innerWidth - (r?.width ?? 375) - 8);
+        const y = bounded(p.y, window.innerHeight - (r?.height ?? 180) - 8);
+        return p.x === x && p.y === y ? p : { x, y };
+      });
+    }
+    clamp(); const observer = new ResizeObserver(clamp);
+    if (panel.current) observer.observe(panel.current);
+    window.addEventListener('resize', clamp);
+    return () => { observer.disconnect(); window.removeEventListener('resize', clamp); };
+  }, [open, folded]);
 
   useLayoutEffect(() => {
     let slider: Element | null = null, observer: ResizeObserver | null = null;
@@ -80,7 +105,7 @@ export function ReplayReviewCoach({ match, currentStepIndex, onJump }: {
     };
     const find = () => {
       const next = footer?.querySelector('input[type="range"],[role="slider"]') ?? null;
-      if (next === slider) return;
+      if (next === slider) { place(); return; }
       observer?.disconnect(); slider = next;
       if (slider) { observer = new ResizeObserver(place); observer.observe(slider); place(); }
       else setTrack(null);
@@ -93,8 +118,11 @@ export function ReplayReviewCoach({ match, currentStepIndex, onJump }: {
     return () => { observer?.disconnect(); mutation?.disconnect(); window.removeEventListener('resize', place); window.removeEventListener('scroll', place, true); };
   }, [id, game]);
 
-  const ordered = (review?.notes ?? []).map(note => ({ ...note, index: match.steps.findIndex(s => s.anchor === note.anchor) }))
-    .filter(note => note.index >= 0).sort((a, b) => a.index - b.index);
+  const ordered = useMemo(() => {
+    const indices = new Map(match.steps.map((step, i) => [step.anchor, i]));
+    return (review?.notes ?? []).map(note => ({ ...note, index: indices.get(note.anchor) ?? -1 }))
+      .filter(note => note.index >= 0).sort((a, b) => a.index - b.index);
+  }, [review, match.steps]);
   const selected = ordered.find(note => note.anchor === selectedAnchor) ?? null;
   const selectedIndex = selected ? ordered.findIndex(note => note.anchor === selected.anchor) : -1;
   const markers: Array<typeof ordered> = [];
@@ -139,9 +167,9 @@ export function ReplayReviewCoach({ match, currentStepIndex, onJump }: {
       const result = await response.json();
       if (!response.ok) throw new Error(result.error ?? `生成失败（${response.status}）`);
       if (ticket !== epoch.current) return;
-      if (result.review?.match_id !== id || result.review?.game_number !== game) throw new Error('服务端返回了不同的对局。');
-      setReview(result.review as Review); setState('ready'); setSelectedAnchor(null); setOpen(true);
-    } catch (err) { if (ticket === epoch.current) setError(err instanceof Error ? err.message : String(err)); }
+      setState('running'); setProgress(result.task?.progress ?? { phase: 'preparing', completed: 0, total: 0 });
+      setOpen(true); setPollVersion(v => v + 1);
+    } catch (err) { if (ticket === epoch.current) { setError(err instanceof Error ? err.message : String(err)); setPollVersion(v => v + 1); } }
     finally { if (ticket === epoch.current) setGenerating(false); }
   }
   function pointerDown(e: ReactPointerEvent<HTMLElement>) {
@@ -152,8 +180,8 @@ export function ReplayReviewCoach({ match, currentStepIndex, onJump }: {
   function pointerMove(e: ReactPointerEvent<HTMLElement>) {
     const d = drag.current;
     if (!d || e.pointerId !== d.pointer) return;
-    setPosition({ x: bounded(d.x + e.clientX - d.startX, window.innerWidth - 365),
-      y: bounded(d.y + e.clientY - d.startY, window.innerHeight - 150) });
+    setPosition({ x: bounded(d.x + e.clientX - d.startX, window.innerWidth - (panel.current?.offsetWidth ?? 375) - 8),
+      y: bounded(d.y + e.clientY - d.startY, window.innerHeight - (panel.current?.offsetHeight ?? 180) - 8) });
   }
   function pointerUp(e: ReactPointerEvent<HTMLElement>) {
     if (drag.current?.pointer === e.pointerId) drag.current = null;
@@ -164,16 +192,21 @@ export function ReplayReviewCoach({ match, currentStepIndex, onJump }: {
       aria-controls="replay-review-panel" onClick={() => { setOpen(o => !o); setFolded(false); }}>
       ✦ AI 复盘{review ? ` · ${ordered.length}` : ''}
     </button>
-    {open && createPortal(<section id="replay-review-panel" className="replay-review-float" role="dialog" aria-label="AI 比赛复盘"
+    {open && createPortal(<section ref={panel} id="replay-review-panel" className="replay-review-float" role="dialog" aria-label="AI 比赛复盘"
       style={{ left: position.x, top: position.y }} >
       <header className="replay-review-drag" onPointerDown={pointerDown} onPointerMove={pointerMove}
-        onPointerUp={pointerUp} onPointerCancel={pointerUp}>
+        onPointerUp={pointerUp} onPointerCancel={pointerUp} tabIndex={0} aria-label="移动复盘浮窗：使用方向键"
+        onKeyDown={e => { if (e.target !== e.currentTarget) return; if (e.key === 'Escape') { setOpen(false); return; }
+          const direction: Record<string, [number, number]> = { ArrowLeft: [-20,0], ArrowRight: [20,0], ArrowUp: [0,-20], ArrowDown: [0,20] };
+          const move = direction[e.key]; if (!move) return; e.preventDefault(); e.stopPropagation();
+          setPosition(p => ({ x: bounded(p.x + move[0], window.innerWidth - (panel.current?.offsetWidth ?? 375) - 8),
+            y: bounded(p.y + move[1], window.innerHeight - (panel.current?.offsetHeight ?? 180) - 8) })); }}>
         <strong>✦ AI 比赛复盘</strong><span className="replay-review-drag-label">拖动标题栏移动</span>
         <button type="button" aria-label={folded ? '展开建议' : '收起建议'} onClick={() => setFolded(v => !v)}>{folded ? '展开' : '收起'}</button>
         <button type="button" aria-label="关闭 AI 复盘" onClick={() => setOpen(false)}>×</button>
       </header>
       {!folded && <div className="replay-review-content">
-        {state === 'loading' ? <p role="status">正在读取已保存的复盘…</p> : !review ? <>
+        {generating || state === 'running' ? <div role="status"><p>正在分析：{progress.phase === 'summary' ? '生成本局总结' : '逐节点检查'} · {progress.completed}/{progress.total || '…'}</p><button type="button" onClick={async () => { try { const res = await fetch(url.replace('/review?', '/review/cancel?'), { method: 'POST', headers: { 'X-MTGA-Replay-Action': 'review-cancel' } }); if (!res.ok) throw new Error('取消请求未确认，请重试。'); setPollVersion(v => v + 1); } catch (err) { setError(err instanceof Error ? err.message : String(err)); } }}>取消分析</button></div> : state === 'loading' ? <p role="status">正在读取已保存的复盘…</p> : !review ? <>
           <p>{state === 'stale' ? '回放内容已经更新，原 AI 建议不能再安全定位。请重新分析。' :
             '这场比赛尚无 AI 复盘。只有你主动点击生成，才会请求模型。'}</p>
           {canGenerate ? <button type="button" className="replay-review-generate" disabled={generating} onClick={generate}>
