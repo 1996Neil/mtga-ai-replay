@@ -18,11 +18,18 @@ export function reviewFingerprint(game) {
   })).digest('hex');
 }
 
+function observedState(value) {
+  // Published coach archives may contain lazy {$ref} entries instead of the
+  // actual GRE snapshot. Do not confuse unresolved references with an empty board.
+  return value && typeof value === 'object' && !value.$ref &&
+    value.players && typeof value.players === 'object' && value.players.me &&
+    value.players.opponent ? value : null;
+}
 function beforeOf(game, step) {
-  return step.state_before ?? game.states?.[step.before_state_id] ?? null;
+  return observedState(step.state_before) ?? observedState(game.states?.[step.before_state_id]);
 }
 function afterOf(game, step) {
-  return step.state ?? game.states?.[step.state_id] ?? null;
+  return observedState(step.state) ?? observedState(game.states?.[step.state_id]);
 }
 function isHidden(card) {
   return !card || card.hidden === true || /hidden|post.?game/i.test(String(card.visibility ?? ''));
