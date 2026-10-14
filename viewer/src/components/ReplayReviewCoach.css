@@ -38,7 +38,7 @@
 .replay-review-nav { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px; margin: 12px 0 4px; }
 .replay-review-nav button:disabled { opacity: .4; cursor: default; }
 .replay-review-legend { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 4px; margin: 12px 0; font-size: 11px; }
-.severity-text-critical { color: #ff797b; font-weight: 650; }
+.severity-text-critical { color: #ffc17d; font-weight: 650; }
 .severity-text-major { color: #ffc17d; font-weight: 650; }
 .severity-text-tip { color: #86cfff; }
 .severity-text-positive { color: #8fe2a7; }
@@ -56,7 +56,7 @@
   box-shadow: 0 0 0 1px rgba(255,255,255,.45), 0 1px 3px #0008;
 }
 .replay-review-marker:focus-visible { outline: 3px solid white; outline-offset: 2px; }
-.replay-review-marker.severity-critical { background: #ff797b; }
+.replay-review-marker.severity-critical { background: #ffc17d; }
 .replay-review-marker.severity-major { background: #ffc17d; }
 .replay-review-marker.severity-tip { background: #86cfff; }
 .replay-review-marker.severity-positive { background: #8fe2a7; }

@@ -14,5 +14,12 @@ export type CloudReviewV1 = {
     suggestion: string; rationale: string; limitation: string; cards: string[] }>;
 };
 export type CloudReviewState = { status: 'missing' | 'ready' | 'stale' | 'syncing' | 'error';
-  report: CloudReviewV1 | null; current_source_content_hash?: string;
+  report: CloudReviewV1 | CloudReviewV2 | null; current_source_content_hash?: string;
   checked_at?: string; offline?: boolean; error?: string };
+export type CloudReviewV2 = Omit<CloudReviewV1, 'schema' | 'notes'> & {
+  schema: 'MTGA_AI_REVIEW_V2';
+  notes: Array<Omit<CloudReviewV1['notes'][number], 'severity'> & {
+    importance: 'critical' | 'major' | 'normal';
+    assessment: 'suggestion' | 'possible_error' | 'positive';
+  }>;
+};
