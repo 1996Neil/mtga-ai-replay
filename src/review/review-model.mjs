@@ -36,6 +36,30 @@ export async function reviewFingerprintAsync(game, replayWarnings = [], signal) 
   signal?.throwIfAborted(); return hash.digest('hex');
 }
 
+/** Cache identity covers the entire local input, including deck, starting hand,
+ * match metadata, all games and historical notes. Frame-sized chunks avoid a
+ * giant second serialized string; no mutable object-identity cache is used. */
+export async function replayInputFingerprintAsync(replay) {
+  const hash = createHash('sha256'); let batch = 0;
+  const add = value => { const text = JSON.stringify(value); hash.update(String(Buffer.byteLength(text))).update(':').update(text); };
+  for (const [key, value] of Object.entries(replay ?? {})) {
+    add(key);
+    if (key !== 'games' || !Array.isArray(value)) { add(value); continue; }
+    add(value.length);
+    for (const game of value) { add(Object.keys(game).length); for (const [field, child] of Object.entries(game)) {
+      add(field);
+      if (Array.isArray(child)) {
+        add(['array', child.length]);
+        for (const item of child) { add(item); if (++batch % 16 === 0) await yieldToIO(); }
+      } else if (field === 'states' && child && typeof child === 'object') {
+        add(['states', Object.keys(child).length]);
+        for (const [id, state] of Object.entries(child)) { add(id); add(state); if (++batch % 16 === 0) await yieldToIO(); }
+      } else add(child);
+    } }
+  }
+  return hash.digest('hex');
+}
+
 function observedState(value) {
   // Published coach archives may contain lazy {$ref} entries instead of the
   // actual GRE snapshot. Do not confuse unresolved references with an empty board.
@@ -50,7 +74,8 @@ function afterOf(game, step) {
   return observedState(step.state) ?? observedState(game.states?.[step.state_id]);
 }
 function isHidden(card) {
-  return !card || card.hidden === true || /hidden|post.?game/i.test(String(card.visibility ?? ''));
+  return !card || card.hidden === true || card.is_face_down === true || card.face_down === true ||
+    /hidden|post.?game|private|face.?down/i.test(String(card.visibility ?? ''));
 }
 export function visibleCardNames(snapshot) {
   // Only card-bearing player-visible zones. Do NOT traverse full snapshots:

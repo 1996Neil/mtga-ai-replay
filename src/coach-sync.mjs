@@ -53,7 +53,7 @@ own stable Tn-An anchors and state dictionary.
 All parts are covered by SHA256 and the content hash. They carry only sanitized
 player-perspective data and use the same upload guard as the four main files.
 `;
-const GITIGNORE = `*\n!.gitignore\n!README.md\n!index.json\n!latest/\n!latest/*.json\n!matches/\n!matches/*/\n!matches/*/*.json\n!matches/*/parts/\n!matches/*/parts/part-*.json\n`;
+const GITIGNORE = `*\n!.gitignore\n!README.md\n!index.json\n!latest/\n!latest/*.json\n!matches/\n!matches/*/\n!matches/*/*.json\n!matches/*/parts/\n!matches/*/parts/part-*.json\n!reviews/\n!reviews/*/\n!reviews/*/game-*.json\n`;
 const COLLECTION_ENTRY = `\n## Read the collection\n\nRead [collection/README.md](collection/README.md), then its summary, inventory and\nmanifest. Follow every listed card part; unresolved or truncated data is unknown.\n`;
 const digest = content => createHash('sha256').update(content).digest('hex');
 const locations = dataDir => ({ root: join(resolve(dataDir), 'coach-sync'), state: join(resolve(dataDir), 'coach-sync', 'state.json'), repo: join(resolve(dataDir), 'coach-sync', 'repository') });
