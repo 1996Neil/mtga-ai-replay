@@ -58,6 +58,7 @@ export function createReplayReviewGenerator({
     const game = findReviewGame(replay, gameNumber);
     if (!game) throw new Error('Unknown game.');
     const selected = selectReviewDecisions(game, decisionLimit);
+    if (!selected.length) throw new Error('No verified pre-action states; no model request was sent.');
     const notes = [], failures = [];
     // Two requests in parallel: one decision state/request prevents hindsight
     // leakage between different turns, without blocking the UI for a long queue.
