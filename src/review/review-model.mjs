@@ -27,15 +27,22 @@ function afterOf(game, step) {
 function isHidden(card) {
   return !card || card.hidden === true || /hidden|post.?game/i.test(String(card.visibility ?? ''));
 }
-function visibleNames(value, into = new Set(), depth = 0) {
-  if (!value || typeof value !== 'object' || depth > 8 || isHidden(value)) return into;
-  if (Array.isArray(value)) { for (const item of value) visibleNames(item, into, depth + 1); return into; }
-  if (typeof value.name === 'string' && value.name && !value.name.startsWith('Arena card ')) into.add(value.name);
-  for (const [key, child] of Object.entries(value)) {
-    if (key === 'hand' && value === undefined) continue;
-    visibleNames(child, into, depth + 1);
-  }
-  return into;
+function visibleCardNames(snapshot) {
+  // Only card-bearing player-visible zones. Do NOT traverse full snapshots:
+  // opponent hidden-hand entries or player names might otherwise look like cards.
+  const names = new Set();
+  const collect = (items) => {
+    for (const card of Array.isArray(items) ? items : []) {
+      if (!isHidden(card) && typeof card.name === 'string' && card.name &&
+        !card.name.startsWith('Arena card ')) names.add(card.name);
+    }
+  };
+  const me = snapshot?.players?.me ?? {};
+  const opponent = snapshot?.players?.opponent ?? {};
+  for (const zone of ['hand', 'battlefield', 'graveyard', 'exile']) collect(me[zone]);
+  for (const zone of ['battlefield', 'graveyard', 'exile']) collect(opponent[zone]);
+  collect(snapshot?.stack);
+  return names;
 }
 
 /** Strict, source-anchored report. Never silently remap an invalid anchor to a nearby frame. */
@@ -67,8 +74,7 @@ export function normalizeReplayReview(replay, gameNumber, raw, { source = 'impor
       suggestion = text(input.suggestion, 1400);
     if (!title || !observation || !suggestion) continue;
     // English card-name chips are constrained to identities visible at this decision.
-    const names = visibleNames(boundary === 'before' ? beforeOf(game, step) : afterOf(game, step));
-    visibleNames(step.event, names);
+    const names = visibleCardNames(boundary === 'before' ? beforeOf(game, step) : afterOf(game, step));
     const lookup = new Map([...names].map(name => [name.toLowerCase(), name]));
     const cards = [...new Set((Array.isArray(input.cards) ? input.cards : [])
       .filter(name => typeof name === 'string').map(name => lookup.get(name.toLowerCase())).filter(Boolean))].slice(0, 8);
