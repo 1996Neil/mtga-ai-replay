@@ -11,6 +11,7 @@ import { ReplayControls } from './components/ReplayControls';
 import { ReplaySyncButton } from './components/ReplaySyncButton';
 import { CollectionUpdateButton } from './components/CollectionUpdateButton';
 import { LiveCoachPanel } from './components/LiveCoachPanel';
+import { ReplayReviewCoach } from './components/ReplayReviewCoach';
 
 function when(value: string) { const date = new Date(value); return Number.isNaN(date.getTime()) ? '时间未记录' : new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(date); }
 export function App() {
@@ -132,6 +133,8 @@ export function App() {
       <ReplaySyncButton /><CollectionUpdateButton />
       <LiveCoachPanel view={!loading && !error && match && step ? { match_id: match.matchId, game_number: match.gameNumber,
         anchor: step.anchor, boundary: actualBefore ? 'before' : 'after' } : null} />
+      {match && step && !error && !loading && <ReplayReviewCoach match={match} currentStepIndex={s.currentStepIndex}
+        onJump={(anchor, boundary) => { jump(anchor); s.setViewBefore(boundary === 'before'); }} />}
       <div className="mode-switch" aria-label="查看模式"><button type="button" aria-pressed={!analysis} onClick={()=>{setAnalysis(false);s.setViewBefore(false);}}>回放</button><button type="button" aria-pressed={analysis} onClick={()=>{s.pause();setAnalysis(true);}}>分析</button></div>
     </header>
     <div className="app-workspace">
