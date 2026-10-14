@@ -69,6 +69,10 @@ export function normalizeReplayReview(replay, gameNumber, raw, { source = 'impor
     const severity = text(input.severity, 20), confidence = text(input.confidence, 20);
     const boundary = input.boundary === 'after' ? 'after' : 'before';
     if (!step || !severities.has(severity) || !confidences.has(confidence) || seen.has(anchor)) continue;
+    // Strong red warnings are never based on explicitly low-confidence model claims.
+    const safeSeverity = severity === 'critical' && confidence !== 'high'
+      ? confidence === 'medium' ? 'major' : 'tip'
+      : severity === 'major' && confidence === 'low' ? 'tip' : severity;
     if (boundary === 'before' && !beforeOf(game, step)) continue; // Never display a post-action frame as a pre-action one.
     const title = text(input.title, 160), observation = text(input.observation, 1400),
       suggestion = text(input.suggestion, 1400);
@@ -78,7 +82,7 @@ export function normalizeReplayReview(replay, gameNumber, raw, { source = 'impor
     const lookup = new Map([...names].map(name => [name.toLowerCase(), name]));
     const cards = [...new Set((Array.isArray(input.cards) ? input.cards : [])
       .filter(name => typeof name === 'string').map(name => lookup.get(name.toLowerCase())).filter(Boolean))].slice(0, 8);
-    notes.push({ anchor, boundary, severity, confidence, title, observation, suggestion,
+    notes.push({ anchor, boundary, severity: safeSeverity, confidence, title, observation, suggestion,
       rationale: text(input.rationale, 1300), cards, limitation: text(input.limitation, 500) });
     seen.add(anchor);
   }
