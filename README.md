@@ -4,6 +4,9 @@ Replay 2.0 reads cloud-generated reviews from the private data repository. Its
 separate server entry is `npm run replay:serve`; it does not load a local model
 generator or require model API keys. See the [cloud V1 protocol](docs/CLOUD_REVIEW_PROTOCOL_V1.md),
 [Agent write contract](docs/CLOUD_AGENT_REVIEW_CONTRACT.md), and [P0 review](docs/CLOUD_REVIEW_P0_PLAN_20261015.md).
+P1 adds an explicitly admitted GitHub writer, independent importance/assessment/confidence,
+and worker-isolated validation: [P1 protocol](docs/CLOUD_REVIEW_P1_PROTOCOL.md),
+[Chinese P1 report](docs/CLOUD_REVIEW_P1_REPORT_20261015.md), and [test evidence](docs/cloud-review-p1-results.json).
 The [Phase 1 audit](docs/REPLAY_AI_AUDIT_20261014.md) and
 [previous lifecycle/rollback notes](docs/REPLAY_AI_HARDENING.md) remain historical evidence.
 The legacy voice code and launcher remain in Git; the original desktop checkout is not replaced.

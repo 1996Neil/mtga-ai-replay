@@ -1,4 +1,5 @@
 import schema from '../../schemas/MTGA_AI_REVIEW_V1.schema.json' with { type: 'json' };
+import schemaV2 from '../../schemas/MTGA_AI_REVIEW_V2.schema.json' with { type: 'json' };
 
 export const CLOUD_REVIEW_POLICY = 'cloud-visible/1';
 export const MAX_REVIEW_BYTES = 128 * 1024;
@@ -45,7 +46,7 @@ export function validateCloudReviewShape(value, { path } = {}) {
     if (typeof item === 'string') { chars += item.length; if (chars > MAX_REVIEW_BYTES) reviewReject('size-limit'); }
     else if (item && typeof item === 'object') for (const [key, child] of Object.entries(item)) { chars += key.length; queue.push([child, depth + 1]); }
   }
-  check(value, schema);
+  check(value, value?.schema === 'MTGA_AI_REVIEW_V2' ? schemaV2 : schema);
   if (Buffer.byteLength(JSON.stringify(value)) > MAX_REVIEW_BYTES) reviewReject('size-limit');
   if (!Number.isFinite(Date.parse(value.generated_at)) || new Date(value.generated_at).toISOString() !== value.generated_at) reviewReject('generated-at');
   if (path && reviewPath(value.match_id, value.game_number) !== path) reviewReject('path-identity');
