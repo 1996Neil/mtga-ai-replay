@@ -2,6 +2,10 @@
 
 本次同步发布的是已有私有源码仓库的新分支 `codex/replay2-sync-collection-20261010`。运行中的 macOS 应用已更新；数据仓库、真实回放历史和账户配置没有纳入源码提交。
 
+## 2026-10-14 private PR #3 status
+
+Following explicit user authorization, the 19 hash-pinned adapted Viewer sources are now included in private PR #3 so CI can run the complete Viewer suite and production build. Upstream attribution and the no-declared-license status remain unchanged; this does not grant public redistribution rights. Historical measurements and validation records below describe their original runs and are not updated to imply new performance or test results.
+
 ## 当前行为
 
 - 回放上传仍复用 `syncReplayHistory → syncCoachCatalog → canonical publisher`：扫描已归档回放、核对远端、处理缺失/待重试及最新记录、补齐卡牌并生成产物、完整安全验证、Git 提交和上传。

@@ -42,8 +42,11 @@ jobs:
       - name: Run backend tests
         run: npm test
 
-      - name: Run Viewer tests
+      - name: Run all Viewer tests
         run: npm run viewer:test
+
+      - name: Check release scope and source integrity
+        run: npm run check:release
 
       - name: Build Viewer
         run: npm run viewer:build
