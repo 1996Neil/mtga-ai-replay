@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { forbiddenPath, inspectRecord, verifyViewerManifest } from '../scripts/check-release.mjs';
+import { assertCompleteHistory, forbiddenPath, inspectRecord, verifyViewerManifest } from '../scripts/check-release.mjs';
 import { spawnSync } from 'node:child_process';
 import { mkdtemp, mkdir, writeFile, readFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -18,6 +18,10 @@ test('release policy excludes runtime data and credential-shaped content while s
   assert.deepEqual(inspectRecord('src/example.mjs', Buffer.from(secretLike)), ['credential-shaped value']);
   assert.deepEqual(inspectRecord('tests/example.test.mjs', Buffer.from('ghp_SYNTHETIC_SUPER_SECRET')), []);
   assert.deepEqual(inspectRecord('src/example.mjs', Buffer.from('ghp_SYNTHETIC_SUPER_SECRET')), ['credential-shaped value']);
+});
+test('release scan refuses shallow or unknown Git history', () => {
+  assert.equal(assertCompleteHistory('false'), true);
+  for (const value of ['true', 'unknown', '', undefined]) assert.throws(() => assertCompleteHistory(value), /complete Git history/);
 });
 test('all private Viewer sources match their checked-in integrity manifest', async () => {
   const manifest = JSON.parse(await readFile('docs/restricted-viewer.json', 'utf8'));

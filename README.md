@@ -42,7 +42,7 @@ by fabricated passing results. Full reproduction and opt-in commands are in
 `npm start` serves a disposable **synthetic API** at `127.0.0.1:8787`, using a new
 OS-temporary SQLite archive. SIGINT/SIGTERM cleans it up. It does not use real
 logs, account settings, collection memory, credentials, model/TTS services,
-public card downloads or Git publishing. This API serves the complete Viewer against synthetic data, not private history or live Mac log data.
+public card downloads or Git publishing. This development endpoint serves a minimal placeholder HTML page and synthetic API, not the full Viewer UI. `npm run viewer:build` builds the Viewer separately. It uses no private history or live Mac log data.
 
 The server enforces loopback Host/Origin. Use curl inside the workspace or an
 existing authenticated port-forward that preserves the loopback origin. This
