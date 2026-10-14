@@ -1,0 +1,67 @@
+.replay-review-launch {
+  color: #dce8e5; border: 1px solid #51706b; background: #253832;
+  border-radius: 6px; padding: 9px 13px; white-space: nowrap; cursor: pointer;
+}
+.replay-review-launch:hover, .replay-review-launch[aria-expanded="true"] { background: #365249; }
+.replay-review-float {
+  position: fixed; z-index: 9998; box-sizing: border-box;
+  width: min(375px, calc(100vw - 16px)); max-height: min(72vh, 690px);
+  color: #e5ebe9; background: rgba(23, 30, 32, .92);
+  border: 1px solid rgba(147, 179, 164, .5); border-radius: 10px;
+  box-shadow: 0 12px 45px rgba(0, 0, 0, .46); backdrop-filter: blur(14px);
+  display: flex; flex-direction: column; font-size: 13px; line-height: 1.6;
+}
+.replay-review-drag {
+  display: flex; align-items: center; gap: 7px; padding: 9px 12px;
+  border-bottom: 1px solid #405451; cursor: move; touch-action: none;
+  user-select: none; flex-shrink: 0;
+}
+.replay-review-drag strong { color: #d9eee5; font-size: 14px; white-space: nowrap; }
+.replay-review-drag-label { color: #9caeaa; font-size: 10px; margin-right: auto; }
+.replay-review-drag button, .replay-review-nav button {
+  background: #30403d; color: #e5ebe9; border: 1px solid #61746c;
+  border-radius: 5px; padding: 4px 7px; cursor: pointer;
+}
+.replay-review-drag button:hover, .replay-review-nav button:hover:not(:disabled) { background: #456057; }
+.replay-review-content { overflow: auto; padding: 13px 16px 15px; overscroll-behavior: contain; }
+.replay-review-content h3 { margin: 4px 0 10px; font-size: 16px; line-height: 1.45; color: #f0f5f2; }
+.replay-review-content p { margin: 9px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.replay-review-content b { color: #f0f5f2; }
+.replay-review-content ul { margin: 6px 0 9px; padding-left: 20px; }
+.replay-review-content li { margin-bottom: 5px; overflow-wrap: anywhere; }
+.replay-review-meta { display: flex; gap: 6px; flex-wrap: wrap; color: #b9c8c1; font-size: 11px; }
+.replay-review-eyebrow, .replay-review-footnote, .replay-review-muted { color: #a9bbb5; font-size: 11px; }
+.replay-review-footnote { display: block; padding-top: 8px; border-top: 1px solid #3d514c; }
+.replay-review-cards { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 8px; }
+.replay-review-cards code { border: 1px solid #5c7b73; border-radius: 4px; color: #bce5e9;
+  background: rgba(18, 35, 40, .9); padding: 3px 6px; font-size: 11px; }
+.replay-review-nav { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px; margin: 12px 0 4px; }
+.replay-review-nav button:disabled { opacity: .4; cursor: default; }
+.replay-review-legend { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 4px; margin: 12px 0; font-size: 11px; }
+.severity-text-critical { color: #ff797b; font-weight: 650; }
+.severity-text-major { color: #ffc17d; font-weight: 650; }
+.severity-text-tip { color: #86cfff; }
+.severity-text-positive { color: #8fe2a7; }
+.replay-review-generate { width: 100%; background: #496b5c; color: white; border-radius: 5px;
+  border: 1px solid #6b9f86; padding: 10px; cursor: pointer; }
+.replay-review-generate:disabled { opacity: .6; cursor: progress; }
+.replay-review-error { color: #ff999a; }
+.replay-review-track { position: fixed; height: 17px; z-index: 9996; pointer-events: none; }
+.replay-review-inline-track { position: relative; height: 17px; margin: 3px 18px 0; }
+.replay-review-marker {
+  position: absolute; top: 0; transform: translateX(-50%); box-sizing: border-box;
+  min-width: 15px; height: 15px; padding: 0 2px; border-radius: 5px;
+  font-size: 10px; font-weight: 800; line-height: 12px; text-align: center;
+  cursor: pointer; pointer-events: auto; color: #162026; border: 1px solid #121d20;
+  box-shadow: 0 0 0 1px rgba(255,255,255,.45), 0 1px 3px #0008;
+}
+.replay-review-marker:focus-visible { outline: 3px solid white; outline-offset: 2px; }
+.replay-review-marker.severity-critical { background: #ff797b; }
+.replay-review-marker.severity-major { background: #ffc17d; }
+.replay-review-marker.severity-tip { background: #86cfff; }
+.replay-review-marker.severity-positive { background: #8fe2a7; }
+@media (max-width: 600px) {
+  .replay-review-float { max-height: 60vh; }
+  .replay-review-drag-label { display: none; }
+  .replay-review-drag strong { margin-right: auto; }
+}
