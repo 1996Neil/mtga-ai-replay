@@ -28,9 +28,9 @@ excluded from the exported JSON; its original copy remains local.
 
 ## Viewer permission boundary
 
-Do not commit the 19 files listed in restricted-viewer.json or any built output.
-After confirming your right to use your existing local adaptation, restore it
-only on a local machine from the explicit same-version directory:
+The 19 existing adapted files listed in restricted-viewer.json are included in private PR #3 for review under the user's explicit 2026-10-14 authorization. Preserve attribution and the upstream license status: no code license was declared, and this private inclusion does not grant public redistribution rights. Do not publish this source publicly or claim an upstream license. Do not commit built output.
+
+The materializer remains available for authorized local recovery from an explicit same-version directory:
 
 ```bash
 npm run viewer:materialize -- --source-dir /path/to/existing/mtga-gpt-replay
@@ -40,11 +40,9 @@ npm run viewer:build
 
 The materializer validates all input hashes before writing, refuses changed files
 or symlink ancestors, performs no network request and never edits the source
-directory. Restored files are individually gitignored and denied by release
-policy. A new cloud machine still lacks these files; transferring them to that
-machine is not authorized by this repository's export. Obtain upstream permission
-or independently replace the affected components before claiming a self-contained
-cloud Viewer build. A plain patch can contain restricted lines and is not shipped.
+directory. The release policy scans these Viewer files and verifies their
+manifest hashes. Any future transfer or public distribution still requires the
+necessary rights; this private PR authorization does not supply them.
 
 The macOS launcher icon also needs rights verification and an explicit local
 asset before installing the native launcher. Installation is outside cloud setup.

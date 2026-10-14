@@ -3,7 +3,7 @@ import net from 'node:net';
 import os from 'node:os';
 import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
-import { writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { writeFileSync, readFileSync, renameSync, existsSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 const originalConnect = net.Socket.prototype.connect;
 let externalAttempts = 0;
@@ -34,7 +34,11 @@ const { readdir: guardedReadDir } = await import('node:fs/promises');
 try { await guardedReadDir(globalApp); throw new Error('Global app isolation missing'); }
 catch (error) { if (error.message !== 'Synthetic global app is absent' || error.code !== 'ENOENT') throw error; }
 const counts = { metadata:0, model:0, tts:0 };
-const saveCounts = () => writeFileSync(join(directory,'calls.json'),JSON.stringify(counts),{mode:0o600});
+const countsPath = join(directory,'calls.json'), pendingCountsPath = join(directory,`calls.${process.pid}.tmp`);
+const saveCounts = () => {
+  writeFileSync(pendingCountsPath,JSON.stringify(counts),{mode:0o600});
+  renameSync(pendingCountsPath,countsPath);
+};
 saveCounts();
 let runtime;
 process.on('exit',()=>writeFileSync(join(directory,'exit.json'),JSON.stringify({counts,externalAttempts,enabled:runtime?.controller.enabled,muted:runtime?.controller.muted}),{mode:0o600}));

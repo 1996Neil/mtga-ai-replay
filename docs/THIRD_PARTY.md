@@ -18,10 +18,12 @@ Owned code has no new public license granted by this export.
 - `m1kk3l/mtg-replay-viewer`, revision
   `472969b805c1e62e17797c7cdac7f69f3670597c`: no declared code license at the
   inspected revision. Existing attribution is preserved in viewer/ATTRIBUTION.md.
-  18 directly copied/adapted source files plus index.css are withheld. The
+  18 directly copied/adapted source files plus index.css are included in private
+  PR #3 under explicit user authorization for review dated 2026-10-14. The
   CardPreviewPane symbol is part of CardImage.tsx, not a separate file. Exact
-  hashes and paths are in restricted-viewer.json. No restricted source, plain
-  diff, compiled Viewer output or upstream artwork is redistributed here.
+  hashes and paths are in restricted-viewer.json, and attribution remains in
+  viewer/ATTRIBUTION.md. This does not establish an upstream license or authorize
+  public redistribution; no compiled Viewer output or upstream artwork is included.
 
 No Arena artwork, Scryfall images, card database/collection cache or launcher icon
 is bundled. Small public card-rule text is used only in deidentified regression

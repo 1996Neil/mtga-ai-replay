@@ -1,14 +1,32 @@
 import { readFile, readdir, lstat } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-const restricted = new Set(JSON.parse(await readFile(new URL('../docs/restricted-viewer.json', import.meta.url), 'utf8')).files.map(row => row.path));
+const viewerManifest = JSON.parse(await readFile(new URL('../docs/restricted-viewer.json', import.meta.url), 'utf8'));
 export function forbiddenPath(path) {
-  return restricted.has(path) || /(?:^|\/)(?:node_modules|dist|output|data|history|cache|audio|\.agents|\.codex|\.aws|\.git)(?:\/|$)/.test(path) ||
+  return /(?:^|\/)(?:node_modules|dist|output|data|history|cache|audio|\.agents|\.codex|\.aws|\.git)(?:\/|$)/.test(path) ||
     /(?:^|\/)(?:credentials(?:\.[^/]+)?\.json|tokens?\.json|grant\.json|config\.json|Player\.log|UTC_Log[^/]*\.log|\.env(?:\.[^/]+)?|[^/]*ACCEPTANCE[^/]*)$/i.test(path) ||
     /\.(?:sqlite3?|db|log|mp3|wav|m4a|ogg|png|jpg|jpeg|webp|icns|zip|tgz|p12|pem|key)$/i.test(path);
+}
+export function assertCompleteHistory(shallowValue) {
+  if (shallowValue !== 'false') throw new Error('Release scan requires complete Git history; shallow or unknown repository history is not accepted.');
+  return true;
+}
+export function verifyViewerManifest(records, manifest = viewerManifest) {
+  if (!Array.isArray(manifest.files) || manifest.files.length !== 19) throw new Error('Viewer source manifest must contain exactly 19 files.');
+  const seen = new Set();
+  for (const entry of manifest.files) {
+    if (!entry || typeof entry.path !== 'string' || !entry.path.startsWith('viewer/src/') || entry.path.split('/').includes('..') || seen.has(entry.path) || !/^[a-f0-9]{64}$/.test(entry.sha256)) throw new Error('Viewer source manifest entry is invalid.');
+    seen.add(entry.path);
+    const matches = records.filter(record => record.path === entry.path);
+    if (matches.length !== 1) throw new Error(`Viewer source manifest path is missing or duplicated: ${entry.path}`);
+    const actual = createHash('sha256').update(matches[0].bytes).digest('hex');
+    if (actual !== entry.sha256) throw new Error(`Viewer source manifest hash mismatch: ${entry.path}`);
+  }
+  return seen.size;
 }
 export function inspectRecord(path, bytes) {
   const issues = [];
@@ -34,7 +52,7 @@ async function treeRecords() {
   async function walk(dir = '') {
     for (const entry of await readdir(resolve(root, dir), { withFileTypes: true })) {
       const path = `${dir ? dir + '/' : ''}${entry.name}`;
-      if (['node_modules', '.git', 'dist'].includes(entry.name) || restricted.has(path)) continue;
+      if (['node_modules', '.git', 'dist'].includes(entry.name)) continue;
       const info = await lstat(resolve(root, path));
       if (info.isSymbolicLink()) throw new Error(`Release candidate has a symlink: ${path}`);
       if (entry.isDirectory()) await walk(path);
@@ -45,12 +63,21 @@ async function treeRecords() {
 }
 export async function checkRelease() {
   let records = await treeRecords();
+  const viewerFiles = verifyViewerManifest(records);
   const top = git(['rev-parse', '--show-toplevel']);
   if (top.status !== 0 || resolve(top.stdout.toString().trim()) !== resolve(root)) throw new Error('Release scan requires this repository as the Git root.');
+  const shallow = git(['rev-parse', '--is-shallow-repository']);
+  if (shallow.status !== 0) throw new Error('Cannot determine whether Git history is shallow.');
+  assertCompleteHistory(shallow.stdout.toString().trim());
+  const refsResult = git(['for-each-ref', '--format=%(refname)']);
+  if (refsResult.status !== 0) throw new Error('Cannot inspect fetched Git refs.');
+  const refs = refsResult.stdout.toString().trim().split('\n').filter(Boolean);
+  if (!refs.length) throw new Error('Cannot establish Git history scope without fetched refs.');
   const tracked = git(['ls-files', '-z']);
   if (tracked.status !== 0) throw new Error('Cannot inspect tracked files.');
+  let commitCount = 0;
   if (tracked.status === 0) {
-    // Worktree absence is not evidence: inspect staged content and every commit.
+    // Worktree absence is not evidence: inspect staged content and commits reachable from fetched refs.
     const staged = git(['ls-files', '--stage', '-z']);
     if (staged.status !== 0) throw new Error('Cannot inspect Git index.');
     for (const entry of staged.stdout.toString().split('\0').filter(Boolean)) {
@@ -61,7 +88,10 @@ export async function checkRelease() {
     }
     const commits = git(['rev-list', '--all']);
     if (commits.status !== 0) throw new Error('Cannot inspect commit history.');
-    for (const commit of commits.stdout.toString().trim().split('\n').filter(Boolean)) {
+    const commitIds = commits.stdout.toString().trim().split('\n').filter(Boolean);
+    if (!commitIds.length) throw new Error('Cannot establish commit-history scope from fetched refs.');
+    commitCount = commitIds.length;
+    for (const commit of commitIds) {
       const metadata = git(['cat-file', 'commit', commit]);
       if (metadata.status !== 0) throw new Error('Cannot inspect commit metadata.');
       records.push({ path: `[commit metadata ${commit}]`, bytes: metadata.stdout });
@@ -76,6 +106,6 @@ export async function checkRelease() {
   }
   const failures = records.flatMap(record => inspectRecord(record.path, record.bytes).map(issue => `${record.path}: ${issue}`));
   if (failures.length) throw new Error(`Release scan failed:\n${[...new Set(failures)].join('\n')}`);
-  console.log(`Release scan passed: ${new Set(records.filter(record => !record.path.startsWith('[commit metadata')).map(record => record.path)).size} paths; worktree, index, all commit trees and commit metadata; no values printed.`);
+  console.log(`Release scan passed: ${new Set(records.filter(record => !record.path.startsWith('[commit metadata')).map(record => record.path)).size} paths, including ${viewerFiles} manifest-pinned Viewer sources; worktree and index; history scope: ${commitCount} commits reachable from fetched refs [${refs.join(', ')}], shallow=false; commit trees and metadata checked; no file contents printed.`);
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await checkRelease();

@@ -1,0 +1,832 @@
+{
+  "schema": "PRO_REVIEW_SYNTHETIC_BENCHMARK_V1",
+  "source_commit": "fca87281749ae17cafac8b27974cee69203f6209",
+  "environment": {
+    "node": "v24.19.0",
+    "platform": "Linux",
+    "test_date_utc": "2026-10-10"
+  },
+  "scope": "Single runs of real syncReplayHistory in new synthetic workspaces; N-10 pre-existing commits, 8 public known cards and one short action per match; metadata prefilled, no real database or external network; setup and final assertion/cleanup outside timer.",
+  "metric_notes": [
+    "Git counts/bytes are successful production runCommand calls; auxiliary transport checks and mocked gh probes are included in wall time but not command counts.",
+    "stdout bytes are returned Git bytes, not physical disk reads or upload traffic.",
+    "Object metrics parse cat-file --batch responses; other Git internal object reads are not counted.",
+    "Card opens/bytes count successful instrumented logical file reads, not physical storage.",
+    "Stage timing labels are progress intervals, not exclusive function CPU attribution.",
+    "Final after snapshot includes DB completeness guards and BOM path byte preservation; original final-before and final-after are serial groups, not statistical repetitions.",
+    "No claim that the historical 383.581 s real macOS upload has been remeasured."
+  ],
+  "production_sha256": {
+    "src/card-cache.mjs": "7c101f56f9bbb6d69bcb5717d30571fe2baa5f8d98fe4a9c9305e4c1758b88f9",
+    "src/cards.mjs": "19e96c4eb97598f7fdd1282cd6d740a6db2363b5fbdab0dd3b337a33ed29fffb",
+    "src/coach-bundle.mjs": "f2f9f15249eae4e7cfcf307172a46d515732f8dd5de32cb4fd0719ce5a0f77d0",
+    "src/coach-cards.mjs": "77457acc62329cd8b13aa13fb81f8b4ef0bdd2c7fc76f262ce15775c6cc82e3c",
+    "src/coach-catalog-sync.mjs": "3228379775155d9e31f679fd95fd19f3946ab59992ac10355c0d7913f20bbd42",
+    "src/coach-context.mjs": "083bf515d21ddf47106906ff4a98c624ed1e43f56983c1dc6ed09059113ef6d7",
+    "src/coach-sync.mjs": "cf0fe0e89cba44afc261a6258b661f238ad21711863236bfa825617be38964f0",
+    "src/collection-reader.mjs": "9822d079212ee1b549dbd84416630ba65b8b6ab727b63b0974d8ccb4f9dec2ad",
+    "src/collection-sync.mjs": "ff4544ec328056f081eed5842c3839eed19e8ae16832b2d341c640c3675b8c11",
+    "src/collection-update.mjs": "0549d8697faacd1349ca39ea37c3cae7cbe28cf357ac80ec55d0dc5d8abb7840",
+    "src/collection.mjs": "1c7c9dffdf977a37c839be841b801931973b56dd472a9659b219a384d8efed80",
+    "src/discovery.mjs": "b6873807b5a477ff0bb14ea5cfba1470f753a5239acc5f724bfacca8a7d89711",
+    "src/display-names.mjs": "d9c2c99714c522f5f14ab277cb9398aeec9b2a874156f9fa2d2ed4d2d52c7781",
+    "src/export.mjs": "8b1e7012e76f5b50006c5af0a34082e1d54fbd65e0bc40d7467ae3e2f86ef7db",
+    "src/history.mjs": "33a0f5e7ab4ca983d9a0e962d68760851f8ff64b90016ddbf849bf666f0b1898",
+    "src/launch-viewer.mjs": "66023c59d71e4b3ccd308ee5ca25a96c2b04061ba08cda0b38f56801955f44a7",
+    "src/live-coach/config.mjs": "9d68aef3e8f6af1e08fb6339cef5b40891bd5ea652c5da17f3717201f0fabce9",
+    "src/live-coach/controller.mjs": "8ae12665b8c6cca2c7be577a9f978249a3d93f92bef8643a1a53a867d31ae955",
+    "src/live-coach/evaluation.mjs": "96233186938a9fe8c7de1501c9b758ce8e9a29c6f698112f8681ab6312d2b7e2",
+    "src/live-coach/providers/budget.mjs": "a6363387364e4313bb1c3c8119d80aae381d32dcf546d58201aabc1865a2a39c",
+    "src/live-coach/providers/common.mjs": "9906633fd34589b10aa315b1c9e1c320c660c51cd3df06d6d949009925f492e7",
+    "src/live-coach/providers/deepseek.mjs": "9cab99f2a0444743998513a721bafecf5258d1aa6d18d917efbf5945e482b6ab",
+    "src/live-coach/providers/eleven.mjs": "8162277eb7f198b71cd39a49b69ab587c8b376ac1b9e4953c43a4b024e64648e",
+    "src/live-coach/providers/factory.mjs": "b644202d5e0e020c64cc0b251bb712814263c540eb36781437bbc50af3f44069",
+    "src/live-coach/providers/index.mjs": "5ec3654f4a0485ea03fc7f903dc1ecbd20a8d5f68716f7aa5600be3ee0e611f0",
+    "src/live-coach/providers/minimax.mjs": "60e36404887ce9f2d4c09090e135581e6680072c56d19f85d10da4cf14a355f2",
+    "src/live-coach/providers/model.mjs": "60bdda83fbecc8a9838e6f0aa6419c31be91b7127f0923b15388d316b169c563",
+    "src/live-coach/providers/paid-model-budget.mjs": "b228915d4c292ad059a6050021c20fcafea3604ed5fb461c37bd8cfce1a171e0",
+    "src/live-coach/providers/selection.mjs": "cac550c26644f58ecb536631508defeed93aec021a6b1ba1f676edbc8de04613",
+    "src/live-coach/providers/siwc.mjs": "a87c1169e99bc6ead5cbd8849d4f37574dc129ba12f514913ad93b7d0121a5e0",
+    "src/live-coach/routes.mjs": "835bc18b8697dca6eadbd72313283c901124486ea98587f3fd412d008f0d7d5b",
+    "src/live-coach/rules.mjs": "80bf8e5ec498b0be635404967fb205d487e6b7daca75a91d4ec5f399b5f11fd0",
+    "src/live-coach/runtime.mjs": "f7ca0f9740707c081a9d8f7e6c251adb0fdf54ccb532bc8ebf7b8abb816b8ecd",
+    "src/live-coach/setup.mjs": "0867aa6bcbcbd37a26f61b3f364710fd1f588332e1a669857cb0b6ac4639d9c8",
+    "src/live-coach/sources.mjs": "330b730d0f252ad0beca0617083f63a95f1801b518c03a080181bbac950773e4",
+    "src/live-coach/standby.mjs": "217b6e677076f3a5dd9aaae1767ffce7c48912a92538d3052c46349566dc75fc",
+    "src/live-coach/state.mjs": "602aaab2f90ceee8f109257d6fd02325f8645b966ead10486cbf24e9ff0adb26",
+    "src/log-reader.mjs": "46b7c850716325f096a348e6b15f6b300a75bdb348e8c9dda4942c1c42af3c49",
+    "src/match-mode.mjs": "b9d57568ffe708b421a06e8fd26dfccf8ba486c4eabc0496fa193323a199b0b1",
+    "src/perspective.mjs": "6bf572d3234a79a2640b395cd7487f62c68ce23ed722dd8e90b3bfe4a1088bf5",
+    "src/replay-workflow.mjs": "9ae6f2eeefaa8b23591ec940b29a5864943e35adfc65d104514839c1b31fb20e",
+    "src/replay.mjs": "4bd971b7e4e7f9abc79315ce36a7b0563c6e6ba03c391bb7a0a3aa990767a18d",
+    "src/server.mjs": "58e61b6a07964cd5415b8e799908e6b6fa1595165ee8a024cc77cbae27fd0a33",
+    "src/sync-cache.mjs": "c45bc93b73d2eec14055d358f9ebf161574b98c98bec130d61e8cd5d198b135b",
+    "src/sync-progress.mjs": "27ed881761100c370a302480298a2fa38f6ecd00c3cea5430c788c8a0046a383",
+    "src/sync-security.mjs": "c120175fb7224de7286c48c3dbb2b230ed28e766584898a4b9d93577ffb5a4e9",
+    "src/task-notification.mjs": "fa4a03a63248737923c8b9ee8b8ed30b8b504d3b53abcea89ae35b9df15d04f2",
+    "src/viewer-collection.mjs": "93cb7c0c382e386ce44110ee871d1ac957557801d61988c47983b132f9987100",
+    "src/viewer-local-history.mjs": "9b1db4f715caa96aa7daa601433f6cbe96a43ed7d103635558f8de96436e167f",
+    "src/viewer-sync.mjs": "1bcb8025a58f25c5f1c8592382040b0ad51f54a86bcd57dce6262577e8c21d40",
+    "src/viewer-task.mjs": "3e4dc2e61f10b54584f04a87ddeb300d74f9b64bae9459ebad46f30b320e1eda",
+    "src/visual-state.mjs": "063748c863a50ca9644efcec42399c71ffb59d70e458ae7ce4a35e6820d4e170"
+  },
+  "runs": [
+    {
+      "archive_matches": 10,
+      "previous_remote_matches": 0,
+      "new_matches": 10,
+      "metadata_files": 100,
+      "before": {
+        "utc": "2026-10-10T04:31:13.796Z",
+        "elapsed_ms": 1847.478304,
+        "event_loop_max_ms": 10.280959,
+        "event_loop_p99_ms": 7.983103,
+        "validation_calls": 17,
+        "git_commands": {
+          "init": 1,
+          "remote": 7,
+          "branch": 2,
+          "diff": 37,
+          "ls-files": 17,
+          "rev-list": 18,
+          "status": 4,
+          "fetch": 2,
+          "for-each-ref": 3,
+          "add": 10,
+          "cat-file": 42,
+          "commit": 10,
+          "ls-tree": 55,
+          "diff-tree": 10,
+          "push": 1,
+          "rev-parse": 1
+        },
+        "git_stdout_bytes": 945541,
+        "git_stdin_bytes": 28536,
+        "git_object_reads": {
+          "blob": 293,
+          "commit": 55
+        },
+        "git_object_bytes": {
+          "blob": 705443,
+          "commit": 16240
+        },
+        "semantic_checked": 43,
+        "semantic_reused": 250,
+        "fingerprint_opens": {
+          "other": 12,
+          "rules": 840,
+          "card_metadata": 2000
+        },
+        "fingerprint_bytes": {
+          "rules": 7297540,
+          "card_metadata": 359680
+        },
+        "unique_git_objects_read": 53,
+        "maximum_reads_of_one_object": 11,
+        "result": {
+          "status": "succeeded",
+          "published": 10,
+          "local_matches": 10,
+          "github_matches": 10,
+          "failed": 0
+        },
+        "phase_ms": {
+          "scanning": 2.0623740000000055,
+          "comparing": 1.7069970000000012,
+          "remote": 55.957237000000106,
+          "security": 721.5859269999999,
+          "generating": 965.3172260000001,
+          "cards": 20.591164999999762,
+          "publishing": 26.00025000000005,
+          "uploading": 54.04843299999993
+        }
+      },
+      "after": {
+        "utc": "2026-10-10T04:35:11.250Z",
+        "elapsed_ms": 1226.5154420000001,
+        "event_loop_max_ms": 12.738559,
+        "event_loop_p99_ms": 8.617983,
+        "validation_calls": 17,
+        "git_commands": {
+          "init": 1,
+          "remote": 7,
+          "branch": 2,
+          "diff": 37,
+          "ls-files": 17,
+          "rev-list": 18,
+          "status": 4,
+          "fetch": 2,
+          "for-each-ref": 3,
+          "add": 10,
+          "cat-file": 82,
+          "commit": 10,
+          "diff-tree": 10,
+          "push": 1,
+          "rev-parse": 1
+        },
+        "git_stdout_bytes": 865221,
+        "git_stdin_bytes": 42066,
+        "git_object_reads": {
+          "blob": 293,
+          "commit": 55,
+          "tree": 165
+        },
+        "git_object_bytes": {
+          "blob": 705443,
+          "commit": 16240,
+          "tree": 34375
+        },
+        "semantic_checked": 43,
+        "semantic_reused": 250,
+        "fingerprint_opens": {
+          "other": 12,
+          "rules": 840,
+          "card_metadata": 160
+        },
+        "fingerprint_bytes": {
+          "rules": 7428200,
+          "card_metadata": 28480
+        },
+        "unique_git_objects_read": 83,
+        "maximum_reads_of_one_object": 11,
+        "result": {
+          "status": "succeeded",
+          "published": 10,
+          "local_matches": 10,
+          "github_matches": 10,
+          "failed": 0
+        },
+        "phase_ms": {
+          "scanning": 2.0548820000000205,
+          "comparing": 1.9146309999999858,
+          "remote": 51.250431000000106,
+          "security": 667.958645,
+          "generating": 414.2690399999998,
+          "cards": 12.181452000000178,
+          "publishing": 21.625566999999933,
+          "uploading": 55.05594499999984
+        }
+      },
+      "time_reduction_percent": 33.61137506489493
+    },
+    {
+      "archive_matches": 100,
+      "previous_remote_matches": 90,
+      "new_matches": 10,
+      "metadata_files": 1000,
+      "before": {
+        "utc": "2026-10-10T04:31:30.186Z",
+        "elapsed_ms": 12905.231097,
+        "event_loop_max_ms": 177.471487,
+        "event_loop_p99_ms": 10.338303,
+        "validation_calls": 17,
+        "git_commands": {
+          "init": 1,
+          "remote": 7,
+          "branch": 2,
+          "diff": 37,
+          "ls-files": 17,
+          "rev-list": 21,
+          "status": 4,
+          "fetch": 2,
+          "cat-file": 64,
+          "ls-tree": 1496,
+          "show-ref": 2,
+          "checkout": 1,
+          "for-each-ref": 3,
+          "rev-parse": 2,
+          "show": 1,
+          "merge": 1,
+          "add": 10,
+          "commit": 10,
+          "diff-tree": 10,
+          "push": 1
+        },
+        "git_stdout_bytes": 76138255,
+        "git_stdin_bytes": 621970,
+        "git_object_reads": {
+          "commit": 1495,
+          "blob": 6090
+        },
+        "git_object_bytes": {
+          "commit": 453712,
+          "blob": 39684508
+        },
+        "semantic_checked": 405,
+        "semantic_reused": 5685,
+        "fingerprint_opens": {
+          "other": 12,
+          "rules": 840,
+          "card_metadata": 20000
+        },
+        "fingerprint_bytes": {
+          "rules": 7297540,
+          "card_metadata": 3635720
+        },
+        "unique_git_objects_read": 505,
+        "maximum_reads_of_one_object": 16,
+        "result": {
+          "status": "succeeded",
+          "published": 10,
+          "local_matches": 100,
+          "github_matches": 100,
+          "failed": 0
+        },
+        "phase_ms": {
+          "scanning": 2.3574590000000626,
+          "comparing": 4.0883420000000115,
+          "remote": 83.9313580000005,
+          "security": 6710.671646999999,
+          "generating": 5929.3727960000015,
+          "cards": 31.668890999998894,
+          "publishing": 37.42976500000077,
+          "uploading": 105.46385499999997
+        }
+      },
+      "after": {
+        "utc": "2026-10-10T04:35:15.573Z",
+        "elapsed_ms": 2372.742832,
+        "event_loop_max_ms": 166.461439,
+        "event_loop_p99_ms": 23.396351,
+        "validation_calls": 17,
+        "git_commands": {
+          "init": 1,
+          "remote": 7,
+          "branch": 2,
+          "diff": 37,
+          "ls-files": 17,
+          "rev-list": 21,
+          "status": 4,
+          "fetch": 2,
+          "cat-file": 128,
+          "show-ref": 2,
+          "checkout": 1,
+          "for-each-ref": 3,
+          "rev-parse": 2,
+          "ls-tree": 1,
+          "show": 1,
+          "merge": 1,
+          "add": 10,
+          "commit": 10,
+          "diff-tree": 10,
+          "push": 1
+        },
+        "git_stdout_bytes": 47750547,
+        "git_stdin_bytes": 989740,
+        "git_object_reads": {
+          "commit": 1495,
+          "tree": 4485,
+          "blob": 6090
+        },
+        "git_object_bytes": {
+          "commit": 453712,
+          "tree": 5593495,
+          "blob": 39684508
+        },
+        "semantic_checked": 405,
+        "semantic_reused": 5685,
+        "fingerprint_opens": {
+          "other": 12,
+          "rules": 840,
+          "card_metadata": 160
+        },
+        "fingerprint_bytes": {
+          "rules": 7428200,
+          "card_metadata": 28480
+        },
+        "unique_git_objects_read": 805,
+        "maximum_reads_of_one_object": 16,
+        "result": {
+          "status": "succeeded",
+          "published": 10,
+          "local_matches": 100,
+          "github_matches": 100,
+          "failed": 0
+        },
+        "phase_ms": {
+          "scanning": 4.419822000000067,
+          "comparing": 2.703260999999884,
+          "remote": 78.76343499999984,
+          "security": 1730.3608330000002,
+          "generating": 417.36805400000003,
+          "cards": 16.576936999999816,
+          "publishing": 32.53398600000037,
+          "uploading": 89.80056799999966
+        }
+      },
+      "time_reduction_percent": 81.61410040497782
+    },
+    {
+      "archive_matches": 500,
+      "previous_remote_matches": 490,
+      "new_matches": 10,
+      "metadata_files": 5000,
+      "before": {
+        "utc": "2026-10-10T04:33:19.952Z",
+        "elapsed_ms": 93619.977684,
+        "event_loop_max_ms": 1224.736767,
+        "event_loop_p99_ms": 14.180351,
+        "validation_calls": 17,
+        "git_commands": {
+          "init": 1,
+          "remote": 7,
+          "branch": 2,
+          "diff": 37,
+          "ls-files": 17,
+          "rev-list": 21,
+          "status": 4,
+          "fetch": 2,
+          "cat-file": 106,
+          "ls-tree": 7896,
+          "show-ref": 2,
+          "checkout": 1,
+          "for-each-ref": 3,
+          "rev-parse": 2,
+          "show": 1,
+          "merge": 1,
+          "add": 10,
+          "commit": 10,
+          "diff-tree": 10,
+          "push": 1
+        },
+        "git_stdout_bytes": 1755564913,
+        "git_stdin_bytes": 3245970,
+        "git_object_reads": {
+          "commit": 7895,
+          "blob": 31690
+        },
+        "git_object_bytes": {
+          "commit": 2399312,
+          "blob": 810240108
+        },
+        "semantic_checked": 2005,
+        "semantic_reused": 29685,
+        "fingerprint_opens": {
+          "other": 12,
+          "rules": 840,
+          "card_metadata": 100000
+        },
+        "fingerprint_bytes": {
+          "rules": 7297540,
+          "card_metadata": 18355720
+        },
+        "unique_git_objects_read": 2505,
+        "maximum_reads_of_one_object": 16,
+        "result": {
+          "status": "succeeded",
+          "published": 10,
+          "local_matches": 500,
+          "github_matches": 500,
+          "failed": 0
+        },
+        "phase_ms": {
+          "scanning": 4.27940099999978,
+          "comparing": 3.976243000000977,
+          "remote": 151.8628590000044,
+          "security": 66937.713594,
+          "generating": 26330.194368999993,
+          "cards": 35.816373000005115,
+          "publishing": 55.481995000001916,
+          "uploading": 100.4234129999968
+        }
+      },
+      "after": {
+        "utc": "2026-10-10T04:35:43.896Z",
+        "elapsed_ms": 15202.79423,
+        "event_loop_max_ms": 1132.462079,
+        "event_loop_p99_ms": 389.283839,
+        "validation_calls": 17,
+        "git_commands": {
+          "init": 1,
+          "remote": 7,
+          "branch": 2,
+          "diff": 37,
+          "ls-files": 17,
+          "rev-list": 21,
+          "status": 4,
+          "fetch": 2,
+          "cat-file": 170,
+          "show-ref": 2,
+          "checkout": 1,
+          "for-each-ref": 3,
+          "rev-parse": 2,
+          "ls-tree": 1,
+          "show": 1,
+          "merge": 1,
+          "add": 10,
+          "commit": 10,
+          "diff-tree": 10,
+          "push": 1
+        },
+        "git_stdout_bytes": 966339379,
+        "git_stdin_bytes": 5188140,
+        "git_object_reads": {
+          "commit": 7895,
+          "tree": 23685,
+          "blob": 31690
+        },
+        "git_object_bytes": {
+          "commit": 2399312,
+          "tree": 143196695,
+          "blob": 810240108
+        },
+        "semantic_checked": 2005,
+        "semantic_reused": 29685,
+        "fingerprint_opens": {
+          "other": 12,
+          "rules": 840,
+          "card_metadata": 160
+        },
+        "fingerprint_bytes": {
+          "rules": 7428200,
+          "card_metadata": 28480
+        },
+        "unique_git_objects_read": 4005,
+        "maximum_reads_of_one_object": 16,
+        "result": {
+          "status": "succeeded",
+          "published": 10,
+          "local_matches": 500,
+          "github_matches": 500,
+          "failed": 0
+        },
+        "phase_ms": {
+          "scanning": 4.993908999998894,
+          "comparing": 4.398401000000376,
+          "remote": 155.53717799999868,
+          "security": 14342.763772000004,
+          "generating": 508.50075800000195,
+          "cards": 12.747764999996434,
+          "publishing": 58.54585399999996,
+          "uploading": 115.07468299999891
+        }
+      },
+      "time_reduction_percent": 83.76116443723718
+    }
+  ],
+  "local_import": [
+    {
+      "started_at_utc": "2026-10-10T04:38:19.128Z",
+      "environment": {
+        "node": "v24.19.0",
+        "platform": "linux",
+        "architecture": "x64",
+        "logical_cpus": 9
+      },
+      "fixture": "Four synthetic records / two GRE states / one short game per match; no card objects; empty explicit card database.",
+      "measurement": {
+        "repetitions_per_size": 1,
+        "histogram_resolution_ms": 1,
+        "pre_operation_warmup_ms": 10,
+        "post_operation_sampling_drain_ms": 5,
+        "note": "Elapsed/CPU excludes warmup and drain; histogram includes drain. Idle control measures the local timer floor. This is a small synthetic workload, not real-game or macOS latency acceptance."
+      },
+      "results": [
+        {
+          "size": 10,
+          "log_bytes": 16939,
+          "records": 40,
+          "gre_messages": 20,
+          "first_started_at": "2026-10-01T12:00:00.000Z",
+          "last_started_at": "2026-10-01T12:09:00.000Z",
+          "observer_min_import_interval_ms": 30000,
+          "phases": [
+            {
+              "name": "idle_control",
+              "started_at_utc": "2026-10-10T04:38:19.143Z",
+              "finished_at_utc": "2026-10-10T04:38:19.168Z",
+              "elapsed_ms": 24.96530200000001,
+              "cpu_user_ms": 0.458,
+              "cpu_system_ms": 0.173,
+              "event_loop_utilization": 0.009080098298677858,
+              "event_loop_active_ms": 0.22740299875176362,
+              "event_loop_idle_ms": 24.816709,
+              "event_loop_delay_samples": 27,
+              "event_loop_max_ms": 1.181695,
+              "event_loop_p99_ms": 1.181695,
+              "event_loop_mean_ms": 1.0841694814814815,
+              "event_loop_sampling_window_ms": 30.626428000000004
+            },
+            {
+              "name": "observer_full_import",
+              "started_at_utc": "2026-10-10T04:38:19.184Z",
+              "finished_at_utc": "2026-10-10T04:38:19.251Z",
+              "elapsed_ms": 67.13279600000001,
+              "cpu_user_ms": 63.398,
+              "cpu_system_ms": 21.36,
+              "event_loop_utilization": 0.739598472055857,
+              "event_loop_active_ms": 49.66746099953127,
+              "event_loop_idle_ms": 17.487167999999997,
+              "event_loop_delay_samples": 61,
+              "event_loop_max_ms": 6.131711,
+              "event_loop_p99_ms": 3.166207,
+              "event_loop_mean_ms": 1.1656225573770493,
+              "event_loop_sampling_window_ms": 72.65661499999999,
+              "workflow_calls": 1,
+              "cached": false,
+              "newly_archived": 10,
+              "canonical_archive_count": 10
+            },
+            {
+              "name": "observer_unchanged_signature_hit",
+              "started_at_utc": "2026-10-10T04:38:19.268Z",
+              "finished_at_utc": "2026-10-10T04:38:19.269Z",
+              "elapsed_ms": 0.6932860000000005,
+              "cpu_user_ms": 0.771,
+              "cpu_system_ms": 0,
+              "event_loop_utilization": 0.7035583669728727,
+              "event_loop_active_ms": 0.49825299968468073,
+              "event_loop_idle_ms": 0.2099370000000107,
+              "event_loop_delay_samples": 5,
+              "event_loop_max_ms": 1.652735,
+              "event_loop_p99_ms": 1.652735,
+              "event_loop_mean_ms": 0.9826815999999999,
+              "event_loop_sampling_window_ms": 6.154971000000046,
+              "workflow_calls": 0,
+              "signature_hit": true,
+              "canonical_archive_count": 10
+            },
+            {
+              "name": "import_persistent_cache_hit",
+              "started_at_utc": "2026-10-10T04:38:19.285Z",
+              "finished_at_utc": "2026-10-10T04:38:19.306Z",
+              "elapsed_ms": 21.048676,
+              "cpu_user_ms": 17.895,
+              "cpu_system_ms": 2.967,
+              "event_loop_utilization": 0.6470454289514553,
+              "event_loop_active_ms": 13.633803000086786,
+              "event_loop_idle_ms": 7.437055999999998,
+              "event_loop_delay_samples": 25,
+              "event_loop_max_ms": 1.710079,
+              "event_loop_p99_ms": 1.710079,
+              "event_loop_mean_ms": 1.01409792,
+              "event_loop_sampling_window_ms": 26.599035000000015,
+              "workflow_calls": 1,
+              "cached": true,
+              "newly_archived": 0,
+              "canonical_archive_count": 10
+            }
+          ]
+        }
+      ],
+      "finished_at_utc": "2026-10-10T04:38:19.314Z",
+      "external_fetch_attempts": 0
+    },
+    {
+      "started_at_utc": "2026-10-10T04:38:19.796Z",
+      "environment": {
+        "node": "v24.19.0",
+        "platform": "linux",
+        "architecture": "x64",
+        "logical_cpus": 9
+      },
+      "fixture": "Four synthetic records / two GRE states / one short game per match; no card objects; empty explicit card database.",
+      "measurement": {
+        "repetitions_per_size": 1,
+        "histogram_resolution_ms": 1,
+        "pre_operation_warmup_ms": 10,
+        "post_operation_sampling_drain_ms": 5,
+        "note": "Elapsed/CPU excludes warmup and drain; histogram includes drain. Idle control measures the local timer floor. This is a small synthetic workload, not real-game or macOS latency acceptance."
+      },
+      "results": [
+        {
+          "size": 100,
+          "log_bytes": 169579,
+          "records": 400,
+          "gre_messages": 200,
+          "first_started_at": "2026-10-01T12:00:00.000Z",
+          "last_started_at": "2026-10-01T13:39:00.000Z",
+          "observer_min_import_interval_ms": 30000,
+          "phases": [
+            {
+              "name": "idle_control",
+              "started_at_utc": "2026-10-10T04:38:19.811Z",
+              "finished_at_utc": "2026-10-10T04:38:19.836Z",
+              "elapsed_ms": 24.777034000000015,
+              "cpu_user_ms": 0.36,
+              "cpu_system_ms": 0.126,
+              "event_loop_utilization": 0.005707141391656527,
+              "event_loop_active_ms": 0.14168199941539683,
+              "event_loop_idle_ms": 24.683705999999997,
+              "event_loop_delay_samples": 27,
+              "event_loop_max_ms": 1.155071,
+              "event_loop_p99_ms": 1.155071,
+              "event_loop_mean_ms": 1.0773807407407407,
+              "event_loop_sampling_window_ms": 30.37029800000002
+            },
+            {
+              "name": "observer_full_import",
+              "started_at_utc": "2026-10-10T04:38:19.851Z",
+              "finished_at_utc": "2026-10-10T04:38:19.957Z",
+              "elapsed_ms": 106.34973400000001,
+              "cpu_user_ms": 108.562,
+              "cpu_system_ms": 45.042,
+              "event_loop_utilization": 0.8269847611110253,
+              "event_loop_active_ms": 87.96661299933123,
+              "event_loop_idle_ms": 18.403682000000003,
+              "event_loop_delay_samples": 62,
+              "event_loop_max_ms": 12.460031,
+              "event_loop_p99_ms": 12.075007,
+              "event_loop_mean_ms": 1.7621058064516129,
+              "event_loop_sampling_window_ms": 110.86430000000001,
+              "workflow_calls": 1,
+              "cached": false,
+              "newly_archived": 100,
+              "canonical_archive_count": 100
+            },
+            {
+              "name": "observer_unchanged_signature_hit",
+              "started_at_utc": "2026-10-10T04:38:19.973Z",
+              "finished_at_utc": "2026-10-10T04:38:19.974Z",
+              "elapsed_ms": 0.6751189999999951,
+              "cpu_user_ms": 0.482,
+              "cpu_system_ms": 0.185,
+              "event_loop_utilization": 0.6442725350231918,
+              "event_loop_active_ms": 0.44498100087014336,
+              "event_loop_idle_ms": 0.24569099999999366,
+              "event_loop_delay_samples": 5,
+              "event_loop_max_ms": 1.402879,
+              "event_loop_p99_ms": 1.402879,
+              "event_loop_mean_ms": 0.9824768,
+              "event_loop_sampling_window_ms": 6.122822999999983,
+              "workflow_calls": 0,
+              "signature_hit": true,
+              "canonical_archive_count": 100
+            },
+            {
+              "name": "import_persistent_cache_hit",
+              "started_at_utc": "2026-10-10T04:38:19.990Z",
+              "finished_at_utc": "2026-10-10T04:38:20.014Z",
+              "elapsed_ms": 23.51791300000002,
+              "cpu_user_ms": 30.148,
+              "cpu_system_ms": 6.744,
+              "event_loop_utilization": 0.721664084172753,
+              "event_loop_active_ms": 16.984147000418204,
+              "event_loop_idle_ms": 6.550551999999996,
+              "event_loop_delay_samples": 27,
+              "event_loop_max_ms": 2.797567,
+              "event_loop_p99_ms": 2.797567,
+              "event_loop_mean_ms": 1.0305706666666665,
+              "event_loop_sampling_window_ms": 29.04683,
+              "workflow_calls": 1,
+              "cached": true,
+              "newly_archived": 0,
+              "canonical_archive_count": 100
+            }
+          ]
+        }
+      ],
+      "finished_at_utc": "2026-10-10T04:38:20.022Z",
+      "external_fetch_attempts": 0
+    },
+    {
+      "started_at_utc": "2026-10-10T04:38:20.505Z",
+      "environment": {
+        "node": "v24.19.0",
+        "platform": "linux",
+        "architecture": "x64",
+        "logical_cpus": 9
+      },
+      "fixture": "Four synthetic records / two GRE states / one short game per match; no card objects; empty explicit card database.",
+      "measurement": {
+        "repetitions_per_size": 1,
+        "histogram_resolution_ms": 1,
+        "pre_operation_warmup_ms": 10,
+        "post_operation_sampling_drain_ms": 5,
+        "note": "Elapsed/CPU excludes warmup and drain; histogram includes drain. Idle control measures the local timer floor. This is a small synthetic workload, not real-game or macOS latency acceptance."
+      },
+      "results": [
+        {
+          "size": 500,
+          "log_bytes": 849579,
+          "records": 2000,
+          "gre_messages": 1000,
+          "first_started_at": "2026-10-01T12:00:00.000Z",
+          "last_started_at": "2026-10-01T20:19:00.000Z",
+          "observer_min_import_interval_ms": 30000,
+          "phases": [
+            {
+              "name": "idle_control",
+              "started_at_utc": "2026-10-10T04:38:20.527Z",
+              "finished_at_utc": "2026-10-10T04:38:20.553Z",
+              "elapsed_ms": 25.848472000000015,
+              "cpu_user_ms": 0.292,
+              "cpu_system_ms": 0.156,
+              "event_loop_utilization": 0.006016334237205043,
+              "event_loop_active_ms": 0.15580600043868742,
+              "event_loop_idle_ms": 25.741359,
+              "event_loop_delay_samples": 27,
+              "event_loop_max_ms": 1.181695,
+              "event_loop_p99_ms": 1.181695,
+              "event_loop_mean_ms": 1.0780254814814816,
+              "event_loop_sampling_window_ms": 30.396337000000017
+            },
+            {
+              "name": "observer_full_import",
+              "started_at_utc": "2026-10-10T04:38:20.568Z",
+              "finished_at_utc": "2026-10-10T04:38:20.845Z",
+              "elapsed_ms": 277.32192399999997,
+              "cpu_user_ms": 351.566,
+              "cpu_system_ms": 66.509,
+              "event_loop_utilization": 0.9581254357868368,
+              "event_loop_active_ms": 265.77349099977494,
+              "event_loop_idle_ms": 11.615545000000004,
+              "event_loop_delay_samples": 86,
+              "event_loop_max_ms": 83.558399,
+              "event_loop_p99_ms": 46.989311,
+              "event_loop_mean_ms": 3.2619103255813955,
+              "event_loop_sampling_window_ms": 282.276874,
+              "workflow_calls": 1,
+              "cached": false,
+              "newly_archived": 500,
+              "canonical_archive_count": 500
+            },
+            {
+              "name": "observer_unchanged_signature_hit",
+              "started_at_utc": "2026-10-10T04:38:20.864Z",
+              "finished_at_utc": "2026-10-10T04:38:20.865Z",
+              "elapsed_ms": 0.650382000000036,
+              "cpu_user_ms": 0.628,
+              "cpu_system_ms": 0,
+              "event_loop_utilization": 0.7835360769741463,
+              "event_loop_active_ms": 0.5214080004750485,
+              "event_loop_idle_ms": 0.14404700000000048,
+              "event_loop_delay_samples": 5,
+              "event_loop_max_ms": 1.281023,
+              "event_loop_p99_ms": 1.281023,
+              "event_loop_mean_ms": 0.9803264,
+              "event_loop_sampling_window_ms": 6.090974000000017,
+              "workflow_calls": 0,
+              "signature_hit": true,
+              "canonical_archive_count": 500
+            },
+            {
+              "name": "import_persistent_cache_hit",
+              "started_at_utc": "2026-10-10T04:38:20.884Z",
+              "finished_at_utc": "2026-10-10T04:38:20.905Z",
+              "elapsed_ms": 20.208957999999996,
+              "cpu_user_ms": 17.876,
+              "cpu_system_ms": 3.621,
+              "event_loop_utilization": 0.7464621086197826,
+              "event_loop_active_ms": 15.118167999119578,
+              "event_loop_idle_ms": 5.134927000000005,
+              "event_loop_delay_samples": 25,
+              "event_loop_max_ms": 1.335295,
+              "event_loop_p99_ms": 1.335295,
+              "event_loop_mean_ms": 0.9793740799999999,
+              "event_loop_sampling_window_ms": 25.725025000000016,
+              "workflow_calls": 1,
+              "cached": true,
+              "newly_archived": 0,
+              "canonical_archive_count": 500
+            }
+          ]
+        }
+      ],
+      "finished_at_utc": "2026-10-10T04:38:20.917Z",
+      "external_fetch_attempts": 0
+    }
+  ],
+  "measurement_script_sha256_at_run": "6446ca26ffd0160e54f73d3f811b8964f700ce38ba346266965fff688c1c308b",
+  "post_measurement_script_change": "Result serialization now reads timings_ms instead of nonexistent timings. The timed operation and all counters are unchanged; measured phase_ms was already stored in every raw result."
+}

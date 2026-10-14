@@ -17,6 +17,7 @@ npm ci --ignore-scripts
 npm ci --ignore-scripts --prefix viewer
 npm test
 npm run viewer:test
+npm run viewer:build
 npm run test:cloud
 npm run check:release
 ```
@@ -27,6 +28,4 @@ The official OpenAI documentation describes this saved-state behavior:
 https://learn.chatgpt.com/docs/environments/cloud-environments
 
 Do not add GPT/TTS credentials or private runtime data for this source setup.
-Full Viewer build remains blocked until upstream redistribution permission or
-independent replacement resolves the 19 withheld files. `npm start` is only a
-disposable synthetic API, not a full Viewer or real-time Mac log collector.
+The complete Viewer suite and production build use the 19 hash-pinned files included in private PR #3 under explicit user authorization. This does not establish an upstream license or public redistribution rights. `npm start` is only a disposable synthetic API, not a real-time Mac log collector.
