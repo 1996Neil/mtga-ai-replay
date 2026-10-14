@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { forbiddenPath, inspectRecord } from '../scripts/check-release.mjs';
+import { forbiddenPath, inspectRecord, verifyViewerManifest } from '../scripts/check-release.mjs';
 import { spawnSync } from 'node:child_process';
 import { mkdtemp, mkdir, writeFile, readFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -8,13 +8,23 @@ import { join, dirname } from 'node:path';
 import { createHash } from 'node:crypto';
 import { materializeViewer } from '../scripts/materialize-viewer.mjs';
 
-test('release policy rejects restricted files, runtime data and credential-shaped content', () => {
-  for (const path of ['viewer/src/components/GameBoard.tsx', 'viewer/src/index.css', 'credentials.json', '.env', 'history/replays.sqlite3', 'Player.log', 'viewer/dist/index.html', 'audio/raw.mp3', 'assets/card.png']) assert.equal(forbiddenPath(path), true, path);
+test('release policy excludes runtime data and credential-shaped content while scanning Viewer sources', () => {
+  for (const path of ['credentials.json', '.env', 'history/replays.sqlite3', 'Player.log', 'viewer/dist/index.html', 'audio/raw.mp3', 'assets/card.png']) assert.equal(forbiddenPath(path), true, path);
+  assert.equal(forbiddenPath('viewer/src/components/GameBoard.tsx'), false);
+  assert.equal(forbiddenPath('viewer/src/index.css'), false);
+  assert.deepEqual(inspectRecord('viewer/src/components/GameBoard.tsx', Buffer.from('ghp_' + 'A'.repeat(32))), ['credential-shaped value']);
   assert.equal(forbiddenPath('src/live-coach/providers/deepseek.mjs'), false);
   const secretLike = 'ghp_' + 'A'.repeat(32);
   assert.deepEqual(inspectRecord('src/example.mjs', Buffer.from(secretLike)), ['credential-shaped value']);
   assert.deepEqual(inspectRecord('tests/example.test.mjs', Buffer.from('ghp_SYNTHETIC_SUPER_SECRET')), []);
   assert.deepEqual(inspectRecord('src/example.mjs', Buffer.from('ghp_SYNTHETIC_SUPER_SECRET')), ['credential-shaped value']);
+});
+test('all private Viewer sources match their checked-in integrity manifest', async () => {
+  const manifest = JSON.parse(await readFile('docs/restricted-viewer.json', 'utf8'));
+  const records = await Promise.all(manifest.files.map(async row => ({ path: row.path, bytes: await readFile(row.path) })));
+  assert.equal(verifyViewerManifest(records, manifest), 19);
+  const corrupted = records.map(record => record.path === manifest.files[0].path ? { ...record, bytes: Buffer.from('changed') } : record);
+  assert.throws(() => verifyViewerManifest(corrupted, manifest), /hash mismatch/);
 });
 test('materializer requires explicit local source and does not fall back to a network download', () => {
   const result = spawnSync(process.execPath, ['scripts/materialize-viewer.mjs'], { encoding: 'utf8' });

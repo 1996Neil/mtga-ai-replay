@@ -11,13 +11,7 @@ Subsequent scoped history-approval safeguards are also preserved: legacy data
 history needs an explicit local approval bound to repository, branch, commit and
 file hashes. No history approval record or existing data history is uploaded here.
 
-**Full Viewer builds on a fresh clone are blocked by third-party permission.**
-18 copied/adapted upstream files and one stylesheet with unresolved provenance
-are excluded. Their exact latest hashes and upstream revision are recorded in
-[restricted-viewer.json](docs/restricted-viewer.json). Owned LiveCoachPanel,
-LiveCoachSetup, model settings and audio/view guards are included. See
-[THIRD_PARTY.md](docs/THIRD_PARTY.md); private visibility does not establish an
-upstream redistribution license. The macOS icon is also excluded.
+**Private PR #3 includes 19 existing adapted Viewer files under explicit user authorization for review.** Their hashes and upstream revision remain recorded in [restricted-viewer.json](docs/restricted-viewer.json), and attribution is preserved in [viewer/ATTRIBUTION.md](viewer/ATTRIBUTION.md). The inspected upstream revision has no declared code license; this private inclusion does not claim an upstream license or grant public redistribution rights. The repository remains private. The macOS icon is excluded.
 
 ## Linux development
 
@@ -31,6 +25,7 @@ npm ci --ignore-scripts --prefix viewer
 npm test
 npm run coach:test
 npm run viewer:test
+npm run viewer:build
 npm run test:cloud
 npm run check:release
 npm start -- --port 8787
@@ -40,15 +35,14 @@ Dependency installation needs the npm registry or a populated cache. Tests use
 only mocked model/TTS responses, synthetic logs, temporary local repositories,
 and explicitly deidentified windows. No real GPT/TTS requests are made. `npm test`
 retains but explicitly skips eight tests requiring the private locked data
-history; `viewer:test` excludes three files importing the withheld Viewer stores.
-No missing data is replaced by fabricated passing results. Full reproduction
-and opt-in commands are in [DEVELOPMENT.md](docs/DEVELOPMENT.md).
+history. `viewer:test` runs the complete Viewer suite. No missing data is replaced
+by fabricated passing results. Full reproduction and opt-in commands are in
+[DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 `npm start` serves a disposable **synthetic API** at `127.0.0.1:8787`, using a new
 OS-temporary SQLite archive. SIGINT/SIGTERM cleans it up. It does not use real
 logs, account settings, collection memory, credentials, model/TTS services,
-public card downloads or Git publishing. This API entry is usable without the
-restricted Viewer; it is not the complete replay UI.
+public card downloads or Git publishing. This API serves the complete Viewer against synthetic data, not private history or live Mac log data.
 
 The server enforces loopback Host/Origin. Use curl inside the workspace or an
 existing authenticated port-forward that preserves the loopback origin. This
@@ -76,4 +70,4 @@ is included. Third-party notices and dependency locks are preserved.
 
 ## Replay 2.0 task and collection review
 
-The review branch adds server-owned task reconnection, completion notification attempts and an explicit collection update button. See [review evidence and limits](docs/REPLAY2_SYNC_REVIEW.md) and [Pro review prompt](docs/PRO_REVIEW_PROMPT.md). No real upload performance improvement is claimed. Restricted Viewer files remain excluded; their current local hashes are updated for authorized materialization.
+The review branch adds server-owned task reconnection, completion notification attempts and an explicit collection update button. See [review evidence and limits](docs/REPLAY2_SYNC_REVIEW.md) and [Pro review prompt](docs/PRO_REVIEW_PROMPT.md). No real upload performance improvement is claimed. The included adapted Viewer sources remain hash-checked by the release scan; private inclusion does not claim upstream licensing or public redistribution rights.
