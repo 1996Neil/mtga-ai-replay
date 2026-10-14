@@ -1,4 +1,6 @@
-# Replay 2.0 — AI 复盘一期（隔离分支）
+# 历史一期设计：Replay 2.0 — AI 复盘一期（隔离分支）
+
+当前接口已由 [本轮加固说明](REPLAY_AI_HARDENING.md) 更新；下文保留作为 PR #2 的历史设计，不作为新的部署步骤。
 
 开发基线：`codex/replay2-sync-collection-20261010`。工作分支：`feature/replay2-ai-review-phase1-20261014`。
 

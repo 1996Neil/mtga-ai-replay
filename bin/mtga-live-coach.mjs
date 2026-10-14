@@ -11,7 +11,7 @@ import { BudgetLedger, SiwcAuth, createModelProvider, MiniMaxVoiceProvider, Elev
 import { ReplaySource } from '../src/live-coach/sources.mjs';
 import { LiveCoachRuntime } from '../src/live-coach/runtime.mjs';
 import { CoachController } from '../src/live-coach/controller.mjs';
-import { startReplayServer } from '../src/server.mjs';
+import { startLegacyCoachServer as startReplayServer } from '../src/legacy-coach-server.mjs';
 import { defaultDataDir } from '../src/history.mjs';
 import { CoachSetup } from '../src/live-coach/setup.mjs';
 import { attachStandbyGuard } from '../src/live-coach/standby.mjs';

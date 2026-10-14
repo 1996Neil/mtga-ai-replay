@@ -10,7 +10,7 @@ import { GameLog, NearbyActions } from './components/GameLog';
 import { ReplayControls } from './components/ReplayControls';
 import { ReplaySyncButton } from './components/ReplaySyncButton';
 import { CollectionUpdateButton } from './components/CollectionUpdateButton';
-import { LiveCoachPanel } from './components/LiveCoachPanel';
+import { integrityMessages } from './lib/integrity';
 import { ReplayReviewCoach } from './components/ReplayReviewCoach';
 
 function when(value: string) { const date = new Date(value); return Number.isNaN(date.getTime()) ? '时间未记录' : new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(date); }
@@ -118,7 +118,7 @@ export function App() {
     game: String(match.gameNumber), anchor: step.anchor, boundary: actualBefore ? 'before' : 'after',
   })}` : undefined;
   const notes = match?.steps.flatMap(p => p.coachNotes.map(note => ({ ...note, anchor: note.anchor || p.anchor }))) ?? [];
-  const warnings = [...(match?.warnings ?? []), ...(step?.warnings ?? [])];
+  const warnings = integrityMessages([...(match?.warnings ?? []), ...(step?.warnings ?? [])]);
 
   return <div className={`app-shell ${analysis ? 'analysis-mode' : 'replay-mode'}`}>
     <a className="skip-link" href="#replay-controls">跳至回放控制</a>
@@ -131,9 +131,7 @@ export function App() {
       {match && <span className="match-caption">{when(match.startedAt)} · {match.eventName}</span>}
       {s.matches.length>1 && <select aria-label="选择单局" value={s.currentMatchIndex} onChange={e=>s.selectMatch(Number(e.target.value))}>{s.matches.map((g,i)=><option key={g.gameNumber} value={i}>第 {g.gameNumber} 局</option>)}</select>}
       <ReplaySyncButton /><CollectionUpdateButton />
-      <LiveCoachPanel view={!loading && !error && match && step ? { match_id: match.matchId, game_number: match.gameNumber,
-        anchor: step.anchor, boundary: actualBefore ? 'before' : 'after' } : null} />
-      {match && step && !error && !loading && <ReplayReviewCoach match={match} currentStepIndex={s.currentStepIndex}
+      {match && step && !error && !loading && <ReplayReviewCoach match={match} currentStepIndex={s.currentStepIndex} viewBefore={actualBefore}
         onJump={(anchor, boundary) => { jump(anchor); s.setViewBefore(boundary === 'before'); }} />}
       <div className="mode-switch" aria-label="查看模式"><button type="button" aria-pressed={!analysis} onClick={()=>{setAnalysis(false);s.setViewBefore(false);}}>回放</button><button type="button" aria-pressed={analysis} onClick={()=>{s.pause();setAnalysis(true);}}>分析</button></div>
     </header>
@@ -143,11 +141,13 @@ export function App() {
         <section className="analysis-tools"><div className="boundary-buttons" aria-label="局面边界"><button type="button" className={actualBefore ? 'selected' : ''} disabled={!step?.beforeGameState} aria-pressed={actualBefore} onClick={()=>s.setViewBefore(true)}>动作前</button><button type="button" className={!actualBefore ? 'selected' : ''} aria-pressed={!actualBefore} onClick={()=>s.setViewBefore(false)}>动作后</button></div>
           <p>{step?.anchor} · {actualBefore ? '该 Arena 消息之前' : '该 Arena 消息之后'}</p>
           {step?.groupedFrame && <p>同一消息中的多个动作共享局面，未推测中间状态。</p>}
-          <form onSubmit={e=>{e.preventDefault();jump(anchorInput);}}><input aria-label="回放锚点" placeholder="T12-A19" value={anchorInput} onChange={e=>setAnchorInput(e.target.value)} /><button type="submit">定位</button></form>
+          <details className="coach-notes"><summary>教练笔记 · {notes.length}</summary>{notes.length ? notes.map((note,i)=><button key={i} type="button" className="coach-note" onClick={()=>jump(note.anchor)}><b>{note.title ?? '教练笔记'} <small>{note.anchor}</small></b><span>{note.text}</span></button>) : <p>暂无笔记。导入的笔记可直接跳到对应动作。</p>}</details>
+          <div className="warnings-panel"><button type="button" onClick={()=>setShowWarnings(!showWarnings)} aria-expanded={showWarnings}>数据完整性 · {warnings.length ? `${warnings.length} 项限制` : '未发现额外限制'}</button>{showWarnings && (warnings.length ? <ul>{warnings.map((w,i)=><li key={i}>{w.chinese}{w.original !== w.chinese && <details><summary>{w.translated ? '查看原文' : '未归类说明原文'}</summary><code>{w.original}</code></details>}</li>)}</ul> : <p>这不代表日志记录了所有合法行动或优先权窗口。</p>)}</div>
+          <details className="advanced-tools"><summary>高级工具</summary>
+          <form onSubmit={e=>{e.preventDefault();jump(anchorInput);}}><input aria-label="调试：回放锚点" placeholder="T12-A19" value={anchorInput} onChange={e=>setAnchorInput(e.target.value)} /><button type="submit">定位</button></form>
           {anchorError && <p role="status">{anchorError}</p>}
           <a className="context-download" href={contextUrl} download>下载 Coach Context</a>
-          <details className="coach-notes"><summary>教练笔记 · {notes.length}</summary>{notes.length ? notes.map((note,i)=><button key={i} type="button" className="coach-note" onClick={()=>jump(note.anchor)}><b>{note.title ?? '教练笔记'} <small>{note.anchor}</small></b><span>{note.text}</span></button>) : <p>暂无笔记。导入的笔记可直接跳到对应动作。</p>}</details>
-          {!!warnings.length && <div className="warnings-panel"><button type="button" onClick={()=>setShowWarnings(!showWarnings)} aria-expanded={showWarnings}>重建说明 · {warnings.length}</button>{showWarnings && <ul>{warnings.map((w,i)=><li key={i}>{w}</li>)}</ul>}</div>}
+          </details>
         </section>
         {match && <GameLog match={match} currentStepIndex={s.currentStepIndex} analysis />}
       </aside>}
