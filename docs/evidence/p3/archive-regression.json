@@ -1,0 +1,21 @@
+{
+  "real_quickdraft_count": 8,
+  "max_actions": 807,
+  "exact_reimports_written": 0,
+  "drift_conflicts": 8,
+  "full_tables_unchanged": true,
+  "tables": {
+    "replays": {
+      "count": 176,
+      "sha256": "04a33b01d1ddabb735adc915290a63ef2a669c52705771f3fa172f1a38c19afe"
+    },
+    "coach_notes": {
+      "count": 1,
+      "sha256": "6742ab1bf77d8999371fb153a0851460f2f877544741117753357087fcededf0"
+    },
+    "cards": {
+      "count": 1045,
+      "sha256": "c2e4ee803d5c35656b667e4d035face0e85c85ed40ef01fe47f762ed41f2cb06"
+    }
+  }
+}

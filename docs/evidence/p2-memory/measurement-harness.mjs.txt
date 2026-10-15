@@ -1,0 +1,60 @@
+/** Private-input, offline-only memory experiment. Reports contain numeric metrics,
+ * never replay bodies, paths, Git stderr, or heap snapshots. No production writes. */
+import {readFile,mkdir,copyFile,writeFile,lstat} from 'node:fs/promises';
+import {resolve,join,dirname} from 'node:path';
+import {fileURLToPath,pathToFileURL} from 'node:url';
+import {execFile} from 'node:child_process';
+import {performance,monitorEventLoopDelay,PerformanceObserver} from 'node:perf_hooks';
+import assert from 'node:assert/strict';
+const args=Object.fromEntries(process.argv.slice(2).map(value=>{const i=value.indexOf('=');if(i<0)throw Error('Expected --name=value');return[value.slice(2,i),value.slice(i+1)];}));
+const source=resolve(args.source??dirname(dirname(fileURLToPath(import.meta.url)))),output=resolve(args.output),settle=Number(args.settle??60);
+if(!args.fixture||!args.output||![0,60].includes(settle))throw Error('Private fixture, NEW output and settle=0|60 required');
+const cleanups=[];let failureContext={};
+try {
+const fixture=JSON.parse(await readFile(resolve(args.fixture)));
+if(fixture.repository!=='fixture-owner/private-coaching'||fixture.branch!=='main'||!(await lstat(fixture.bare)).isDirectory())throw Error('Only the frozen local bare fixture is accepted');
+await mkdir(output,{mode:0o700});const dataDir=join(output,'data');await mkdir(join(dataDir,'coach-sync'),{recursive:true,mode:0o700});
+await copyFile(join(fixture.dataDir,'coach-sync/state.json'),join(dataDir,'coach-sync/state.json'));
+const replay=JSON.parse(await readFile(fixture.replayFile)),id=replay.match.id;
+const points=[],samples=[],gc={count:0,ms:0,max_ms:0};let phase='startup';
+globalThis.p2MemoryPoint=value=>{points.push(value);phase=value.stage;};
+const point=stage=>{const m={stage,at:performance.timeOrigin+performance.now(),isolate:'parent',...process.memoryUsage(),gc:{...gc}};points.push(m);phase=stage;return m;};
+const observer=new PerformanceObserver(entries=>{for(const e of entries.getEntries()){gc.count++;gc.ms+=e.duration;gc.max_ms=Math.max(gc.max_ms,e.duration);}});observer.observe({entryTypes:['gc']});cleanups.push(()=>observer.disconnect());
+let gitCommands=0;const execute=(file,command,settings={})=>new Promise((yes,no)=>{
+ const child=execFile(file,command,{...settings,timeout:60000,maxBuffer:32*1024*1024,env:{...process.env,GIT_CONFIG_GLOBAL:'/dev/null',GIT_CONFIG_NOSYSTEM:'1',GIT_TERMINAL_PROMPT:'0',...settings.env}},(error,stdout)=>error?no(Error('Local-only experiment command failed')):yes(stdout));
+ child.stdin.on('error',no);child.stdin.end(settings.input);
+});
+const runCommand=async(file,command,settings={})=>{
+ if(file==='gh'){assert.deepEqual(command,['repo','view',fixture.repository,'--json','nameWithOwner,visibility,url,defaultBranchRef']);return JSON.stringify({nameWithOwner:fixture.repository,visibility:'PRIVATE',url:`https://github.com/${fixture.repository}`,defaultBranchRef:{name:'main'}});}
+ if(file!=='git'||command.includes('push'))throw Error('Read-only Git experiment');
+ const network=command.includes('fetch')||command.includes('ls-remote');
+ if(network){const url=String(await execute('git',['remote','get-url','--all','origin'],{cwd:settings.cwd,encoding:'utf8'})).trim();assert.equal(url,`https://github.com/${fixture.repository}.git`);}
+ gitCommands++;return execute(file,network?['-c',`url.${fixture.bare}.insteadOf=https://github.com/${fixture.repository}.git`,...command]:command,settings);
+};
+const from=file=>import(pathToFileURL(join(source,file)).href);
+const [{createCloudReviewReader},{startReplayServer}]=await Promise.all([from('src/review/review-sync.mjs'),from('src/server.mjs')]);
+const reader=createCloudReviewReader({dataDir,runCommand,loadReplay:async matchId=>matchId===id?replay:null});
+const runtime=await startReplayServer({dataDir,port:0,writeInfo:false,displayNamesZh:new Map(),includeLocalHistory:false,observeLocalLogs:false,enableReplaySync:false,enableCollection:false,reviewReader:reader,fetchFn:async()=>{throw Error('External HTTP forbidden');},replayProvider:{list:async()=>[],get:async()=>null,latest:async()=>null}});
+cleanups.push(()=>runtime.close());
+const probeCode=`import{performance}from'node:perf_hooks';import{readFileSync}from'node:fs';const{url}=JSON.parse(readFileSync(0,'utf8'));let stop=false;process.on('SIGTERM',()=>stop=true);let values=[];while(!stop){const t=performance.now();try{const r=await fetch(url+'api/health',{signal:AbortSignal.timeout(30000)});values.push(r.ok?performance.now()-t:null);}catch{values.push(null);}await new Promise(r=>setTimeout(r,100));}console.log(JSON.stringify(values));`;
+let probeChild;const probe=new Promise((yes,no)=>{probeChild=execFile(process.execPath,['--input-type=module','-e',probeCode],{encoding:'utf8'},(e,s)=>{if(e)return no(Error('Probe failed'));yes(JSON.parse(s));});probeChild.stdin.end(JSON.stringify({url:runtime.url}));});
+cleanups.push(async()=>{probeChild.kill('SIGTERM');await probe.catch(()=>{});});
+// Independent OS sampler accounts for Git separately from shared Node/Worker RSS.
+const samplerCode=`import os,subprocess,time,signal,json\nstop=False\ndef end(*args):\n global stop;stop=True\nsignal.signal(signal.SIGTERM,end)\nroot=int(input());peak=0;total_peak=0;count=0;node_peak=0\nwhile not stop:\n rows={}\n for line in subprocess.check_output(['ps','-axo','pid=,ppid=,rss=,comm='],text=True).splitlines():\n  p=line.strip().split(None,3)\n  if len(p)==4:rows[int(p[0])]=(int(p[1]),int(p[2]),p[3].rsplit('/',1)[-1])\n if root in rows:node_peak=max(node_peak,rows[root][1]*1024)\n descendants={root}\n for _ in range(8):\n  descendants.update(pid for pid,(parent,_,_) in rows.items() if parent in descendants)\n rss=[v[1]*1024 for pid,v in rows.items() if pid in descendants and v[2] in ['git','git-remote-https','git-upload-pack','git-index-pack','git-unpack-objects']]\n if rss:peak=max(peak,max(rss));total_peak=max(total_peak,sum(rss));count+=1\n time.sleep(.1)\nprint(json.dumps({'node_observed_peak_rss':node_peak,'single_peak_rss':peak,'concurrent_peak_rss':total_peak,'positive_samples':count,'interval_ms':100}))`;
+let gitChild;const gitSample=new Promise((yes,no)=>{gitChild=execFile('python3',['-c',samplerCode],{encoding:'utf8'},(e,s)=>{if(e)return no(Error('Git sampler failed'));yes(JSON.parse(s));});gitChild.stdin.end(String(process.pid)+'\n');});
+cleanups.push(async()=>{gitChild.kill('SIGTERM');await gitSample.catch(()=>{});});
+const sleep=ms=>new Promise(done=>setTimeout(done,ms));await sleep(200);
+const loop=monitorEventLoopDelay({resolution:5});loop.enable();let peak=process.memoryUsage().rss;
+const timer=setInterval(()=>{const m=process.memoryUsage();peak=Math.max(peak,m.rss);samples.push({at:performance.timeOrigin+performance.now(),phase,...m});},20);
+cleanups.push(()=>clearInterval(timer));
+const before=point('task:before'),cpu=process.cpuUsage(),start=performance.now();reader.start(id,1);await reader.wait();const state=await reader.read(id,1);const wall=performance.now()-start,used=process.cpuUsage(cpu);point('task:after');
+loop.disable();probeChild.kill('SIGTERM');const probes=await probe;gitChild.kill('SIGTERM');const git=await gitSample;
+const coldPeak=peak,kernelPeak=process.resourceUsage().maxRSS*1024,after=process.memoryUsage();failureContext={status:state.status,points,samples};assert.equal(state.status,'ready');
+const idle={};for(const seconds of settle?[30,60]:[]){await sleep(seconds===30?30000:30000);idle[seconds]=point('idle:'+seconds);console.log(JSON.stringify({stage:'idle',seconds,rss_mib:+(idle[seconds].rss/1048576).toFixed(1)}));}
+const warm=[];for(let i=0;i<3;i++){const t=performance.now(),u=process.cpuUsage();const r=await reader.read(id,1),v=process.cpuUsage(u);assert.equal(r.status,'ready');warm.push({wall_ms:performance.now()-t,cpu_ms:(v.user+v.system)/1000,rss:process.memoryUsage().rss,notes:r.review.notes.length});}
+point('close:before');await runtime.close();await sleep(50);point('close:after');clearInterval(timer);observer.disconnect();
+const good=probes.filter(v=>v!==null).sort((a,b)=>a-b);
+const result={actions:replay.games.reduce((n,g)=>n+g.steps.length,0),status:state.status,notes:state.review.notes.length,wall_ms:wall,node_cpu_ms:(used.user+used.system)/1000,node_peak_rss:Math.max(coldPeak,kernelPeak),node_sampled_peak_rss:coldPeak,node_kernel_peak_rss:kernelPeak,node_after:after,node_before:before,idle,warm,event_loop_max_ms:loop.max/1e6,http_max_ms:good.at(-1),http_p95_ms:good[Math.floor(good.length*.95)],http_failures:probes.length-good.length,git,git_commands:gitCommands,parent_gc:gc,process_versions:{node:process.version,platform:process.platform,arch:process.arch},observer:{rss_interval_ms:20,git_interval_ms:100,explicit_gc:false},points,samples};
+await writeFile(join(output,'metrics.json'),JSON.stringify(result,null,2)+'\n',{mode:0o600});console.log(JSON.stringify({...result,points:undefined,samples:undefined,node_before:undefined,idle:Object.fromEntries(Object.entries(idle).map(([k,v])=>[k,{rss:v.rss,heapUsed:v.heapUsed}]))}));
+
+} catch {await writeFile(join(output,'failed.json'),JSON.stringify({result:'failed',...failureContext})+'\n',{mode:0o600});throw Error('Offline memory experiment failed; numeric failure evidence saved.');} finally {for(const close of cleanups.reverse())await Promise.resolve().then(close).catch(()=>{});}

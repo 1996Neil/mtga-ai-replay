@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import packageInfo from '../package.json' with { type: 'json' };
-import { validateBundleFiles } from './sync-security.mjs';
+import { validateBundleFiles, validateExpandedCoach } from './sync-security.mjs';
 
 const SHARED_FRAME_WARNING = 'Exact intermediate board state was not observed; actions can share a GRE frame.';
 const PRIORITY_WARNING = 'Priority is the last observed GRE value; unrecorded priority windows are unknown.';
@@ -87,7 +87,10 @@ function semanticMultipart(expanded, historyKey, { partitionBytes = 700 * 1024, 
     ranges.set(`${currentPath}:${key}`, { file: currentPath, key, start_line: line, end_line: line });
     return ref;
   };
-  const coach = structuredClone(expanded);
+  // Only the root and each game's container fields are replaced below. States,
+  // actions and turns are already freshly sanitized owned values; sharing those
+  // read-only rows with the parts avoids cloning the entire expanded replay.
+  const coach = { ...expanded, games: expanded.games.map(game => ({ ...game })) };
   if (multipart === false || (multipart !== true && Buffer.byteLength(serializeCoachJson(coach)) <= MAX_MAIN_BYTES)) return { coach, parts, ranges };
   for (const [index, game] of coach.games.entries()) game.states = Object.fromEntries(Object.entries(game.states).map(([id, state]) => [id, store('states', `G${index + 1}:${id}`, state)]));
   if (Buffer.byteLength(serializeCoachJson(coach)) > MAX_MAIN_BYTES) {
@@ -475,11 +478,11 @@ export async function buildCoachBundle(replay, { cards = [], generatedAt = new D
     on_the_play: safeMatch.on_play ?? finalGame?.on_play ?? null,
     turns: safeGames.reduce((n, game) => n + unique([...game.turns.map(turn => turn.turn_number), ...Object.values(game.states).map(state => state.turn)]).filter(turn => Number.isInteger(turn) && turn > 0).length, 0),
     actions: sourceCoverage.actions, states: sourceCoverage.states, games: safeGames.length, deck_cards: deckCount,
-    final_life: finalGame?.result?.life ?? { me: null, opponent: null }, player: safeMatch.player ?? null, opponent: safeMatch.opponent ?? null,
-    coach_file: 'coach.json', cards_file: 'cards.json', source_coverage: sourceCoverage };
+    final_life: { ...(finalGame?.result?.life ?? { me: null, opponent: null }) }, player: safeMatch.player ?? null, opponent: safeMatch.opponent ?? null,
+    coach_file: 'coach.json', cards_file: 'cards.json', source_coverage: { ...sourceCoverage } };
   // Validate continuous semantic values before any structural string chunks can split them.
-  validateBundleFiles(new Map([['latest/coach.json', serializeCoachJson(expanded)],
-    ['latest/summary.json', serializeCoachJson(summary)], ['latest/cards.json', serializeCoachJson(rules)]]));
+  validateExpandedCoach(expanded);
+  validateBundleFiles(new Map([['latest/summary.json', serializeCoachJson(summary)], ['latest/cards.json', serializeCoachJson(rules)]]));
   const { coach, parts, ranges } = semanticMultipart(expanded, historyKey, { partitionBytes, multipart });
   const files = new Map([['summary.json', summary], ['coach.json', coach], ['cards.json', rules], ...parts]);
   const fileHashes = Object.fromEntries([...files].map(([name, value]) => [name, { sha256: sha256(serializeCoachJson(value)), bytes: Buffer.byteLength(serializeCoachJson(value), 'utf8') }]));

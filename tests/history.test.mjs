@@ -53,7 +53,7 @@ test('archive preserves coach notes separately across replay upgrades and stores
   upgraded.schema_version = '1.2';
   await archiveReplays([upgraded], options);
   const saved = await getReplay('safe', options);
-  assert.equal(saved.schema_version, '1.2');
+  assert.equal(saved.schema_version, '1.1'); // A schema label alone must not rewrite history.
   assert.deepEqual(saved.coachNotes, [{ anchor: 'T1-A1', text: 'Synthetic coach note' }]);
   assert.equal((await getArchivedCard(100, options)).name, 'Forest');
   assert.equal(await getArchivedCard(999, options), null);
@@ -104,4 +104,58 @@ test('rotated-log trailing fragments cannot shrink a complete replay, while rich
   assert.equal(archived.schema_version, '2.1');
   assert.equal(archived.games[0].steps.length, 21);
   assert.deepEqual(archived.coachNotes, [{ anchor: 'T12-A1', text: 'Keep this note' }]);
+});
+
+test('automatic reimport preserves all stored bytes for equal coverage and conflicting richer input', async t => {
+  const dataDir = await directory(t), options = { dataDir }, original = replay('stable');
+  original.games[0].result = { outcome: 'Loss', life: { me: 0, opponent: 7 } };
+  original.games[0].starting_hand = Array.from({ length: 7 }, () => ({ arena_id: 100, name: 'Forest' }));
+  original.games[0].states = { S1: { players: { me: { life: 20 }, opponent: { life: 20 } } } };
+  original.games[0].turns[0].events[0].sequence = 1;
+  await archiveReplays([original], options); await saveCoachNotes('stable', [{ text: 'Keep exact bytes' }], options);
+  const { DatabaseSync } = await import('node:sqlite');
+  const snapshot = () => { const db = new DatabaseSync(join(dataDir, 'replays.sqlite3'), { readOnly: true });
+    try { return ['replays','coach_notes','cards'].map(table => db.prepare(`SELECT * FROM ${table} ORDER BY 1`).all()); } finally { db.close(); } };
+  const before = snapshot();
+  const mutations = [
+    r => { r.schema_version = '3.0'; },
+    r => { r.games[0].turns[0].events[0].card.name = '树林'; },
+    r => { r.games[0].turns[0].events[0].sequence = 4; },
+    r => { r.match.result = 'Win'; r.games[0].result.outcome = 'Win'; },
+    r => { r.games[0].states.S2 = {}; r.games[0].states.S1.players.me.life = 19; },
+    r => { r.games[0].starting_hand.length = 1; r.games[0].states.S2 = {}; },
+    r => { r.games.push(structuredClone(r.games[0])); },
+    r => { r.games[0].states.S2 = {}; r.games[0].result.life.opponent = 0; },
+  ];
+  for (const mutate of mutations) {
+    const candidate = structuredClone(original); mutate(candidate);
+    const result = await archiveReplays([candidate], options);
+    assert.equal(result.conflicts, 1); assert.deepEqual(snapshot(), before);
+  }
+});
+
+test('coverage cannot compensate across games; unknown result can be supplemented without rewriting observed facts', async t => {
+  const dataDir = await directory(t), options = { dataDir }, original = replay('multi');
+  original.match.result = null; original.games[0].result = { outcome: null, life: { me: null, opponent: null } };
+  original.games[0].states = { S1: { turn: 1 } };
+  const second = structuredClone(original.games[0]); second.game_number = 2;
+  original.games.push(second); await archiveReplays([original], options);
+  const bad = structuredClone(original); bad.games[0].states = {}; bad.games[1].states.S2 = { turn: 2 };
+  assert.equal((await archiveReplays([bad], options)).conflicts, 1);
+  const good = structuredClone(original); good.match.result = 'Loss'; good.games[0].result = { outcome: 'Loss', life: { me: 0, opponent: 3 } };
+  assert.equal((await archiveReplays([good], options)).archived, 1);
+  assert.equal((await getReplay('multi', options)).games[0].result.outcome, 'Loss');
+  assert.equal((await archiveReplays([good], options)).archived, 0);
+});
+
+test('complex fragment reconciliation stays an explicit review boundary', async t => {
+  const dataDir = await directory(t), options = { dataDir }, original = replay('fragment');
+  original.games[0].starting_hand = []; original.games[0].warnings = ['Terminal GRE state unavailable'];
+  await archiveReplays([original], options);
+  for (const change of [r => { r.games[0].starting_hand = [{ arena_id: 100, name: 'Forest' }]; },
+    r => { r.games[0].warnings = []; r.games[0].result = { outcome: 'Loss', life: { me: 0 } }; }]) {
+    const next = structuredClone(original); change(next);
+    assert.equal((await archiveReplays([next], options)).conflicts, 1);
+    assert.deepEqual((await getReplay('fragment', options)).games, original.games);
+  }
 });

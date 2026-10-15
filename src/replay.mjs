@@ -5,6 +5,7 @@ import { parseAllLogsWithDebug, MatchFilters } from 'mtga-log-parser';
 import { describeMatchMode } from './match-mode.mjs';
 import { PerspectiveState } from './perspective.mjs';
 import { visualSnapshot, visibleStateSignature } from './visual-state.mjs';
+import { indexMatchMetadata } from './match-metadata.mjs';
 
 export const isJumpIn = event => /Jump_?In(?:_|$)/i.test(event ?? '');
 const detail = (a, key) => {
@@ -14,36 +15,15 @@ const detail = (a, key) => {
 const has = (a, type) => (Array.isArray(a.type) ? a.type : [a.type]).includes(`AnnotationType_${type}`);
 const zoneName = (state, id) => (state.zones.get(id)?.type ?? 'Unknown').replace('ZoneType_', '');
 
-function indexMatches(records) {
-  const metadata = new Map(); let current;
-  for (const obj of records) {
-    const info = obj.matchGameRoomStateChangedEvent?.gameRoomInfo;
-    if (info?.gameRoomConfig?.matchId) {
-      current = info.gameRoomConfig.matchId;
-      if (!metadata.has(current)) metadata.set(current, { config: info.gameRoomConfig, timestamp: obj.timestamp });
-    }
-    for (const msg of obj.greToClientEvent?.greToClientMessages ?? []) {
-      if (!current || msg.systemSeatIds?.length !== 1) continue;
-      const match = metadata.get(current);
-      if (msg.type === 'GREMessageType_ConnectResp') {
-        match.localSeat = msg.systemSeatIds[0]; match.seatConfirmed = true;
-      } else if (!match.seatConfirmed && match.localSeat === undefined && msg.gameStateMessage) {
-        match.localSeat = msg.systemSeatIds[0];
-      }
-    }
-  }
-  return metadata;
-}
-
 function initialGame(number) {
   return { game_number: number, on_play: null, starting_hand: [], initial_hand: [], mulligans: { me: 0, opponent: 0 },
     turns: [], states: {}, steps: [], _frames: [], result: { outcome: null, reason: 'unknown', life: { me: null, opponent: null } }, warnings: [] };
 }
 
 export async function buildReplays(records, names = new Map(), { counterNames = new Map() } = {}) {
-  const meta = indexMatches(records), states = new Map(), games = new Map(), sanitized = [];
+  const meta = indexMatchMetadata(records), states = new Map(), games = new Map(), sanitized = [];
   const actionEvents = new Map(), seenStates = new Set(), seenAnnotations = new Set(), seenCombat = new Set(); let currentId;
-  let sequence = 0;
+  const sequences = new Map();
   function gameFor(id, number) {
     const key = `${id}:${number}`;
     if (!games.has(key)) games.set(key, initialGame(number));
@@ -57,7 +37,9 @@ export async function buildReplays(records, names = new Map(), { counterNames = 
       turn = { turn_number: n, active_player: state.turn.activePlayer === state.localSeat ? 'me' : 'opponent', events: [], decision_points: [] };
       game.turns.push(turn);
     }
-    const value = { sequence: ++sequence, phase: state.turn.phase, step: state.turn.step,
+    const sequence = (sequences.get(currentId) ?? 0) + 1;
+    sequences.set(currentId, sequence);
+    const value = { sequence, phase: state.turn.phase, step: state.turn.step,
       state_id: state.currentFrame?.id, before_state_id: state.currentFrame?.before_id, ...event };
     turn.events.push(value); return value;
   }
