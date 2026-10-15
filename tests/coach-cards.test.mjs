@@ -31,7 +31,9 @@ test('rules dictionary covers unplayed full deck and legal public actions, exclu
     const id = Number(String(url).match(/arena\/(\d+)$/)?.[1]); ids.push(id); return response(rules(`Provider Card ${id}`));
   } });
   assert.deepEqual(result.map(value => value.arena_id), [100, 101, 102, 103]);
-  assert.deepEqual(ids, [100, 101, 102, 103]);
+  // Request scheduling may overlap; the returned dictionary above remains
+  // deterministic. Exactly these legal IDs, and no hidden identity, may leave.
+  assert.deepEqual([...ids].sort((a,b)=>a-b), [100, 101, 102, 103]);
   assert.equal(result[0].name, 'Synthetic Own Creature');
   assert.equal(result[0].display_name_zh, '本机中文名');
   assert.equal(result[0].power, '3'); assert.equal(result[0].toughness, '3');

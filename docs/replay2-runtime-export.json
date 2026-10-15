@@ -1,0 +1,275 @@
+{
+  "description": "Owned runtime snapshot updates required to reproduce the current task/standby/Viewer integration; personal repository binding normalized, restricted Viewer withheld, existing cloud scripts/package commands preserved.",
+  "files": [
+    {
+      "path": "src/server.mjs",
+      "runtime_sha256": "a777af3f8a48d6061f46095756f03441618d3c3e77741c8da90f53cbc0c2926f",
+      "export_sha256": "a777af3f8a48d6061f46095756f03441618d3c3e77741c8da90f53cbc0c2926f",
+      "transformations": []
+    },
+    {
+      "path": "src/viewer-sync.mjs",
+      "runtime_sha256": "1bcb8025a58f25c5f1c8592382040b0ad51f54a86bcd57dce6262577e8c21d40",
+      "export_sha256": "1bcb8025a58f25c5f1c8592382040b0ad51f54a86bcd57dce6262577e8c21d40",
+      "transformations": []
+    },
+    {
+      "path": "src/viewer-task.mjs",
+      "runtime_sha256": "8024079984a07c0c03ca9c70cd87e6ec55e1d202067642d30cfc07c39e3f5b19",
+      "export_sha256": "8024079984a07c0c03ca9c70cd87e6ec55e1d202067642d30cfc07c39e3f5b19",
+      "transformations": []
+    },
+    {
+      "path": "src/viewer-collection.mjs",
+      "runtime_sha256": "93cb7c0c382e386ce44110ee871d1ac957557801d61988c47983b132f9987100",
+      "export_sha256": "93cb7c0c382e386ce44110ee871d1ac957557801d61988c47983b132f9987100",
+      "transformations": []
+    },
+    {
+      "path": "src/task-notification.mjs",
+      "runtime_sha256": "fa4a03a63248737923c8b9ee8b8ed30b8b504d3b53abcea89ae35b9df15d04f2",
+      "export_sha256": "fa4a03a63248737923c8b9ee8b8ed30b8b504d3b53abcea89ae35b9df15d04f2",
+      "transformations": []
+    },
+    {
+      "path": "src/viewer-local-history.mjs",
+      "runtime_sha256": "9b1db4f715caa96aa7daa601433f6cbe96a43ed7d103635558f8de96436e167f",
+      "export_sha256": "9b1db4f715caa96aa7daa601433f6cbe96a43ed7d103635558f8de96436e167f",
+      "transformations": []
+    },
+    {
+      "path": "src/sync-cache.mjs",
+      "runtime_sha256": "c6e43932ec6ebbccc10f9c3759834d2df9e9ef4f16d4e9e16823d1eb0825fdeb",
+      "export_sha256": "c6e43932ec6ebbccc10f9c3759834d2df9e9ef4f16d4e9e16823d1eb0825fdeb",
+      "transformations": []
+    },
+    {
+      "path": "src/live-coach/standby.mjs",
+      "runtime_sha256": "217b6e677076f3a5dd9aaae1767ffce7c48912a92538d3052c46349566dc75fc",
+      "export_sha256": "217b6e677076f3a5dd9aaae1767ffce7c48912a92538d3052c46349566dc75fc",
+      "transformations": []
+    },
+    {
+      "path": "src/live-coach/runtime.mjs",
+      "runtime_sha256": "f7ca0f9740707c081a9d8f7e6c251adb0fdf54ccb532bc8ebf7b8abb816b8ecd",
+      "export_sha256": "f7ca0f9740707c081a9d8f7e6c251adb0fdf54ccb532bc8ebf7b8abb816b8ecd",
+      "transformations": []
+    },
+    {
+      "path": "bin/mtga-live-coach.mjs",
+      "runtime_sha256": "c9a51cdd0df7ccf6bef6ea060029b17e43ff8b34509775a68a42ec9fecd752b7",
+      "export_sha256": "c9a51cdd0df7ccf6bef6ea060029b17e43ff8b34509775a68a42ec9fecd752b7",
+      "transformations": []
+    },
+    {
+      "path": "tests/server.test.mjs",
+      "runtime_sha256": "c08c15a0ed8bf1882f15b3b31502c843434968dfb89abfddd378db0b22283493",
+      "export_sha256": "c08c15a0ed8bf1882f15b3b31502c843434968dfb89abfddd378db0b22283493",
+      "transformations": []
+    },
+    {
+      "path": "tests/viewer-task.test.mjs",
+      "runtime_sha256": "60108488f00cc8881a7cd001d6da19747a26f456d7b646271ceb9d8444dd234c",
+      "export_sha256": "60108488f00cc8881a7cd001d6da19747a26f456d7b646271ceb9d8444dd234c",
+      "transformations": []
+    },
+    {
+      "path": "tests/live-coach-standby.test.mjs",
+      "runtime_sha256": "e8991f74c7c544008dab0545dde4d8722b83e937f117515515bd0243e6f9a345",
+      "export_sha256": "e8991f74c7c544008dab0545dde4d8722b83e937f117515515bd0243e6f9a345",
+      "transformations": []
+    },
+    {
+      "path": "tests/helpers/standby-cli-mock.mjs",
+      "runtime_sha256": "c4d84003c8f3a7782bb9f0ff133c584a770979abe0242920e4f8bf89fa61887d",
+      "export_sha256": "c4d84003c8f3a7782bb9f0ff133c584a770979abe0242920e4f8bf89fa61887d",
+      "transformations": []
+    },
+    {
+      "path": "tests/helpers/standby-launcher-driver.mjs",
+      "runtime_sha256": "8e89173f8bd93be477f4df1fe3a9c194d399f23faa8b2e9ceaa9ca01501be208",
+      "export_sha256": "8e89173f8bd93be477f4df1fe3a9c194d399f23faa8b2e9ceaa9ca01501be208",
+      "transformations": []
+    },
+    {
+      "path": "viewer/src/App.tsx",
+      "runtime_sha256": "c883560d5a0534dff5a5e800b775231d3a22f612b923eab66e5c69356165f79c",
+      "export_sha256": "c883560d5a0534dff5a5e800b775231d3a22f612b923eab66e5c69356165f79c",
+      "transformations": []
+    },
+    {
+      "path": "viewer/src/components/ReplaySyncButton.tsx",
+      "runtime_sha256": "059b4cd938c4498b922b4b5b1fbd7c0f83c9b9a3465d08cc9e95d9fdc378119c",
+      "export_sha256": "059b4cd938c4498b922b4b5b1fbd7c0f83c9b9a3465d08cc9e95d9fdc378119c",
+      "transformations": []
+    },
+    {
+      "path": "viewer/src/components/CollectionUpdateButton.tsx",
+      "runtime_sha256": "10c7b1bc7b6d7fa8120a7be4a9e52f2edb8699dd2ce558e8ba84aa957478ea46",
+      "export_sha256": "10c7b1bc7b6d7fa8120a7be4a9e52f2edb8699dd2ce558e8ba84aa957478ea46",
+      "transformations": []
+    },
+    {
+      "path": "viewer/src/components/LocalTaskButton.tsx",
+      "runtime_sha256": "1f28b971bd449b7c05cfa73ecc844c9234e9c4c4a309781b95f6208432c353f1",
+      "export_sha256": "1f28b971bd449b7c05cfa73ecc844c9234e9c4c4a309781b95f6208432c353f1",
+      "transformations": []
+    },
+    {
+      "path": "viewer/src/components/RelationshipArrows.tsx",
+      "runtime_sha256": "97cc5289a35a9cf82ade0f2780433389e7ff5055ab8733c79e2fa64a240dfefa",
+      "export_sha256": "97cc5289a35a9cf82ade0f2780433389e7ff5055ab8733c79e2fa64a240dfefa",
+      "transformations": []
+    },
+    {
+      "path": "viewer/src/lib/taskClient.ts",
+      "runtime_sha256": "4131ed9afe370faaa006957c126bafbcc16eda7e797430827a892d8059a9bad6",
+      "export_sha256": "4131ed9afe370faaa006957c126bafbcc16eda7e797430827a892d8059a9bad6",
+      "transformations": []
+    },
+    {
+      "path": "viewer/src/lib/replaySync.ts",
+      "runtime_sha256": "1bc28c230f3385b1dbdbbbd8ab243af477e19dee8499aaa4e9ce9795cf3f1950",
+      "export_sha256": "1bc28c230f3385b1dbdbbbd8ab243af477e19dee8499aaa4e9ce9795cf3f1950",
+      "transformations": []
+    },
+    {
+      "path": "viewer/src/lib/relationships.ts",
+      "runtime_sha256": "af9e7ead6c56115f832be427d56e31d9c666f42f585af44d8cdc16c1826d7794",
+      "export_sha256": "af9e7ead6c56115f832be427d56e31d9c666f42f585af44d8cdc16c1826d7794",
+      "transformations": []
+    },
+    {
+      "path": "viewer/tests/taskClient.test.ts",
+      "runtime_sha256": "415dcbbe52d27dace2096d1d8abdbbebb2fb64478e6e48a5f78b56293e29165c",
+      "export_sha256": "415dcbbe52d27dace2096d1d8abdbbebb2fb64478e6e48a5f78b56293e29165c",
+      "transformations": []
+    },
+    {
+      "path": "viewer/tests/replaySync.test.ts",
+      "runtime_sha256": "33e80c547cc2463e61d327a57694907ed8a2bbfafbf8ffbeed765a013395b0b2",
+      "export_sha256": "33e80c547cc2463e61d327a57694907ed8a2bbfafbf8ffbeed765a013395b0b2",
+      "transformations": []
+    },
+    {
+      "path": "viewer/tests/relationships.test.ts",
+      "runtime_sha256": "1ba158530661173baba4d0e00af387409061bf98fc7af45d113ce894e794bbc2",
+      "export_sha256": "1ba158530661173baba4d0e00af387409061bf98fc7af45d113ce894e794bbc2",
+      "transformations": []
+    },
+    {
+      "path": "tools/replay2-launcher/launcher.mjs",
+      "runtime_sha256": "8e10cbf37f39ac87239be7aa551e7bc9d21dceb4d336e60f0c3101b70668d671",
+      "export_sha256": "8e10cbf37f39ac87239be7aa551e7bc9d21dceb4d336e60f0c3101b70668d671",
+      "transformations": []
+    },
+    {
+      "path": "tools/replay2-launcher/launch.mjs",
+      "runtime_sha256": "e0b6ef5fc2a1fa79bf2e9c2145e65b84cd627ea179629d4731f83d6c42b3cbdf",
+      "export_sha256": "e0b6ef5fc2a1fa79bf2e9c2145e65b84cd627ea179629d4731f83d6c42b3cbdf",
+      "transformations": []
+    },
+    {
+      "path": "tools/replay2-launcher/install.mjs",
+      "runtime_sha256": "76fa566502b11ecb73c7767b85b4a09e8fcdc7c61d7f358e7e7fb17cf01d4117",
+      "export_sha256": "76fa566502b11ecb73c7767b85b4a09e8fcdc7c61d7f358e7e7fb17cf01d4117",
+      "transformations": []
+    },
+    {
+      "path": "src/sync-progress.mjs",
+      "runtime_sha256": "27ed881761100c370a302480298a2fa38f6ecd00c3cea5430c788c8a0046a383",
+      "export_sha256": "27ed881761100c370a302480298a2fa38f6ecd00c3cea5430c788c8a0046a383",
+      "transformations": []
+    },
+    {
+      "path": "src/history.mjs",
+      "runtime_sha256": "33a0f5e7ab4ca983d9a0e962d68760851f8ff64b90016ddbf849bf666f0b1898",
+      "export_sha256": "33a0f5e7ab4ca983d9a0e962d68760851f8ff64b90016ddbf849bf666f0b1898",
+      "transformations": []
+    },
+    {
+      "path": "src/coach-cards.mjs",
+      "runtime_sha256": "accaed17cd886666900d4d4b77616f57a6ea47c85be59431f2637b23fa2dc712",
+      "export_sha256": "accaed17cd886666900d4d4b77616f57a6ea47c85be59431f2637b23fa2dc712",
+      "transformations": []
+    },
+    {
+      "path": "src/replay-workflow.mjs",
+      "runtime_sha256": "9ae6f2eeefaa8b23591ec940b29a5864943e35adfc65d104514839c1b31fb20e",
+      "export_sha256": "9ae6f2eeefaa8b23591ec940b29a5864943e35adfc65d104514839c1b31fb20e",
+      "transformations": []
+    },
+    {
+      "path": "src/coach-sync.mjs",
+      "runtime_sha256": "e70056c4243e44120761e82fe4085b4b3d47e6ef6476691ef2698c69aea3c0b4",
+      "export_sha256": "e70056c4243e44120761e82fe4085b4b3d47e6ef6476691ef2698c69aea3c0b4",
+      "transformations": []
+    },
+    {
+      "path": "src/match-mode.mjs",
+      "runtime_sha256": "b9d57568ffe708b421a06e8fd26dfccf8ba486c4eabc0496fa193323a199b0b1",
+      "export_sha256": "b9d57568ffe708b421a06e8fd26dfccf8ba486c4eabc0496fa193323a199b0b1",
+      "transformations": []
+    },
+    {
+      "path": "src/match-mode.d.mts",
+      "runtime_sha256": "e1ba5f8368858ecb9e139312fc91b2ac6f54daac16d0ff0be27d63151cfdd1eb",
+      "export_sha256": "e1ba5f8368858ecb9e139312fc91b2ac6f54daac16d0ff0be27d63151cfdd1eb",
+      "transformations": []
+    },
+    {
+      "path": "src/replay.mjs",
+      "runtime_sha256": "4bd971b7e4e7f9abc79315ce36a7b0563c6e6ba03c391bb7a0a3aa990767a18d",
+      "export_sha256": "4bd971b7e4e7f9abc79315ce36a7b0563c6e6ba03c391bb7a0a3aa990767a18d",
+      "transformations": []
+    },
+    {
+      "path": "src/coach-catalog-sync.mjs",
+      "runtime_sha256": "8484d7f40c82f79f37af2af84282ef35bcc120e7bd1304dcabdda5950474948a",
+      "export_sha256": "8484d7f40c82f79f37af2af84282ef35bcc120e7bd1304dcabdda5950474948a",
+      "transformations": []
+    },
+    {
+      "path": "src/sync-security.mjs",
+      "runtime_sha256": "b14b34296cf84fd89e34e36499ecadb60b8eadac606768a2df0af842bbf77fc5",
+      "export_sha256": "b14b34296cf84fd89e34e36499ecadb60b8eadac606768a2df0af842bbf77fc5",
+      "transformations": []
+    },
+    {
+      "path": "src/export.mjs",
+      "runtime_sha256": "8b1e7012e76f5b50006c5af0a34082e1d54fbd65e0bc40d7467ae3e2f86ef7db",
+      "export_sha256": "8b1e7012e76f5b50006c5af0a34082e1d54fbd65e0bc40d7467ae3e2f86ef7db",
+      "transformations": []
+    },
+    {
+      "path": "src/live-coach/routes.mjs",
+      "runtime_sha256": "baf0c0b1ad8d2409f30bf89afda4aa74101bfef127577ce8d55be33bd1480f26",
+      "export_sha256": "baf0c0b1ad8d2409f30bf89afda4aa74101bfef127577ce8d55be33bd1480f26",
+      "transformations": []
+    },
+    {
+      "path": "src/live-coach/controller.mjs",
+      "runtime_sha256": "8ae12665b8c6cca2c7be577a9f978249a3d93f92bef8643a1a53a867d31ae955",
+      "export_sha256": "8ae12665b8c6cca2c7be577a9f978249a3d93f92bef8643a1a53a867d31ae955",
+      "transformations": []
+    },
+    {
+      "path": "src/live-coach/sources.mjs",
+      "runtime_sha256": "330b730d0f252ad0beca0617083f63a95f1801b518c03a080181bbac950773e4",
+      "export_sha256": "330b730d0f252ad0beca0617083f63a95f1801b518c03a080181bbac950773e4",
+      "transformations": []
+    },
+    {
+      "path": "viewer/src/components/LiveCoachPanel.tsx",
+      "runtime_sha256": "13e634a0a425e77d5579f9fa90c9f870bc47d71d05083087aa6ae9d25ff6561f",
+      "export_sha256": "13e634a0a425e77d5579f9fa90c9f870bc47d71d05083087aa6ae9d25ff6561f",
+      "transformations": []
+    },
+    {
+      "path": "viewer/src/lib/canonicalAdapter.ts",
+      "runtime_sha256": "29cd0bfcb4155154f0d1709b90337c56b2923e306cc9dff105d5d6822f948a50",
+      "export_sha256": "29cd0bfcb4155154f0d1709b90337c56b2923e306cc9dff105d5d6822f948a50",
+      "transformations": []
+    }
+  ]
+}

@@ -15,3 +15,20 @@ test('land piles preserve availability and repeated permanents preserve differen
   assert.deepEqual(landPiles([a,b,tapped]).map(g=>g.length),[2,1]);
   assert.deepEqual(permanentGroups([a,b,tapped,buffed,attached]).map(g=>g.length),[2,1,1,1]);
 });
+
+test('same-name land printings stack while tap and individual state remain distinct',()=>{
+  const lands=[card(1,{name:'Forest',grpId:10}),card(2,{name:'Forest',grpId:20}),
+    card(3,{name:'Forest',isTapped:true}),card(4,{name:'Forest',counters:{Charge:1}}),
+    card(5,{name:'Forest',attachedTo:99}),card(6,{name:'Forest',attachments:[100]}),
+    card(7,{name:'Forest',controllerSeatId:2})];
+  const before=JSON.stringify(lands), piles=landPiles(lands);
+  assert.deepEqual(piles.map(p=>p.map(c=>c.instanceId)),[[1,2],[3],[4],[5],[6],[7]]);
+  assert.equal(JSON.stringify(lands),before);
+});
+test('anonymous hidden lands stay separate and forty copies retain every instance',()=>{
+  const hidden=[card(1,{grpId:0,name:undefined,visibility:'hidden'}),card(2,{grpId:0,name:undefined,visibility:'hidden'})];
+  assert.equal(landPiles(hidden).length,2);
+  const lands=Array.from({length:40},(_,i)=>card(i+10,{name:'Island',isTapped:i<25}));
+  const piles=landPiles(lands);assert.deepEqual(piles.map(p=>p.length),[25,15]);
+  assert.equal(new Set(piles.flat().map(c=>c.instanceId)).size,40);
+});

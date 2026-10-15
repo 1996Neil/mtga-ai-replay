@@ -5,6 +5,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { StringDecoder } from 'node:string_decoder';
 import { performance } from 'node:perf_hooks';
 import { resolve } from 'node:path';
+import { describeMatchMode } from '../match-mode.mjs';
 import { discoverLogs } from '../discovery.mjs';
 import { createRecordFramer } from '../log-reader.mjs';
 import { PerspectiveState } from '../perspective.mjs';
@@ -42,7 +43,7 @@ export class ReplaySource {
         !/^matches\/[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(entry.path ?? '') ||
         !Number.isFinite(Date.parse(entry.started_at)) || !/^[a-f0-9]{64}$/.test(entry.content_hash ?? '')) throw new Error('Invalid locked replay catalog entry.');
       ids.add(entry.match_id);
-      return { id: entry.match_id, started_at: entry.started_at, event: entry.mode ?? 'Jump In', result: entry.result ?? 'Unknown' };
+      return { id: entry.match_id, started_at: entry.started_at, event: describeMatchMode({ event_id: entry.event_id, event: entry.mode }).event, result: entry.result ?? 'Unknown' };
     });
     return frozen(entries.sort((a, b) => Date.parse(b.started_at) - Date.parse(a.started_at) || b.id.localeCompare(a.id)));
   }

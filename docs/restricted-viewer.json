@@ -2,18 +2,19 @@
   "upstream_repository": "https://github.com/m1kk3l/mtg-replay-viewer",
   "upstream_commit": "472969b805c1e62e17797c7cdac7f69f3670597c",
   "license_status": "No declared license; private local copying was authorized, redistribution permission unverified.",
+  "private_repository_inclusion": "User-authorized for private PR #3 review on 2026-10-14 only; this does not grant or claim upstream redistribution rights.",
   "files": [
     {
       "path": "viewer/src/components/GameBoard.tsx",
-      "sha256": "5cab1d4bc9200172b9439ede1c2c776e3472411e438541d480e37cc9408d1f4e"
+      "sha256": "78ea9527a1b1a1ddaf3a1c392de0404b966dcc5168745e64b9003195d7f0cbea"
     },
     {
       "path": "viewer/src/components/BattlefieldZone.tsx",
-      "sha256": "6765af1c705bd1838216dcd4a38006072f3584e642c0b68dce397536e722aae7"
+      "sha256": "f8bc056f752097f8926b667ab507dcc78c7e6dd80840f63f401e0cc1635d0a67"
     },
     {
       "path": "viewer/src/components/HandZone.tsx",
-      "sha256": "463f3775e0fcd49a79d6fa41e6409413b2893316d7d2de039625edff4d171b70"
+      "sha256": "2a10dd3d54502ea7c11041bbd033799ac8f3f04c8ffdc38cc3841e1605372f39"
     },
     {
       "path": "viewer/src/components/GraveyardZone.tsx",
@@ -21,15 +22,15 @@
     },
     {
       "path": "viewer/src/components/StackZone.tsx",
-      "sha256": "6db342dc142ccee5bf5e9d017f3713d2e85f403f7c9cc74a5e76ea0c371ca1df"
+      "sha256": "b39abea0042a7e94a59c302e7e0ff78ef1811862050f8af191c5afb6d422d70b"
     },
     {
       "path": "viewer/src/components/PlayerInfo.tsx",
-      "sha256": "6917bdf452752741b4269a9da50b1580aba521f624ead8a61e6fa689ab8c4700"
+      "sha256": "8b036502f340e49f1b8ccd79e303e7f44bd06080d668a9a7a0de951a8c2a7199"
     },
     {
       "path": "viewer/src/components/ReplayControls.tsx",
-      "sha256": "fece46f1a03d985549cc2f176d58266867d835a3f249920f6086f37876472c65"
+      "sha256": "d8d422dc769faccd13c7128744381d0d28f4a02ec9560f1ddedb429e6b572bdf"
     },
     {
       "path": "viewer/src/components/TurnSlider.tsx",
@@ -41,15 +42,15 @@
     },
     {
       "path": "viewer/src/components/CardImage.tsx",
-      "sha256": "5123b24e844d30dd3b26d8a9d9ac7d310b51cbf311872463318b770efb4a33ff"
+      "sha256": "2c077bdb723031249ad4bfacf325ddff06aff38b286c503ecc5c2ee3302ed241"
     },
     {
       "path": "viewer/src/components/GameLog.tsx",
-      "sha256": "91aaa4bf360af89e1f164335b371e93873847b47f04d221fd853c77b895e04c3"
+      "sha256": "9209fa3e6dc2381aee7c6602cda55284ffd1635853bc9ad68682915f47a403f3"
     },
     {
       "path": "viewer/src/store/replayStore.ts",
-      "sha256": "95013e15bf6dbc940865af8cf1b0bc9031c06b39aa01e9525b424395b11348f9"
+      "sha256": "bdc3a39f12ac9afd45381ccf3adeb0f3b402d817081cc72dbc4023f829524e04"
     },
     {
       "path": "viewer/src/store/cardCacheStore.ts",
@@ -73,11 +74,11 @@
     },
     {
       "path": "viewer/src/types/game.ts",
-      "sha256": "29650286694847450a9cb4bbfbff13409d4207c7a9da0e0ec8ab2004014da13a"
+      "sha256": "f31647c6de559cc60aafd501e6dc05f6a25b943bdf8337f81ae11ee9c6354612"
     },
     {
       "path": "viewer/src/index.css",
-      "sha256": "5377f9810c08a81355962f614f13eb3014d8d73e5c533855b1cb27054c9dd40a"
+      "sha256": "29521091804fa53b5fe110f82ea8b2d1da28451f40f74977e11f0f4e7d8e8300"
     }
   ]
 }
