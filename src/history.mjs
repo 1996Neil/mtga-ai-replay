@@ -200,6 +200,27 @@ export async function getReplay(matchId, { dataDir = defaultDataDir() } = {}) {
   } finally { database.close(); }
 }
 
+/** Read only the requested registered decks, not large replay snapshots. */
+export async function listReplayDecks(matchIds, { dataDir = defaultDataDir(), cache = new Map() } = {}) {
+  const database = await openDatabase(dataDir), decks = new Map();
+  if (!database) return decks;
+  try {
+    const query = database.prepare("SELECT json_extract(replay_json, '$.deck') AS deck FROM replays WHERE match_id=?");
+    const revision = database.prepare('SELECT updated_at FROM replays WHERE match_id=?');
+    for (const id of new Set(matchIds)) {
+      const key = dbPath(dataDir) + '\0' + id, updatedAt = revision.get(id)?.updated_at;
+      if (!updatedAt) { cache.delete(key); continue; }
+      const prior = cache.get(key);
+      if (prior?.updatedAt === updatedAt) { decks.set(id, prior.deck); continue; }
+      const raw = query.get(id)?.deck;
+      if (typeof raw === 'string') { const deck = JSON.parse(raw); if (Array.isArray(deck)) {
+        decks.set(id, deck); cache.set(key, { updatedAt, deck });
+      } }
+    }
+    return decks;
+  } finally { database.close(); }
+}
+
 export async function getLatestReplay(options = {}) {
   const [latest] = await listReplays({ ...options, limit: 1 });
   return latest ? getReplay(latest.id, options) : null;

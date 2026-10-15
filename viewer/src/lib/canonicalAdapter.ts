@@ -1,5 +1,5 @@
 import { describeMatchMode } from '../../../src/match-mode.mjs';
-import type { CardInstance, CanonicalEvent, CoachNote, GameState, HistoryMatch, ParsedMatch, PlayerState, ReplayStep, Zone } from '../types/game.ts';
+import type { CardInstance, CanonicalEvent, CoachNote, DraftRun, GameState, HistoryMatch, ParsedMatch, PlayerState, ReplayStep, Zone } from '../types/game.ts';
 
 type Json = Record<string, any>;
 const arr = (value: unknown): Json[] => Array.isArray(value) ? value.filter(v => v && typeof v === 'object') : [];
@@ -214,4 +214,41 @@ export function coachContext(match: ParsedMatch, step: ReplayStep, before: boole
       activePlayer: s.turnInfo.activePlayer === 1 ? 'me' : s.turnInfo.activePlayer === 2 ? 'opponent' : null,
       priorityPlayer: s.turnInfo.priorityPlayer === 1 ? 'me' : s.turnInfo.priorityPlayer === 2 ? 'opponent' : null,
       players: { me: player(1), opponent: player(2) }, stack: s.stackObjects.map(card) }, warnings: step.warnings };
+}
+
+
+export function normalizeDraftRuns(raw: unknown): DraftRun[] {
+  const data = Array.isArray(raw) ? raw : [];
+  return arr(data).filter(item => typeof item.run_id === 'string' && typeof item.event === 'string').map(item => ({
+    run_id: String(item.run_id), event_id: String(item.event_id ?? ''), event: String(item.event),
+    current_module: typeof item.current_module === 'string' ? item.current_module : null,
+    started_at: typeof item.started_at === 'string' ? item.started_at : null,
+    status: ['in_progress', 'completed'].includes(item.status) ? item.status : 'incomplete',
+    score_verified: item.score_verified === true,
+    replay_wins: Number.isSafeInteger(item.replay_wins) && item.replay_wins >= 0 ? item.replay_wins : 0,
+    replay_losses: Number.isSafeInteger(item.replay_losses) && item.replay_losses >= 0 ? item.replay_losses : 0,
+    course_wins: Number.isSafeInteger(item.course_wins) ? item.course_wins : null,
+    course_losses: Number.isSafeInteger(item.course_losses) ? item.course_losses : null,
+    colors: (Array.isArray(item.colors) ? item.colors : []).map(color => String(color)).filter(color => ['W','U','B','R','G'].includes(color)),
+    colors_complete: item.colors_complete === true,
+    card_pool: arr(item.card_pool).map(card => ({
+      arena_id: Number.isSafeInteger(card.arena_id) ? card.arena_id : 0,
+      name: typeof card.name === 'string' ? card.name : '未知牌',
+    })).filter(card => card.arena_id > 0),
+    matches: arr(item.matches).filter(match => typeof match.id === 'string').map(match => ({
+      id: String(match.id), started_at: String(match.started_at ?? ''),
+      result: typeof match.result === 'string' ? match.result : null,
+      game_count: Number.isSafeInteger(match.game_count) && match.game_count > 0 ? match.game_count : null,
+    })),
+    picks: arr(item.picks).map(pick => ({
+      pack_number: Number.isSafeInteger(pick.pack_number) ? pick.pack_number : 0,
+      pick_number: Number.isSafeInteger(pick.pick_number) ? pick.pick_number : 0,
+      picked_at: typeof pick.picked_at === 'string' ? pick.picked_at : null,
+      candidates: arr(pick.candidates).map(card => ({ arena_id: Number.isSafeInteger(card.arena_id) ? card.arena_id : 0, name: typeof card.name === 'string' ? card.name : '未知牌' })).filter(card => card.arena_id > 0),
+      selected: pick.selected && Number.isSafeInteger(pick.selected.arena_id) ? { arena_id: pick.selected.arena_id, name: String(pick.selected.name ?? '未知牌') } : null,
+      pool_before: arr(pick.pool_before).map(card => ({ arena_id: Number.isSafeInteger(card.arena_id) ? card.arena_id : 0, name: typeof card.name === 'string' ? card.name : '未知牌' })).filter(card => card.arena_id > 0),
+      pool_after: arr(pick.pool_after).map(card => ({ arena_id: Number.isSafeInteger(card.arena_id) ? card.arena_id : 0, name: typeof card.name === 'string' ? card.name : '未知牌' })).filter(card => card.arena_id > 0),
+      complete: pick.complete === true, missing: (Array.isArray(pick.missing) ? pick.missing : []).map(String),
+    })),
+  }));
 }
