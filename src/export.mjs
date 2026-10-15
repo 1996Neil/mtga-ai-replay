@@ -213,7 +213,7 @@ export function toMarkdown(replay) {
   const safe = safeReplay(replay);
   const match = safe.match ?? {};
   const lines = [
-    '# MTGA Jump In Replay', '',
+    '# MTGA Replay', '',
     '> Coach each decision using only information available to Me at that moment. Later draws, reveals, plays, and the result are hindsight, not evidence available for earlier decisions. Hidden opponent cards and post-game reveals are omitted. Observed actions do not establish every legal alternative.', '',
     '## Match', '',
     `Event: ${markdown(match.event || match.event_id) || 'Unknown'}${match.event_id && match.event_id !== match.event ? ` (${markdown(match.event_id)})` : ''}. Jump In: ${match.is_jump_in === true ? 'Yes' : match.is_jump_in === false ? 'No' : 'Unknown'}.`,

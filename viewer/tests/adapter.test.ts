@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeCard, normalizeReplay, normalizeState, coachContext } from '../src/lib/canonicalAdapter.ts';
+import { normalizeCard, normalizeReplay, normalizeState, normalizeHistory, coachContext } from '../src/lib/canonicalAdapter.ts';
 import { useReplayStore } from '../src/store/replayStore.ts';
 
 function fixture() {
@@ -90,4 +90,10 @@ test('requested Before without a before snapshot is honestly exported as After',
   const context = coachContext(match, first, true);
   assert.equal(context.state_boundary, 'after_gre_message');
   assert.equal(context.event.card.name, 'Soaring Stoneglider');
+});
+
+test('history mode labels never default to Jump In and use event identifiers before stale labels', () => {
+  const entries = normalizeHistory([{ id: 'ranked', event_id: 'Ladder', event: 'Jump In' }, { id: 'unknown' },
+    { id: 'jump', event_id: 'Jump_In_2024' }, { id: 'standard', event_id: 'Traditional_Standard_Ladder' }]);
+  assert.deepEqual(entries.map(e => e.event), ['排位（赛制未知）', '未知模式', 'Jump In', '传统标准排位']);
 });

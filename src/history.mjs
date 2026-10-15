@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdir, stat, chmod } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -23,7 +24,9 @@ async function openDatabase(dataDir, write = false) {
       CREATE TABLE IF NOT EXISTS coach_notes (match_id TEXT PRIMARY KEY, notes_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS cards (arena_id INTEGER PRIMARY KEY, name TEXT NOT NULL, metadata_json TEXT NOT NULL);
     `);
-    await chmod(dbPath(dataDir), 0o600);
+    // Reapplying identical permissions still changes ctime on macOS. Two
+    // observers sharing this archive would keep invalidating each other.
+    if (((await stat(dbPath(dataDir))).mode & 0o7777) !== 0o600) await chmod(dbPath(dataDir), 0o600);
   }
   return database;
 }
@@ -110,9 +113,11 @@ export async function archiveReplays(replays, { dataDir = defaultDataDir() } = {
     for (const input of replays) {
       if (!input?.match?.id || typeof input.match.id !== 'string' || !input.match.started_at) throw new Error('Replay needs a stable match.id and started_at.');
       const replay = safeArchive(input), now = new Date().toISOString();
+      const replayJson = JSON.stringify(replay);
       const previous = previousReplay.get(replay.match.id);
+      if (previous?.replay_json === replayJson) { preserved++; continue; }
       if (previous && !canReplace(replay, JSON.parse(previous.replay_json))) { preserved++; continue; }
-      upsert.run(replay.match.id, replay.match.started_at, JSON.stringify(summary(replay)), JSON.stringify(replay), now, now);
+      upsert.run(replay.match.id, replay.match.started_at, JSON.stringify({ ...summary(replay), replay_revision: createHash('sha256').update(replayJson).digest('hex') }), replayJson, now, now);
       for (const [id, card] of collectCards(replay)) cardUpsert.run(id, card.name, JSON.stringify(card));
       archived++;
     }
@@ -124,15 +129,22 @@ export async function archiveReplays(replays, { dataDir = defaultDataDir() } = {
   } finally { database.close(); }
 }
 
+function historyEntry(row) {
+  // Notes are stored separately to survive reimport. Their bytes also change
+  // the Viewer revision, so automatic refresh cannot leave visible notes stale.
+  const replay_revision = createHash('sha256').update(row.summary_json).update('\0').update(row.notes_json ?? '[]').digest('hex');
+  return { ...JSON.parse(row.summary_json), updated_at: row.updated_at, replay_revision };
+}
+
 export async function listReplays({ dataDir = defaultDataDir(), limit = 100 } = {}) {
   const database = await openDatabase(dataDir);
   if (!database) return [];
   try {
     // Explicit null enumerates the whole canonical catalog for batch sync.
     // Viewer and ordinary callers retain their existing bounded list behavior.
-    if (limit === null) return database.prepare('SELECT summary_json FROM replays ORDER BY started_at DESC, match_id DESC').all().map(row => JSON.parse(row.summary_json));
+    if (limit === null) return database.prepare('SELECT r.summary_json, r.updated_at, n.notes_json FROM replays r LEFT JOIN coach_notes n ON n.match_id = r.match_id ORDER BY r.started_at DESC, r.match_id DESC').all().map(historyEntry);
     const count = Math.max(1, Math.min(1000, Number.isInteger(limit) ? limit : 100));
-    return database.prepare('SELECT summary_json FROM replays ORDER BY started_at DESC, match_id DESC LIMIT ?').all(count).map(row => JSON.parse(row.summary_json));
+    return database.prepare('SELECT r.summary_json, r.updated_at, n.notes_json FROM replays r LEFT JOIN coach_notes n ON n.match_id = r.match_id ORDER BY r.started_at DESC, r.match_id DESC LIMIT ?').all(count).map(historyEntry);
   } finally { database.close(); }
 }
 

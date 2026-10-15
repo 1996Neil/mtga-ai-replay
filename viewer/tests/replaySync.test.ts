@@ -8,12 +8,12 @@ function result(overrides: Partial<SyncResult> = {}): SyncResult {
     published: 0, failed: 0, skipped: 0, github_matches: 10, latest: null, error: null, failures: [], ...overrides };
 }
 test('no new games displays 已是最新 using structured API results', async () => {
-  const responses: SyncJob[] = [{ id: 'job', status: 'running', progress: { phase: 'scanning' } }, { id: 'job', status: 'succeeded', result: result() }];
+  const responses: SyncJob[] = [{ id: null, status: 'idle' }, { id: 'job', status: 'running', progress: { phase: 'scanning' } }, { id: 'job', status: 'succeeded', result: result() }];
   const calls: RequestInit[] = [], observed: string[] = [];
   const request = (async (_url, options) => { calls.push(options!); return new Response(JSON.stringify(responses.shift())); }) as typeof fetch;
   const job = await createReplaySyncClient(request, async () => {}).run(value => observed.push(syncButtonLabel(value)));
   assert.deepEqual(observed, ['正在扫描…', '已是最新']); assert.equal(job.result?.missing, 0);
-  assert.equal(calls[0].method, 'POST'); assert.deepEqual(calls[0].headers, { 'X-MTGA-Replay-Action': 'sync' }); assert.equal(calls[0].body, undefined);
+  assert.equal(calls[0].method, undefined); assert.equal(calls[1].method, 'POST'); assert.deepEqual(calls[1].headers, { 'X-MTGA-Replay-Action': 'sync' }); assert.equal(calls[1].body, undefined);
 });
 test('rapid calls share one task and report both new games', async () => {
   let posts = 0, release!: () => void;
@@ -24,8 +24,9 @@ test('rapid calls share one task and report both new games', async () => {
   }) as typeof fetch;
   const client = createReplaySyncClient(request, async () => {});
   const first = client.run(() => {}), second = client.run(() => {});
-  assert.equal(first, second); assert.equal(posts, 1); release();
+  assert.equal(first, second); release();
   assert.equal(syncButtonLabel(await first), '已同步 2 场');
+  assert.equal(posts, 1);
 });
 test('partial failure remains explicit while retaining successful games and short error', async () => {
   const terminal: SyncJob = { id: 'job', status: 'partial', error: '部分回放未完成同步，请查看详情。',
@@ -42,4 +43,12 @@ test('old backend failure is actionable; aborted polling stops without another r
   const request = (async () => { requests++; return new Response(JSON.stringify({ id: 'job', status: 'running' })); }) as typeof fetch;
   await assert.rejects(createReplaySyncClient(request).run(() => controller.abort(), controller.signal), { name: 'AbortError' });
   assert.equal(requests, 1);
+});
+
+test('preparation, safety and actual upload remain distinct; existing updates have an explicit count', () => {
+ for (const [phase,label] of [['publishing','正在准备发布…'],['security','正在检查安全…'],['remote','正在核对远端…'],['cards','正在补齐卡牌…'],['uploading','正在上传…']]) {
+  assert.equal(syncButtonLabel({id:'job',status:'running',progress:{phase,completed:1,total:1}}),label);
+ }
+ assert.equal(syncButtonLabel({id:'job',status:'running',progress:{phase:'generating',completed:1,total:1}}),'正在准备 1/1…');
+ assert.equal(syncButtonLabel({id:'job',status:'succeeded',result:result({updated:1})}),'已更新 1 场');
 });

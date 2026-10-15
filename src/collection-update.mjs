@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { validateBundleFiles } from './sync-security.mjs';
 import { defaultDataDir } from './history.mjs';
+import { withCollectionLock,recoverCollectionLocks } from './collection-lock.mjs';
 import { readCollectionProbe,collectionReadMessage } from './collection-reader.mjs';
 import { buildCollectionSnapshot,saveCollectionSnapshot,loadCollectionSnapshot } from './collection.mjs';
 import { syncCollectionSnapshot,getCollectionSyncStatus } from './collection-sync.mjs';
@@ -36,11 +37,7 @@ async function readState(options) {
     return value;
   }catch(e){if(e.code==='ENOENT')return {schema:'MTGA_COLLECTION_UPDATE_STATE_V1',last_check:null};throw new OperationError('COLLECTION_LOCAL_INVALID','收藏本地状态无效；未更新。');}
 }
-async function operation(options,callback) {
-  await directory(root(options));const path=join(root(options),'operation.lock');let h;
-  try{h=await open(path,'wx',0o600);}catch(e){if(e.code==='EEXIST')throw new OperationError('COLLECTION_BUSY','收藏操作被锁住；若前一命令已中断，请确认没有运行命令后执行 mtga-gpt-collection status --recover-lock。');throw e;}
-  try{await h.writeFile(String(process.pid));return await callback();}finally{await h.close();await rm(path,{force:true});}
-}
+async function operation(options,callback) { return withCollectionLock(root(options),'operation.lock',callback); }
 export function collectionErrorMessage(error) {
   if(error?.name==='CollectionReadError')return collectionReadMessage(error.code);
   // Only locally constructed errors use these fixed codes; native/Git stderr is never exposed.
@@ -49,20 +46,32 @@ export function collectionErrorMessage(error) {
     COLLECTION_LARGE_CHANGE:'收藏异常大幅增加，可能切换了账号；请核对后再处理。上次成功快照保留。',
     SYNC_BUSY:'另一个数据同步或锁恢复正在运行，请等它结束后重试。',
     SYNC_LOCK_STALE:'共享同步锁来自已结束的进程；确认没有运行命令后执行 mtga-gpt-collection status --recover-sync-lock。',
+    COLLECTION_ACCOUNT_CONFIRM_REQUIRED:'当前读取器无法可靠识别账户；请确认 Arena 中是预期账户，再明确确认更新。上次快照未改变。',
     COLLECTION_NO_SNAPSHOT:'没有已验证的收藏快照，请先运行 update。'};
   return messages[error?.code] ?? '收藏操作未完成；已保存的成功快照保留。';
 }
 export async function updateCollection(options={}) {
   return operation(options,async()=>{
+    if(options.confirmAccount!==true)throw new OperationError('COLLECTION_ACCOUNT_CONFIRM_REQUIRED','Account confirmation required');
     let snapshot;
     try {
       const probe=await (options.readProbe??readCollectionProbe)(options.readerOptions);
       snapshot=await buildCollectionSnapshot(probe,options);
       await saveCollectionSnapshot(snapshot,options);
-      await writeState(options,{schema:'MTGA_COLLECTION_UPDATE_STATE_V1',last_check:{ok:true,at:snapshot.summary.verified_at,content_hash:snapshot.summary.content_hash}});
     }catch(e){
-      await writeState(options,{schema:'MTGA_COLLECTION_UPDATE_STATE_V1',last_check:{ok:false,at:new Date().toISOString(),code:/^[A-Z_]{1,64}$/.test(e?.code??'')?e.code:'COLLECTION_FAILED',message:collectionErrorMessage(e)}});throw e;
+      if(snapshot){
+        try{const current=await loadCollectionSnapshot(options);
+          if(current&&current.summary.content_hash===snapshot.summary.content_hash&&current.summary.verified_at===snapshot.summary.verified_at)
+            return {local_updated:true,synced:false,summary:current.summary,inventory:current.inventory,diagnostic_error:'COLLECTION_CLEANUP_FAILED',sync_error:'本地收藏已保存，但锁清理未完成；请核对并恢复操作锁。'};
+        }catch{}
+      }
+      try { await writeState(options,{schema:'MTGA_COLLECTION_UPDATE_STATE_V1',last_check:{ok:false,at:new Date().toISOString(),code:/^[A-Z_]{1,64}$/.test(e?.code??'')?e.code:'COLLECTION_FAILED',message:collectionErrorMessage(e)}}); } catch {}
+      throw e;
     }
+    // current.json is committed: a later diagnostics failure must not report
+    // that the previous snapshot was retained, nor hide the successful save.
+    try { await writeState(options,{schema:'MTGA_COLLECTION_UPDATE_STATE_V1',last_check:{ok:true,at:snapshot.summary.verified_at,content_hash:snapshot.summary.content_hash}}); }
+    catch { const message='本地收藏已保存，但状态记录未完成；请检查本地状态后重试上传。';return {local_updated:true,synced:false,summary:snapshot.summary,inventory:snapshot.inventory,diagnostic_error:'COLLECTION_DIAGNOSTIC_FAILED',sync_error:message}; }
     if(options.noSync)return {local_updated:true,synced:false,no_sync:true,summary:snapshot.summary,inventory:snapshot.inventory};
     try {const sync=await syncCollectionSnapshot(snapshot,options);return {local_updated:true,synced:true,summary:snapshot.summary,inventory:snapshot.inventory,sync};}
     catch(e){return {local_updated:true,synced:false,summary:snapshot.summary,inventory:snapshot.inventory,sync_error:collectionErrorMessage(e)};}
@@ -88,13 +97,7 @@ async function localLockStatus(options,name) {
 }
 export const collectionOperationLockStatus=(options={})=>localLockStatus(options,'operation.lock');
 // Explicit repair only: automatic stale unlink can race another lock acquirer.
-export async function recoverCollectionOperationLock(options={}) {
-  const locks=['operation.lock','save.lock'];
-  const statuses=await Promise.all(locks.map(name=>localLockStatus(options,name)));
-  if(statuses.some(status=>status.alive))throw new OperationError('COLLECTION_BUSY','收藏操作仍在运行，不能移除锁。');
-  for(let i=0;i<locks.length;i++)if(statuses[i].exists)await rm(join(root(options),locks[i]));
-  return statuses.some(status=>status.exists);
-}
+export async function recoverCollectionOperationLock(options={}) { return recoverCollectionLocks(root(options)); }
 export async function collectionStatus(options={}) {
   const snapshot=await loadCollectionSnapshot(options),state=await readState(options),sync=await getCollectionSyncStatus(options);
   return {installed_version:'0.3.1',local_validated:Boolean(snapshot),summary:snapshot?.summary??null,inventory:snapshot?.inventory??null,last_check:state.last_check,

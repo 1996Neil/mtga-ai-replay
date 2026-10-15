@@ -1,3 +1,4 @@
+import { describeMatchMode } from '../../../src/match-mode.mjs';
 import type { CardInstance, CanonicalEvent, CoachNote, GameState, HistoryMatch, ParsedMatch, PlayerState, ReplayStep, Zone } from '../types/game.ts';
 
 type Json = Record<string, any>;
@@ -165,7 +166,7 @@ export function normalizeReplay(raw: Json): ParsedMatch[] {
     return { matchId: String(meta.id ?? raw.id ?? ''), gameNumber,
       players: [{ systemSeatId: 1, playerName: String(meta.player ?? 'Me') }, { systemSeatId: 2, playerName: String(meta.opponent ?? 'Opponent') }],
       localSeatId: 1, steps, grpIds: new Set(cards.map(c => c.grpId).filter(Boolean)),
-      startedAt: String(meta.started_at ?? ''), eventName: String(meta.event ?? meta.event_id ?? 'Jump In'),
+      startedAt: String(meta.started_at ?? ''), eventName: describeMatchMode(meta).event,
       outcome: game.result?.outcome ?? meta.result,
       warnings: [...(raw.warnings ?? []), ...(game.warnings ?? [])].map(String),
     };
@@ -177,7 +178,7 @@ export function normalizeHistory(raw: unknown): HistoryMatch[] {
   return arr(data).map(item => {
     const m = item.match ?? item;
     return { id: String(m.id ?? m.match_id), startedAt: String(m.started_at ?? m.startedAt ?? ''),
-      event: String(m.event ?? m.event_id ?? 'Jump In'), result: String(m.result ?? 'Unknown'), gameCount: item.game_count };
+      event: describeMatchMode(m).event, result: String(m.result ?? 'Unknown'), gameCount: item.game_count, revision: String(item.replay_revision ?? item.updated_at ?? JSON.stringify(item)) };
   });
 }
 

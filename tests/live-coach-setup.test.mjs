@@ -10,7 +10,7 @@ import { BudgetLedger } from '../src/live-coach/providers/budget.mjs';
 import { createModelProvider, DEEPSEEK_CEILINGS } from '../src/live-coach/providers/index.mjs';
 import { PlanModelProvider } from '../src/live-coach/providers/model.mjs';
 import { CoachController } from '../src/live-coach/controller.mjs';
-import { startReplayServer } from '../src/server.mjs';
+import { startLegacyCoachServer as startReplayServer } from '../src/legacy-coach-server.mjs';
 
 const deferred = () => { let resolve; const promise = new Promise(res => { resolve = res; }); return { promise, resolve }; };
 async function fixture(t, { offline = true } = {}) {

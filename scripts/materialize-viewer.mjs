@@ -62,5 +62,5 @@ export async function materializeViewer({ sourceDir, destinationRoot = root, ent
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const { values } = parseArgs({ options: { 'source-dir': { type: 'string' }, help: { type: 'boolean' } } });
   if (values.help) console.log('Usage: npm run viewer:materialize -- --source-dir /path/to/your/authorized/mtga-gpt-replay\nCopies only hash-pinned, ignored Viewer files from an explicit existing local source. No network or credentials.');
-  else { const count = await materializeViewer({ sourceDir: values['source-dir'] }); console.log(`Verified/restored ${count} ignored local Viewer files. They must never enter a commit without redistribution permission.`); }
+  else { const count = await materializeViewer({ sourceDir: values['source-dir'] }); console.log(`Verified/restored ${count} hash-pinned Viewer files from the explicit local source. Private PR inclusion remains limited to the user authorization and does not establish public redistribution rights.`); }
 }

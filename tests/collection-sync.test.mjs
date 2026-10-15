@@ -44,7 +44,7 @@ async function harness(t, { seed = true } = {}) {
   await execute('git', ['init', '--bare', '-b', 'main', bare], { env });
   const control = { offline: false, rejectPush: false, visibility: 'PRIVATE', calls: [], checks: 0,
     publicAtCheck: Infinity, afterAdd: null, afterPush: null, fetchGate: null };
-  const runCommand = async (file, args, { cwd, encoding = 'utf8', env: commandEnv = {} } = {}) => {
+  const runCommand = async (file, args, { cwd, encoding = 'utf8', env: commandEnv = {}, input } = {}) => {
     control.calls.push({ file, args: [...args] });
     if (file === 'gh') {
       assert.deepEqual(args.slice(0, 3), ['repo', 'view', REPOSITORY]); control.checks++;
@@ -54,7 +54,7 @@ async function harness(t, { seed = true } = {}) {
         url: `https://github.com/${REPOSITORY}`, defaultBranchRef });
     }
     assert.equal(file, 'git');
-    const network = args.find(value => value === 'fetch' || value === 'push');
+    const network = args.find(value => value === 'fetch' || value === 'push' || value === 'ls-remote');
     if (network && (control.offline || (control.rejectPush && network === 'push'))) throw new Error('fatal ghp_SyntheticSecretMustNotEscape /Users/synthetic/private.log https://token@example.invalid');
     if (network) {
       const remote = await execute('git', ['remote', 'get-url', '--all', ...(network === 'push' ? ['--push'] : []), 'origin'], { cwd, env });
@@ -62,7 +62,10 @@ async function harness(t, { seed = true } = {}) {
     }
     if (network === 'fetch' && control.fetchGate) await control.fetchGate();
     const routed = network ? ['-c', `url.${bare}.insteadOf=${REMOTE}`, ...args] : args;
-    const result = await execute(file, routed, { cwd, encoding, env: { ...process.env, ...env, ...commandEnv }, maxBuffer: 32 * 1024 * 1024 });
+    const pending = execute(file, routed, { cwd, encoding, env: { ...process.env, ...env, ...commandEnv }, maxBuffer: 32 * 1024 * 1024 });
+    // The injected runner must preserve stdin for Git's batch object reader.
+    pending.child.stdin.end(input);
+    const result = await pending;
     if (args.includes('add') && control.afterAdd) await control.afterAdd();
     if (network === 'push' && control.afterPush) await control.afterPush();
     return result;
@@ -119,7 +122,7 @@ test('offline fetch and rejected push retain local publication status and retry 
   assert.equal(status.pending, 1); assert.equal(status.last_synced, null);
   assert.doesNotMatch(JSON.stringify(status), /SyntheticSecret|\/Users\/|token@example/);
   h.control.offline = false; h.control.rejectPush = true;
-  await assert.rejects(syncCollectionSnapshot(value, h.options), error => error.code === 'GIT_FAILED');
+  await assert.rejects(syncCollectionSnapshot(value, h.options), error => error.code === 'SYNC_PUSH_FAILED');
   assert.equal(await h.commits(), firstCommits);
   const localCommit = (await execute('git', ['rev-parse', 'HEAD'], { cwd: h.checkout, env })).stdout.trim();
   h.control.rejectPush = false;
@@ -177,12 +180,12 @@ test('foreign changes injected during staging cannot be included in the collecti
 test('failed pushes cannot be retried by the other namespace in either direction', async t => {
   const h = await harness(t), value = await snapshot();
   await enqueueCoachBundle(await replay(true), h.options); h.control.rejectPush = true;
-  await assert.rejects(syncCoachBundles(h.options), error => error.code === 'GIT_FAILED');
+  await assert.rejects(syncCoachBundles(h.options), error => error.code === 'SYNC_PUSH_FAILED');
   h.control.rejectPush = false;
   await assert.rejects(syncCollectionSnapshot(value, h.options), error => error.code === 'SYNC_FOREIGN_COMMIT');
   assert.equal((await getCoachSyncStatus({ ...h.options, verify: false })).pending, 1);
   await syncCoachBundles(h.options); h.control.rejectPush = true;
-  await assert.rejects(syncCollectionSnapshot(value, h.options), error => error.code === 'GIT_FAILED');
+  await assert.rejects(syncCollectionSnapshot(value, h.options), error => error.code === 'SYNC_PUSH_FAILED');
   h.control.rejectPush = false;
   await enqueueCoachBundle(await replay(), h.options);
   await assert.rejects(syncCoachBundles(h.options), error => error.code === 'SYNC_FOREIGN_COMMIT');
