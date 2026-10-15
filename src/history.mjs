@@ -89,19 +89,58 @@ function compareParts(a, b) {
   return 0;
 }
 
+// Automatic imports may append evidence, never reinterpret an observed fact.
+// Complex fragment reconciliation belongs in a separately reviewed operation.
+function extendsKnown(candidate, previous) {
+  if (previous === null || previous === undefined || previous === 'unknown') return true;
+  if (Array.isArray(previous)) return Array.isArray(candidate) && candidate.length === previous.length &&
+    previous.every((value, index) => extendsKnown(candidate[index], value));
+  if (previous && typeof previous === 'object') return candidate && typeof candidate === 'object' && !Array.isArray(candidate) &&
+    Object.entries(previous).every(([key, value]) => extendsKnown(candidate[key], value));
+  return candidate === previous;
+}
+function extendsTimeline(candidate = [], previous = [], key) {
+  if (!Array.isArray(candidate) || candidate.length < previous.length) return false;
+  const keys = candidate.map(value => value?.[key]);
+  const defined = keys.filter(value => value !== undefined);
+  if (new Set(defined).size !== defined.length) return false;
+  return previous.every((value, index) => keys[index] === value[key] && extendsKnown(candidate[index], value));
+}
+function gameExtends(candidate, previous) {
+  const { states: oldStates, steps: oldSteps, replay_steps: oldReplaySteps, turns: oldTurns, result: oldResult, ...oldFacts } = previous;
+  if (!extendsKnown(candidate, oldFacts) || !extendsKnown(candidate.states, oldStates) || !extendsKnown(candidate.result, oldResult)) return false;
+  if (!extendsTimeline(candidate.steps, oldSteps, 'anchor') || !extendsTimeline(candidate.replay_steps, oldReplaySteps, 'anchor')) return false;
+  if (!Array.isArray(candidate.turns ?? []) || (candidate.turns ?? []).length < (oldTurns ?? []).length) return false;
+  const numbers = (candidate.turns ?? []).map(turn => turn.turn_number);
+  if (new Set(numbers).size !== numbers.length) return false;
+  return (oldTurns ?? []).every((turn, index) => {
+    const next = candidate.turns[index], { events, ...facts } = turn;
+    return extendsKnown(next, facts) && extendsTimeline(next?.events, events, 'sequence');
+  });
+}
 function canReplace(candidate, existing) {
-  // Rotated logs can retain the result and final GRE packets while losing the
-  // opening and earlier turns. Reimport must never shrink an archived replay.
   if (compareParts(schemaParts(candidate), schemaParts(existing)) < 0) return false;
-  const previousCoverage = replayCoverage(existing);
-  return replayCoverage(candidate).every((count, index) => count >= previousCoverage[index]);
+  const { games: oldGames = [], schema_version, ...oldFacts } = existing;
+  if (!extendsKnown(candidate, oldFacts)) return false;
+  const games = candidate.games ?? [], byNumber = new Map(games.map(game => [game.game_number, game]));
+  if (byNumber.size !== games.length || games.some(game => !Number.isSafeInteger(game.game_number) || game.game_number < 1)) return false;
+  let richer = games.length > oldGames.length;
+  for (const previous of oldGames) {
+    const next = byNumber.get(previous.game_number);
+    if (!next || !gameExtends(next, previous)) return false;
+    const before = replayCoverage({ games: [previous] }), after = replayCoverage({ games: [next] });
+    if (after.some((count, index) => count < before[index])) return false;
+    richer ||= after.some((count, index) => count > before[index]) ||
+      (!previous.result?.outcome && Boolean(next.result?.outcome));
+  }
+  return richer;
 }
 
 /** Persist safe replay snapshots by stable match ID, independent of any analytics tables. */
 export async function archiveReplays(replays, { dataDir = defaultDataDir() } = {}) {
   const database = await openDatabase(dataDir, true);
   let archived = 0;
-  let preserved = 0;
+  let preserved = 0, conflicts = 0;
   try {
     const upsert = database.prepare(`INSERT INTO replays VALUES (?, ?, ?, ?, ?, ?)
       ON CONFLICT(match_id) DO UPDATE SET started_at=excluded.started_at,
@@ -116,13 +155,13 @@ export async function archiveReplays(replays, { dataDir = defaultDataDir() } = {
       const replayJson = JSON.stringify(replay);
       const previous = previousReplay.get(replay.match.id);
       if (previous?.replay_json === replayJson) { preserved++; continue; }
-      if (previous && !canReplace(replay, JSON.parse(previous.replay_json))) { preserved++; continue; }
+      if (previous && !canReplace(replay, JSON.parse(previous.replay_json))) { preserved++; conflicts++; continue; }
       upsert.run(replay.match.id, replay.match.started_at, JSON.stringify({ ...summary(replay), replay_revision: createHash('sha256').update(replayJson).digest('hex') }), replayJson, now, now);
       for (const [id, card] of collectCards(replay)) cardUpsert.run(id, card.name, JSON.stringify(card));
       archived++;
     }
     database.exec('COMMIT');
-    return { archived, preserved, total: database.prepare('SELECT COUNT(*) AS total FROM replays').get().total, dbPath: dbPath(dataDir) };
+    return { archived, preserved, conflicts, total: database.prepare('SELECT COUNT(*) AS total FROM replays').get().total, dbPath: dbPath(dataDir) };
   } catch (error) {
     try { database.exec('ROLLBACK'); } catch { /* No transaction was started. */ }
     throw error;

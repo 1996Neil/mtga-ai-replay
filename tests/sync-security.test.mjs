@@ -301,3 +301,19 @@ test('historical commit messages and extra metadata are scanned even when every 
     });
   }
 });
+
+test('bounded positive memo preserves key types, escaped duplicates, overflow and complete raw-text checks', () => {
+  const safe = Array.from({ length: 2100 }, (_, i) => [`safe${i}`, `value${i}`]);
+  const overflow = Object.fromEntries(safe);
+  const cases = [
+    '{"token":true,"token":"hidden credential","token":false}',
+    '{"token":false,"t\\u006fken":"hidden credential","token":true}',
+    JSON.stringify({ safe: ['Repeated safe title','Repeated safe title','Bearer abcdefghijklmnop'] }),
+    JSON.stringify({ ...overflow, authorization: 'bad' }),
+    JSON.stringify({ ...overflow, value: 'x'.repeat(300)+' ghp_SyntheticForbiddenValue' }),
+    '{"safe":"value","Authorization":"value"}',
+    '{"safe":"'+'x'.repeat(300)+'/Users/synthetic/private"}',
+  ];
+  for (const raw of cases) assert.throws(() => validateBundleFiles(files(raw)), error => error.code === 'MTGA_SYNC_SECURITY');
+  assert.equal(validateBundleFiles(files({ token: false, rows: Array(3000).fill({ name: 'Bearer of the Heavens', token: true }) })).ok, true);
+});

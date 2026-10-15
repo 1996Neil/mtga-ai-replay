@@ -18,7 +18,7 @@ const defaultViewer = fileURLToPath(new URL('../viewer/dist/', import.meta.url))
 const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.ico': 'image/x-icon', '.woff2': 'font/woff2' };
 
-export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir = defaultViewer, port = 0, cardNames = new Map(), cardMetadata = new Map(), displayNamesZh, fetchFn = fetch, writeInfo = true, syncWorkflow, collectionUpdate, collectionSync, notifyTask = notifyViewerTask, requestExtension, closeExtension, extraCapabilities = [], replayProvider, enableReplaySync = !replayProvider, enableCollection = enableReplaySync && !replayProvider, includeLocalHistory = enableReplaySync || !replayProvider, observeLocalLogs = includeLocalHistory, localHistoryOptions = {}, reviewReader } = {}) {
+export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir = defaultViewer, port = 0, cardNames = new Map(), cardMetadata = new Map(), displayNamesZh, fetchFn = fetch, writeInfo = true, syncWorkflow, collectionUpdate, collectionSync, notifyTask = notifyViewerTask, requestExtension, closeExtension, extraCapabilities = [], replayProvider, enableReplaySync = !replayProvider, enableCollection = enableReplaySync && !replayProvider, includeLocalHistory = enableReplaySync || !replayProvider, observeLocalLogs = includeLocalHistory, localHistoryOptions = {}, reviewReader, sourceIdentity = null } = {}) {
   const root = await realpath(resolve(viewerDir)).catch(() => resolve(viewerDir));
   const chineseNames = displayNamesZh ?? await loadInstalledChineseDisplayNames();
   let assignedPort, closePromise, closing = false;
@@ -111,6 +111,7 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
         return send(response, 202, sync.start());
       }
       if (request.method !== 'GET' && request.method !== 'HEAD') return send(response, 405, { error: 'Unsupported replay action.' });
+      if (path === '/api/source') return send(response, 200, sourceIdentity);
       if (path === '/api/local-history') return send(response, 200, request.method === 'HEAD' ? '' : localHistory?.snapshot() ?? { status: 'disabled' });
       if (path === '/api/collection') return send(response, 200, request.method === 'HEAD' ? '' : collection.snapshot());
       if (path === '/api/sync') return send(response, 200, request.method === 'HEAD' ? '' : sync.snapshot());
@@ -124,6 +125,10 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
         return send(response, value.code ?? 200, request.method === 'HEAD' ? '' : value);
       }
       if (path === '/api/matches/latest') {
+        if (sourceIdentity?.kind === 'published-history' && replayProvider?.bytes) {
+          const bytes = await replayProvider.bytes(sourceIdentity.match_id);
+          return send(response, bytes ? 200 : 404, bytes ?? { error: 'No historical match.' });
+        }
         const entries = await replayCatalog();
         const replay = replayProvider && !includeLocalHistory ? await replayProvider.latest() : entries.length ? await replayById(entries[0].id) : null;
         return send(response, replay ? 200 : 404, replay ?? { error: 'No archived matches.' });
@@ -145,6 +150,10 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
       }
       const matchRoute = path.match(/^\/api\/matches\/([^/]+)$/);
       if (matchRoute) {
+        if (sourceIdentity?.kind === 'published-history' && replayProvider?.bytes) {
+          const bytes = await replayProvider.bytes(matchRoute[1]);
+          return send(response, bytes ? 200 : 404, bytes ?? { error: 'Unknown historical match.' });
+        }
         const replay = await replayById(matchRoute[1]);
         return send(response, replay ? 200 : 404, replay ?? { error: 'Unknown match.' });
       }
@@ -152,6 +161,20 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
       if (cardRoute) {
         const id = Number(cardRoute[1]);
         if (!Number.isSafeInteger(id) || id <= 0) return send(response, 400, { error: 'Invalid card ID.' });
+        if (sourceIdentity?.kind === 'published-history') {
+          const metadata = cardMetadata.get(id);
+          if (!metadata) return send(response, 404, { error: 'Card is not in the published source.' });
+          // Historical rules/name fields come only from the verified dictionary.
+          // Images are optional local presentation assets, never rules evidence.
+          const imageCached = await cardImageIsCached(id, { dataDir });
+          if (cardRoute[2]) {
+            const image = imageCached ? await getCardImage(id, { dataDir, fetchFn: async () => { throw Error('Historical network disabled'); } }) : null;
+            return image ? send(response, 200, image.data, image.contentType) : send(response, 404, { error: 'Historical card image unavailable.' });
+          }
+          return send(response, 200, { ...metadata, display_name_zh: chineseNames.get(id) ?? null,
+            metadata_source: 'published-history', source_revision: sourceIdentity.revision,
+            image_url: imageCached ? `/api/cards/${id}/image` : null, image_available: imageCached, image_cached: imageCached });
+        }
         const options = { dataDir, fetchFn, local: await localCard(id) };
         if (cardRoute[2]) {
           const image = await getCardImage(id, options);

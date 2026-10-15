@@ -108,15 +108,18 @@ function scanText(text, path) {
   if (LOCAL_PATH.test(text)) reject(path, 'local-machine-path');
   if (text.includes('@') && EMAIL.test(text)) reject(path, 'email-address');
 }
-function scanJsonKey(key, isStringValue, path) {
+function scanJsonKey(key, isStringValue, path, memo) {
+  const identity = `${isStringValue ? 'string' : 'other'}:${key}`;
+  if (memo?.keys.has(identity)) return;
   const normalized = normalizedKey(key);
   if (CREDENTIAL_KEYS.has(normalized) || (normalized === 'token' && isStringValue)) reject(path, 'credential-key');
   if (INTERNAL_KEYS.has(normalized)) reject(path, 'internal-account-or-machine-identifier');
   if (RAW_KEYS.has(normalized)) reject(path, 'raw-client-record');
   if (IMAGE_KEYS.has(normalized)) reject(path, 'image-or-binary-data');
   scanText(key, path);
+  if (memo && key.length <= 256 && memo.keys.size < 2048) memo.keys.add(identity);
 }
-function scanRawJsonKeys(text, path) {
+function scanRawJsonKeys(text, path, memo) {
   // JSON.parse discards earlier duplicate members. Inspect every syntactic key
   // in the original bytes so such members cannot hide forbidden metadata.
   // Walk complete string tokens to avoid mistaking quoted Oracle text for keys.
@@ -130,21 +133,25 @@ function scanRawJsonKeys(text, path) {
     if (text[next] !== ':') continue;
     next++;
     while (/\s/.test(text[next] ?? '') && next < text.length) next++;
-    scanJsonKey(JSON.parse(text.slice(start, end + 1)), text[next] === '"', path);
+    scanJsonKey(JSON.parse(text.slice(start, end + 1)), text[next] === '"', path, memo);
   }
 }
-function scanJson(value, path) {
+function scanJson(value, path, memo) {
   const pending = [value];
   while (pending.length) {
     const current = pending.pop();
     if (typeof current === 'string') {
       if (/^\/(?!\/)[^\s]/.test(current)) reject(path, 'local-machine-path');
-      scanText(current, path); continue;
+      if (!memo?.strings.has(current)) {
+        scanText(current, path);
+        if (memo && current.length <= 256 && memo.strings.size < 2048) memo.strings.add(current);
+      }
+      continue;
     }
     if (!current || typeof current !== 'object') continue;
     if (Array.isArray(current)) { for (const item of current) pending.push(item); continue; }
     for (const [key, item] of Object.entries(current)) {
-      scanJsonKey(key, typeof item === 'string', path); pending.push(item);
+      scanJsonKey(key, typeof item === 'string', path, memo); pending.push(item);
     }
   }
 }
@@ -159,7 +166,7 @@ function scanSerializedJsonText(text, path) {
   const decoded = text.replace(/\\u([0-9a-f]{4})/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16))).replace(/\\\//g, '/');
   if (/"\/(?!\/)[^"\r\n]+/.test(decoded)) reject(path, 'local-machine-path');
   scanText(decoded, path);
-  scanText(text, path);
+  if (decoded !== text) scanText(text, path); // Identical bytes have the same verdict.
 }
 
 /** Additional continuous-value check for an already parsed/reconstructed coach.
@@ -224,8 +231,12 @@ export function validateBundleFiles(filesMap) {
     if (path.endsWith('.json')) {
       let value;
       try { value = JSON.parse(text); } catch { reject(path, 'invalid-json'); }
-      scanRawJsonKeys(text, path);
-      scanJson(value, path);
+      // Positive string/key results are pure within this one file. Keep bounded
+      // local sets; raw syntax, duplicate members, complete text and every object
+      // still undergo their original checks. No verdict survives this call.
+      const memo = { keys: new Set(), strings: new Set() };
+      scanRawJsonKeys(text, path, memo);
+      scanJson(value, path, memo);
       // Also inspect discarded duplicate values: JSON.parse keeps only the final
       // property, while the earlier text would still be committed to Git.
       scanSerializedJsonText(text, path);
@@ -412,7 +423,7 @@ export async function validateStagedRepository(repoDir, { runGit, historyApprova
   if (session?.busy) reject('', 'concurrent-validation-session');
   if (session) session.busy = true;
   const startedAt=performance.now(),metrics={hash_ms:0,semantic_ms:0,object_reads:{},object_bytes:{},git_calls:0,git_commands:{}};
-  let batch;
+  let batch; const semanticJobs = [];
   try {
   const approval = validateSyncHistoryApproval(historyApproval, { repository, branch });
   if (session) {
@@ -468,6 +479,24 @@ export async function validateStagedRepository(repoDir, { runGit, historyApprova
     pending.get(hash).push({ path, approved, identity });
   }
   let checked = 0, reused = 0;
+  // Own compact bytes: a subarray otherwise clones the entire 16 MiB Git batch
+  // for each worker message. Batch only distinct paths; older versions of the
+  // same path must each be checked, never overwritten in a Map.
+  let semanticFiles = new Map(), semanticIdentities = [], semanticBytes = 0;
+  let semanticFailure;
+  const flushSemantic = async () => {
+    if (!semanticFiles.size) return;
+    const files = semanticFiles, identities = semanticIdentities, started = performance.now();
+    semanticFiles = new Map(); semanticIdentities = []; semanticBytes = 0;
+    // At most two compact batches in flight, matching the existing CPU pool.
+    // Resolve errors into a retained failure so no background rejection escapes.
+    semanticJobs.push(computePool.run('validateFiles', { files }).then(() => {
+      metrics.semantic_ms += performance.now() - started;
+      for (const identity of identities) { if (!session?.failed) session?.verified.add(identity); checked++; }
+    }, error => { semanticFailure ??= error; }));
+    if (semanticJobs.length >= 2) await semanticJobs.shift();
+    if (semanticFailure) throw semanticFailure;
+  };
   await inspectObjects(git, [...pending.keys()], 'blob', async (hash, content) => {
     for (const { path, approved, identity } of pending.get(hash)) {
     if (session?.verified.has(identity)) { reused++; continue; }
@@ -475,16 +504,22 @@ export async function validateStagedRepository(repoDir, { runGit, historyApprova
     if (approved) {
       if (content.length !== approved.bytes || createHash('sha256').update(content).digest('hex') !== approved.sha256) reject(path, 'changed-approved-document');
       scanText(textContent(content, path), path);
-    } else if(computePool)await computePool.run('validate',{path,content});
-    else validateBundleFiles(new Map([[path, content]]));
+    } else if (computePool) {
+      if (semanticFiles.has(path) || semanticBytes + content.length > 2 * 1024 * 1024) await flushSemantic();
+      semanticFiles.set(path, Buffer.from(content)); semanticIdentities.push(identity); semanticBytes += content.length;
+      continue;
+    } else validateBundleFiles(new Map([[path, content]]));
     metrics.semantic_ms+=performance.now()-semanticStarted;
     session?.verified.add(identity); checked++;
   }
   }, metrics);
+  await flushSemantic();
+  await Promise.all(semanticJobs);
+  if (semanticFailure) throw semanticFailure;
   onValidation?.({ objects: pending.size, checked, reused, commits: commits.size, trees: trees.size, ...metrics, duration_ms:performance.now()-startedAt, rss_bytes:process.memoryUsage().rss });
   return { ok: true, fileCount: index.length };
   } catch (error) {
     if (session) { session.verified.clear(); session.failed = true; }
     throw error;
-  } finally { try { await batch?.close(); } catch {if(session){session.verified.clear();session.failed=true;}reject('', 'git-inspection-failed');} finally { if (session) session.busy = false; } }
+  } finally { await Promise.all(semanticJobs); try { await batch?.close(); } catch {if(session){session.verified.clear();session.failed=true;}reject('', 'git-inspection-failed');} finally { if (session) session.busy = false; } }
 }

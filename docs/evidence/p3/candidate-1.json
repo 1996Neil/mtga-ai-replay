@@ -1,0 +1,88 @@
+{
+  "events": [
+    {
+      "stage": "private-repository",
+      "duration_ms": 1552.517208,
+      "elapsed_ms": 1554.88775
+    },
+    {
+      "stage": "git-fetch",
+      "duration_ms": 3230.6295420000006,
+      "elapsed_ms": 4911.814375
+    },
+    {
+      "stage": "history-detail",
+      "objects": 4185,
+      "checked": 4185,
+      "reused": 0,
+      "commits": 220,
+      "trees": 1043,
+      "hash_ms": 1596.234207000075,
+      "semantic_ms": 114440.85150399992,
+      "object_reads": {
+        "commit": 220,
+        "tree": 1043,
+        "blob": 4185
+      },
+      "object_bytes": {
+        "commit": 70185,
+        "tree": 1954224,
+        "blob": 2276033769
+      },
+      "git_calls": 152,
+      "git_commands": {
+        "diff": 1,
+        "ls-files": 1,
+        "rev-list": 1,
+        "cat-file --batch-check": 6,
+        "cat-file --batch": 143
+      },
+      "duration_ms": 123001.49137500001,
+      "rss_bytes": 382730240,
+      "elapsed_ms": 127914.283666
+    },
+    {
+      "stage": "history-safety",
+      "duration_ms": 123024.163166,
+      "elapsed_ms": 127936.16733299999
+    },
+    {
+      "stage": "published-files",
+      "duration_ms": 452.6920829999872,
+      "files": 80,
+      "bytes": 51607839,
+      "elapsed_ms": 128388.9905
+    },
+    {
+      "stage": "complete",
+      "revision": "25ad56789878cd5f341fd47e1f049011b8dfa176",
+      "notes": 10,
+      "elapsed_ms": 128397.710041
+    }
+  ],
+  "duration_ms": 128400.043708,
+  "peak_rss_mib": 728.28125,
+  "event_loop_max_ms": 51.052543,
+  "cpu": {
+    "user": 95770397,
+    "system": 3191282
+  },
+  "resource": {
+    "userCPUTime": 95814362,
+    "systemCPUTime": 3203828,
+    "maxRSS": 745760,
+    "sharedMemorySize": 0,
+    "unsharedDataSize": 0,
+    "unsharedStackSize": 0,
+    "minorPageFault": 351744,
+    "majorPageFault": 91,
+    "swappedOut": 0,
+    "fsRead": 0,
+    "fsWrite": 0,
+    "ipcSent": 312,
+    "ipcReceived": 61458,
+    "signalsCount": 0,
+    "voluntaryContextSwitches": 3,
+    "involuntaryContextSwitches": 303225
+  }
+}
