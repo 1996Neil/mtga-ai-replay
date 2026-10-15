@@ -1,6 +1,8 @@
 import { mkdir, lstat, open, rm, chmod } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { createHash } from 'node:crypto';
+import { createGitBatch } from '../git-batch.mjs';
 import { defaultDataDir } from '../history.mjs';
 import { coachSyncRunner, readCoachSyncState, verifyPrivateSyncRepository, verifySyncRemote } from '../coach-sync.mjs';
 import { validateStagedRepository, validateSyncHistoryApproval } from '../sync-security.mjs';
@@ -45,9 +47,13 @@ export async function fetchCloudReview(matchId, gameNumber, options = {}) {
   const state = await readCoachSyncState(dataDir);
   if (!state.enabled) reviewReject('sync-not-configured');
   const run = coachSyncRunner(options);
+  const stage = async (name, task) => {
+    const started = performance.now();
+    try { return await task(); } finally { options.onTiming?.({ stage: name, duration_ms: performance.now() - started }); }
+  };
   const root = join(dataDir, 'review-sync'), repo = join(root, 'repository');
   await directory(dataDir); await directory(root); await directory(repo);
-  let lock;
+  let lock, sourceBatch;
   try { lock = await open(join(root, 'fetch.lock'), 'wx', 0o600); }
   catch { reviewReject('sync-busy-or-retained-lock'); }
   try {
@@ -55,7 +61,7 @@ export async function fetchCloudReview(matchId, gameNumber, options = {}) {
     // Resolve and persist the target inside the same fetch lease, before any
     // untrusted report parse can fail. A slow old fetch cannot rewind a newer
     // branch receipt after releasing its lease.
-    const meta = await verifyPrivateSyncRepository(state.repository, run), branch = meta.defaultBranchRef?.name;
+    const meta = await stage('private-repository', () => verifyPrivateSyncRepository(state.repository, run)), branch = meta.defaultBranchRef?.name;
     if (!branch || !/^[A-Za-z0-9][A-Za-z0-9_.\/-]{0,127}$/.test(branch) || branch.includes('..')) reviewReject('empty-or-invalid-remote');
     await options.onVerifiedTarget?.({ repository: meta.nameWithOwner, branch });
     const git = (args, settings = {}) => run('git', ['-c', 'credential.helper=', '-c', 'credential.helper=!gh auth git-credential',
@@ -66,20 +72,36 @@ export async function fetchCloudReview(matchId, gameNumber, options = {}) {
       await git(['init', '-b', 'review-reader']); await git(['remote', 'add', 'origin', `https://github.com/${meta.nameWithOwner}.git`]); }
     await verifySyncRemote(git, meta.nameWithOwner);
     if (String(await git(['status', '--porcelain', '--untracked-files=all', '--ignored=matching'])).trim()) reviewReject('sync-dirty');
-    await git(['fetch', '--prune', '--no-tags', 'origin']);
-    await validateStagedRepository(repo, { repository: meta.nameWithOwner, branch, computePool: options.computePool,
-      historyApproval: validateSyncHistoryApproval(state.history_approval, { repository: meta.nameWithOwner, branch }) });
-    const revision = String(await git(['rev-parse', `refs/remotes/origin/${branch}`])).trim();
+    await stage('git-fetch', () => git(['fetch', '--prune', '--no-tags', 'origin']));
+    await stage('history-safety', () => validateStagedRepository(repo, { repository: meta.nameWithOwner, branch, computePool: options.computePool,
+      onValidation: options.onValidation,
+      historyApproval: validateSyncHistoryApproval(state.history_approval, { repository: meta.nameWithOwner, branch }) }));
+    const partsStarted = performance.now();
+    const head = String(await git(['rev-parse', `refs/remotes/origin/${branch}`])).trim();
+    const revision = options.revision ?? head;
+    if (options.revision !== undefined) {
+      if (!/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(revision)) reviewReject('source-revision');
+      // Explicit historical view: only ancestors of the fully checked default
+      // branch. Never fetch arbitrary objects or accept an orphan/tag as proof.
+      await git(['merge-base', '--is-ancestor', revision, head]);
+    }
     if (!/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(revision)) reviewReject('sync-revision');
     await options.onVerifiedRevision?.({ repository: meta.nameWithOwner, branch, matchId, gameNumber, revision });
     const entries = String(await git(['ls-tree', '-rz', revision])).split('\0').filter(Boolean);
     const paths = new Map(entries.map(row => { const [meta, path] = row.split('\t'); return [path, meta]; }));
+    sourceBatch = createGitBatch({ cwd: repo, env: { GIT_DIR: join(repo, '.git'), GIT_WORK_TREE: repo, GIT_INDEX_FILE: join(repo, '.git/index') } });
     const read = async (path, max = 2 * 1024 * 1024) => {
       const meta = paths.get(path); if (!meta?.startsWith('100644 blob ') && !meta?.startsWith('100755 blob ')) reviewReject('source-file-mode');
       const oid = meta.split(' ')[2];
-      const bytes = Number(String(await git(['cat-file', '-s', oid])));
+      const input = Buffer.from(oid + '\n');
+      const check = (await sourceBatch.run(['cat-file', '--batch-check'], { input })).toString('ascii').match(/^([a-f0-9]+) blob ([0-9]+)\n$/);
+      const bytes = check?.[1] === oid ? Number(check[2]) : NaN;
       if (!Number.isSafeInteger(bytes) || bytes > max) reviewReject('source-size-limit');
-      return await git(['cat-file', 'blob', oid], { encoding: 'buffer' });
+      const raw = await sourceBatch.run(['cat-file', '--batch'], { input }), header = Buffer.from(`${oid} blob ${bytes}\n`);
+      if (raw.length !== header.length + bytes + 1 || !raw.subarray(0, header.length).equals(header) || raw.at(-1) !== 10) reviewReject('source-git-object');
+      const content = raw.subarray(header.length, header.length + bytes);
+      if (createHash(oid.length === 40 ? 'sha1' : 'sha256').update(`blob ${bytes}\0`).update(content).digest('hex') !== oid) reviewReject('source-git-object');
+      return Buffer.from(content);
     };
     const files = new Map([['index.json', await read('index.json')]]);
     let index; try { index = JSON.parse(files.get('index.json')); } catch { reviewReject('source-index'); }
@@ -96,13 +118,16 @@ export async function fetchCloudReview(matchId, gameNumber, options = {}) {
       files.set(path, await read(path));
     }
     const report = paths.has(path) ? parseCloudReview(await read(path, MAX_REVIEW_BYTES), { path }) : null;
+    options.onTiming?.({ stage: 'published-files', duration_ms: performance.now() - partsStarted, files: files.size + Number(Boolean(report)), bytes: [...files.values()].reduce((sum, bytes) => sum + bytes.length, 0) });
     const sourceInput = { files, matchId, revision };
     return options.deferSourceVerification ? { repository: meta.nameWithOwner, branch, sourceInput, report }
       : { repository: meta.nameWithOwner, branch, source: readPublishedReviewSource(sourceInput), report };
   } finally {
+    try { await sourceBatch?.close(); } finally {
     const original = await lock.stat(), current = await lstat(join(root, 'fetch.lock')).catch(() => null);
     if (current?.ino === original.ino && current?.dev === original.dev && !current.isSymbolicLink()) await rm(join(root, 'fetch.lock'));
     await lock.close();
+    }
   }
 }
 
@@ -112,6 +137,13 @@ export function createCloudReviewReader({ loadReplay, dataDir = defaultDataDir()
   const tasks = new Map(); let closing = false;
   let ownedPool;
   const compute = () => options.computePool ?? (ownedPool ??= createComputePool({ size: 2 }));
+  // Heavy stages own short-lived heaps. Await teardown before constructing the
+  // next stage; keep the small read/fingerprint pool separate from bulk scans.
+  async function phaseCompute(callback) {
+    if (options.computePool) return callback(options.computePool);
+    const pool = createComputePool({ size: 2 });
+    try { return await callback(pool); } finally { await pool.close(); }
+  }
   const keyOf = (id, game) => `${id}:${game}`;
   async function read(id, gameNumber) {
     reviewPath(id, gameNumber);
@@ -184,8 +216,8 @@ export function createCloudReviewReader({ loadReplay, dataDir = defaultDataDir()
           });
           verifiedRevision = value.revision;
         };
-        const { source, sourceInput, report, repository, branch } = await fetchReview(id, gameNumber,
-          { ...options, computePool: compute(), deferSourceVerification: true, dataDir, onVerifiedTarget, onVerifiedRevision });
+        let { source, sourceInput, report, repository, branch } = await phaseCompute(pool => fetchReview(id, gameNumber,
+          { ...options, computePool: pool, deferSourceVerification: true, dataDir, onVerifiedTarget, onVerifiedRevision }));
         if (closing) return;
         const settings = await readCoachSyncState(dataDir);
         if (repository !== settings.repository || !/^[A-Za-z0-9][A-Za-z0-9_.\/-]{0,127}$/.test(branch ?? '')) reviewReject('sync-target');
@@ -210,17 +242,30 @@ export function createCloudReviewReader({ loadReplay, dataDir = defaultDataDir()
             db.exec('COMMIT'); return true;
           } catch (error) { db.exec('ROLLBACK'); throw error; }
         });
-        if (!report) {
-          if (sourceInput) await compute().run('cloudReviewSync', { sourceInput, report: null });
+        let metadata;
+        if (sourceInput) {
+          const pending = phaseCompute(pool => pool.run('cloudReviewSource', { sourceInput, report }));
+          sourceInput = undefined;
+          const checked = await pending;
+          if (closing) return;
+          if (!report) { task.status = await publish('missing') ? 'missing' : 'stale'; return; }
+          if (checked.status !== 'ready') { await publish('stale'); task.status = 'stale'; return; }
+          metadata = checked.metadata;
+        } else if (!report) {
           task.status = await publish('missing') ? 'missing' : 'stale'; return;
         }
         // Injected fetchers are trusted dependencies, but still need an opaque
         // source verdict. Production fetch returns raw bytes for worker checks.
-        if (!sourceInput && validateCloudReviewBinding(report, source).status !== 'ready') { await publish('stale'); task.status = 'stale'; return; }
-        const replay = await loadReplay(id), game = findReviewGame(replay, gameNumber);
-        if (!game) reviewReject('local-game');
-        const verified = await compute().run('cloudReviewSync', { sourceInput,
-          sourceMetadata: sourceInput ? undefined : { cards: source.cards, history_key: source.history_key, content_hash: source.content_hash }, report, replay });
+        if (!metadata) {
+          if (validateCloudReviewBinding(report, source).status !== 'ready') { await publish('stale'); task.status = 'stale'; return; }
+          metadata = { cards: source.cards, history_key: source.history_key, content_hash: source.content_hash };
+        }
+        source = undefined;
+        let replay = await loadReplay(id);
+        if (!findReviewGame(replay, gameNumber)) reviewReject('local-game');
+        const pending = phaseCompute(pool => pool.run('cloudReviewLocal', { sourceMetadata: metadata, report, replay }));
+        replay = undefined;
+        const verified = await pending;
         if (verified.status !== 'ready') { await publish('stale'); task.status = 'stale'; return; }
         const fingerprint = verified.fingerprint;
         const current = await loadReplay(id), currentGame = findReviewGame(current, gameNumber);

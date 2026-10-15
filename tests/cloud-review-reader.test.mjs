@@ -115,7 +115,7 @@ test('same-branch late worker cannot overwrite a newer observed report revision'
     return { ...scope, source: value, report: { ...reportForSource(value), summary: { ...report.summary, headline } } };
   };
   const slow = createCloudReviewReader({ dataDir, loadReplay: async () => replay, fetchReview: fetcher(source, '较早报告'), computePool: {
-    run: async (operation, input) => { if (operation === 'cloudReviewSync') { enter(); await blocked; } return pool.run(operation, input); }
+    run: async (operation, input) => { if (operation === 'cloudReviewLocal') { enter(); await blocked; } return pool.run(operation, input); }
   } });
   const fast = createCloudReviewReader({ dataDir, loadReplay: async () => replay, fetchReview: fetcher(second, '最新报告') });
   t.after(() => Promise.all([slow.close(), fast.close()]));

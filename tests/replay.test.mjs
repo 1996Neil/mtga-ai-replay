@@ -290,3 +290,11 @@ test('authoritative zone membership hides a returned opponent card even without 
   assert.equal(state.card(202, names), null);
   assert.equal(state.safeMessage({ gameStateMessage: {} }).gameStateMessage.gameObjects[0].grpId, 0);
 });
+
+test('event sequence belongs to its match and is independent of preceding log batches', async () => {
+  const records = id => [start(id), initial(), turnOne(), ...finish(id)];
+  const alone = (await buildReplays(records('stable-target'), names)).replays.find(r => r.match.id === 'stable-target');
+  const batch = (await buildReplays([...records('other-match'), ...records('stable-target')], names)).replays.find(r => r.match.id === 'stable-target');
+  assert.ok(events(alone).length > 0);
+  assert.deepEqual(batch, alone);
+});

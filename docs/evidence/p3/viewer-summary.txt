@@ -1,0 +1,12 @@
+✔ a newly attached observer never inherits an aborted observer’s pending Promise (0.370833ms)
+✔ an authoritative 409 is shown once without mutation retries (0.209542ms)
+✔ two reopened observers see interrupted task and neither repeats POST (14.048041ms)
+✔ explicit reconciliation invokes only the protected read-only reconcile route, never the upload route (0.297791ms)
+ℹ tests 98
+ℹ suites 0
+ℹ pass 98
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1523.027375

@@ -1,0 +1,12 @@
+✓ 59 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/layout-lab.html                 0.44 kB │ gzip:  0.32 kB
+dist/index.html                      0.51 kB │ gzip:  0.30 kB
+dist/assets/main-DbovAA3P.css        4.91 kB │ gzip:  1.61 kB
+dist/assets/board-DOa04ZD2.css      34.54 kB │ gzip:  8.79 kB
+dist/assets/layoutLab-DMeDmbrn.js    5.37 kB │ gzip:  2.34 kB
+dist/assets/main-fW0Ec9UR.js        53.17 kB │ gzip: 18.68 kB
+dist/assets/board-iXjhi5cA.js      218.93 kB │ gzip: 69.47 kB
+
+✓ built in 163ms
