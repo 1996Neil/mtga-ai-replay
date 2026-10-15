@@ -1,0 +1,9 @@
+ℹ Heldout evidence only: {"window_count":4,"generated_candidates":0,"supported_candidates":0,"explanation_candidates":0,"tactic_candidates":0,"silent_windows":4}; no model/real API/audio/strategy scoring.
+ℹ tests 425
+ℹ suites 0
+ℹ pass 417
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 8
+ℹ todo 0
+ℹ duration_ms 344663.964667
