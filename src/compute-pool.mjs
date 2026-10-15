@@ -48,7 +48,7 @@ export function createComputePool({ size = 2, maxQueue = 32 } = {}) {
   return {
     run(operation, input) {
       if (closed) return Promise.reject(Error('CPU pool closed'));
-      if (!['bundle','validate','bundleFiles','validateFiles','cloudReviewSync','cloudReviewRead','cloudReviewFingerprint'].includes(operation)) return Promise.reject(Error('Unsupported CPU operation'));
+      if (!['bundle','validate','bundleFiles','validateFiles','cloudReviewSync','cloudReviewSource','cloudReviewLocal','cloudReviewRead','cloudReviewFingerprint'].includes(operation)) return Promise.reject(Error('Unsupported CPU operation'));
       if (waiting.length >= maxQueue) return Promise.reject(Error('CPU queue full'));
       return new Promise((resolve,reject) => { waiting.push({id:++sequence,operation,input,resolve,reject}); dispatch(); });
     },
