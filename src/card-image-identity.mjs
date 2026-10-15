@@ -1,0 +1,59 @@
+import { discoverCardDatabase } from './cards.mjs';
+
+const links = value => String(value ?? '').split(/[,;|\s]+/).filter(Boolean).map(Number);
+const collector = row => `${row.CollectorNumber}${row.CollectorSuffix ?? ''}`;
+/** IDs are linked by Arena's catalog, never by similar names or shared artwork alone. */
+export function resolveCatalogIdentity(row, linked) {
+  if (!row || row.IsToken || row.IsRebalanced) return null;
+  const reciprocal = linked && links(row.LinkedFaceGrpIds).length === 1 && links(linked.LinkedFaceGrpIds).length === 1
+    && links(linked.LinkedFaceGrpIds)[0] === row.GrpId && linked.ExpansionCode === row.ExpansionCode;
+  // Arena labels the two faces of e.g. NEO 141 as 141a/141b; the printing is 141.
+  const primary = row.IsPrimaryCard ? row : linked, secondary = row.IsPrimaryCard ? linked : row;
+  const faceSuffixPair = reciprocal && primary?.IsPrimaryCard && !secondary?.IsPrimaryCard
+    && String(primary.CollectorNumber) === String(secondary.CollectorNumber)
+    && primary.CollectorSuffix === 'a' && secondary.CollectorSuffix === 'b';
+  const base = { requestedId: row.GrpId, primaryId: row.GrpId, faceIndex: 0,
+    set: String(row.ExpansionCode).toLowerCase(), collector: faceSuffixPair ? String(row.CollectorNumber) : collector(row) };
+  if (row.IsPrimaryCard) return base;
+  if (links(row.LinkedFaceGrpIds).length !== 1 || !linked?.IsPrimaryCard || linked.IsToken || linked.IsRebalanced
+    || !links(linked.LinkedFaceGrpIds).includes(row.GrpId)
+    || links(linked.LinkedFaceGrpIds).length !== 1 || linked.ExpansionCode !== row.ExpansionCode
+    || (!faceSuffixPair && collector(linked) !== collector(row))) return null;
+  return { ...base, primaryId: linked.GrpId, faceIndex: 1 };
+}
+
+export function createCardIdentityResolver({ discover = discoverCardDatabase } = {}) {
+  let path;
+  const cache = new Map();
+  return async id => {
+    if (cache.has(id)) return cache.get(id);
+    let db;
+    try {
+      path ??= await discover();
+      if (!path) return null;
+      const { DatabaseSync } = await import('node:sqlite');
+      db = new DatabaseSync(path, { readOnly: true });
+      const query = db.prepare('SELECT GrpId, ExpansionCode, CollectorNumber, CollectorSuffix, IsPrimaryCard, IsToken, IsRebalanced, LinkedFaceGrpIds FROM Cards WHERE GrpId = ?');
+      const row = query.get(id);
+      const linked = row && links(row.LinkedFaceGrpIds).length === 1 ? query.get(links(row.LinkedFaceGrpIds)[0]) : null;
+      const value = resolveCatalogIdentity(row, linked);
+      cache.set(id, value);
+      return value;
+    } catch { return null; } finally { db?.close(); }
+  };
+}
+
+const separateFaces = new Set(['transform', 'modal_dfc', 'double_faced_token', 'reversible_card']);
+const sharedFaces = new Set(['prepare', 'adventure', 'split', 'aftermath', 'flip']);
+export function selectPrintedFace(card, identity) {
+  if (!identity) return null;
+  if (card.lang !== 'en' || card.arena_id !== identity.primaryId || card.set?.toLowerCase() !== identity.set
+    || card.collector_number !== identity.collector || !card.id || !card.name) return null;
+  const face = identity.faceIndex ? card.card_faces?.[identity.faceIndex] : card.card_faces?.[0] ?? card;
+  if (!face || (identity.faceIndex && !separateFaces.has(card.layout) && !sharedFaces.has(card.layout))) return null;
+  const side = separateFaces.has(card.layout) && identity.faceIndex ? 'back' : 'front';
+  const image = separateFaces.has(card.layout) ? card.card_faces?.[identity.faceIndex]?.image_uris?.normal
+    : card.image_uris?.normal ?? card.card_faces?.[0]?.image_uris?.normal;
+  return { face, image, identity: { ...identity, side, lang: 'en', printingId: card.id,
+    oracleId: card.oracle_id, name: card.name, faceName: identity.faceIndex ? face.name : card.card_faces?.[0]?.name ?? card.name, layout: card.layout } };
+}

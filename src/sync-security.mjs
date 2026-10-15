@@ -451,6 +451,9 @@ export async function validateStagedRepository(repoDir, { runGit, historyApprova
   await inspectObjects(git, revisions, 'commit', (hash, content) => {
     commits.set(hash, validateCommitMetadata(content, approvedCommits.has(hash)));
   }, metrics);
+  // A shallow/grafted walk must never certify only a suffix of history.
+  for (const commit of commits.values()) for (const parent of commit.parents)
+    if (!commits.has(parent)) reject('', 'incomplete-git-history');
   const { trees, files: historicalFiles } = await inspectTrees(git, [...commits.values()].map(commit => commit.tree), approvedFiles, metrics);
   // The approved file cannot be introduced, removed, or changed by any later
   // commit, including either side of a merge. Compare already verified raw trees

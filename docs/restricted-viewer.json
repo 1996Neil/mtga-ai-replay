@@ -42,7 +42,7 @@
     },
     {
       "path": "viewer/src/components/CardImage.tsx",
-      "sha256": "757c07336bfd72380aa92a708ae594b3f0712d54e2bd96acce23bf1209665a25"
+      "sha256": "bd21aa80d111d59095475c87c7ee06191f91625e184688ddea2e896a585e4b94"
     },
     {
       "path": "viewer/src/components/GameLog.tsx",
@@ -70,7 +70,7 @@
     },
     {
       "path": "viewer/src/hooks/useCardImage.ts",
-      "sha256": "ab0aedf2b9faf127d349c95de3056ec093154d2bd3bc457e6e0b84f828a1e986"
+      "sha256": "61b65a75dfd8034de751bf1b5a77fed895d5c179d93b7fdb6516fc482cdc1093"
     },
     {
       "path": "viewer/src/types/game.ts",
