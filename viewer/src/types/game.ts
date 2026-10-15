@@ -29,6 +29,8 @@ export interface CardInstance {
   blockedAttackerIds?: number[];
   attackingTargetId?: number;
   attachedTo?: number;
+  exiledBy?: number;
+  exileSourceLogicalId?: string;
   attachments?: number[];
   targetIds?: number[];
   targets?: Record<string, unknown>[];
@@ -85,6 +87,7 @@ export interface GameState {
   annotations: Annotation[];
   battlefieldByOwner: Record<number, CardInstance[]>;
   handByOwner: Record<number, CardInstance[]>;
+  handHistoryByOwner?: Record<number, CardInstance[]>;
   graveyardByOwner: Record<number, CardInstance[]>;
   exileObjects: CardInstance[];
   stackObjects: CardInstance[];
@@ -199,6 +202,7 @@ export interface SerializableGameState {
   annotations: Annotation[];
   battlefieldByOwner: Record<number, CardInstance[]>;
   handByOwner: Record<number, CardInstance[]>;
+  handHistoryByOwner?: Record<number, CardInstance[]>;
   graveyardByOwner: Record<number, CardInstance[]>;
   exileObjects: CardInstance[];
   stackObjects: CardInstance[];

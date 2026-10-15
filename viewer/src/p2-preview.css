@@ -1,0 +1,85 @@
+/* Accepted P2 preview changes only. P1 owns zone sizes, scrolling and land piles. */
+.full-battlefield:not(.full-land-field) .full-card-rows { justify-content:center; }
+.game-board { container:replay-board / inline-size; }
+/* Player headers and the full battlefield share one grid definition.
+ * Stack/card padding must never offset the player identities. */
+.full-card-board { --battlefield-land-track:minmax(230px,24%); --battlefield-column-gap:12px; }
+.full-card-board .board-play-area,.full-card-board .player-header { grid-template-columns:var(--battlefield-land-track) minmax(0,1fr); column-gap:var(--battlefield-column-gap); }
+.full-card-board .player-header { position:relative; min-height:40px; }
+.full-card-board .player-header .player-info { grid-column:2; justify-self:center; transform:none; }
+.full-card-board .player-header .player-extras { position:absolute; grid-column:auto; right:0; top:50%; transform:translateY(-50%); }
+@media(max-width:700px) { .full-card-board { --battlefield-land-track:minmax(155px,32%); --battlefield-column-gap:8px; } }
+/* Reserve a stable right-hand stack lane on wide boards even when empty, so
+ * stack appearance never moves cards and centering cannot cover a permanent. */
+@container replay-board (min-width:1100px) {
+  .board-main-column .battlefield-content { padding-right:calc(clamp(156px,14vw,192px) + 56px); }
+}
+.permanent { transition:opacity .15s,filter .15s; }
+.permanent.combat-dimmed { opacity:.43; filter:saturate(.45); }
+.permanent.combat-focused .card-art-viewport { outline:2px solid #e8d098; outline-offset:1px; }
+.full-battlefield:not(.full-land-field) .permanent .card-image:hover .card-art-viewport,
+.land-stack .card-image:hover .card-art-viewport { outline:2px solid #e8d098; outline-offset:1px; }
+.light-fan-hand { background:transparent; border:0; border-radius:0; }
+.light-fan-hand .hand-scroll { padding:22px 0 8px; overflow-x:auto; overflow-y:hidden; scrollbar-width:none; }
+.light-fan-hand .hand-strip { display:block; position:relative; height:178px; }
+.light-fan-hand .hand-face { position:absolute; top:0; z-index:var(--fan-order); transform-origin:50% 100%; transform:translateY(var(--fan-y)) rotate(var(--fan-angle)); transition:transform .15s,filter .15s; }
+.light-fan-hand .hand-face:hover,.light-fan-hand .hand-face:focus-visible { transform:translateY(calc(var(--fan-y) - 18px)) rotate(0deg); z-index:60; filter:brightness(1.08); }
+.light-fan-hand .hand-face .card-art-viewport { outline:none; }
+.light-fan-hand .card-caption { position:relative; height:18px; background:#17211ee8; padding:0 3px; border-radius:0 0 4px 4px; }
+.light-fan-hand .card-caption .card-pt { display:none; }
+.light-fan-hand .card-name { font-size:11px; }
+.hand-number { position:absolute; left:5px; top:5px; width:19px; height:19px; border-radius:50%; display:grid; place-items:center; background:#17211eef; color:#edf1e9; border:1px solid #91a38a; font-size:11px; z-index:2; }
+.card-art-viewport { position:relative; }
+/* Native modal, with no extra visible UI; any click and Escape dismiss it. */
+dialog.card-inspector-overlay.face-only-dialog { position:fixed; inset:0; transform:none; width:100vw; max-width:100vw; height:100dvh; max-height:100dvh; margin:0; padding:0; border:0; outline:0; background:transparent; overflow:hidden; pointer-events:auto; }
+dialog.face-only-dialog[open] { display:flex; align-items:center; justify-content:center; }
+dialog.face-only-dialog::backdrop { background:#07110bd1; }
+.face-only-dialog .preview-dismiss { width:min(88vw,calc(86dvh * 5 / 7),480px); border:0; outline:0; background:transparent; }
+.face-only-dialog .card-image > .card-art-viewport { border:0; outline:none; outline-offset:0; border-radius:0; box-shadow:none; }
+.face-only-dialog .card-art { border-radius:0; }
+@media(prefers-reduced-motion:reduce) { .permanent,.light-fan-hand .hand-face { transition:none; } }
+
+/* Labels sit four pixels above the visible face, including when it is tapped. */
+.full-battlefield:not(.full-land-field) .full-card-rows { padding-top:20px; }
+.full-battlefield:not(.full-land-field) .permanent-status { top:auto; bottom:calc(var(--card-h) + 18px + 4px); left:0; right:0; max-width:none; justify-content:center; line-height:12px; font-size:10px; gap:5px; }
+.full-battlefield:not(.full-land-field) .is-tapped > .permanent-face > .permanent-status { bottom:calc(var(--card-w) + 18px + 4px); }
+.full-battlefield:not(.full-land-field) .permanent-status span { padding:0; background:transparent; border-radius:0; }
+.permanent[data-attacking] > .permanent-face > .permanent-status { color:#efc28c; }
+.permanent[data-blocking] > .permanent-face > .permanent-status { color:#8bccff; }
+.full-battlefield:not(.full-land-field) .permanent-status span { color:inherit; }
+/* Real card faces underneath their host; every exposed strip remains clickable. */
+.attachment-pile { position:relative; width:100%; height:calc(var(--card-h) + 38px + var(--attachment-depth) * 26px + var(--exile-extra,0px)); isolation:isolate; }
+.attachment-host,.attachment-underlay { position:relative; width:var(--card-w); }
+.attachment-host:has(> .is-tapped),.attachment-underlay:has(> .is-tapped) { width:var(--card-h); }
+.attachment-underlay { position:absolute; top:calc(var(--attachment-index) * 26px); left:calc(var(--attachment-index) * 12px); }
+.attachment-underlay .permanent-status,.attachment-underlay .permanent-combat { visibility:hidden; }
+.attachment-host .card-art-viewport,.attachment-underlay .card-art-viewport { box-shadow:0 2px 5px #0008; }
+.land-stack { width:calc(var(--pile-face-w) + var(--pile-depth) * 9px + var(--attachment-depth,0) * 12px); }
+.land-stack-cards { height:calc(var(--card-h) + 18px + var(--pile-depth) * 4px + var(--attachment-depth,0) * 26px + var(--exile-extra,0px)); }
+.land-stack.expanded { width:100%; }
+.land-stack.expanded .land-stack-member { width:auto; min-width:var(--pile-face-w); }
+
+/* Noncreature permanents sit to the right of the creature rows. The existing right
+ * stack reservation applies to this whole content, leaving both lanes clear. */
+.battlefield-content { display:flex; flex:1; min-width:0; min-height:0; gap:12px; }
+.battlefield-content > .creature-card-zone { flex:1 1 0; width:auto; min-width:0; }
+.permanent-side-zone { display:flex; flex-direction:column; flex-shrink:0; min-height:0; max-width:45%; }
+.permanent-side-zone .full-card-rows { justify-content:flex-start; min-width:0; }
+/* Source-image black borders stay intact; ratio gaps have no added background. */
+.face-only-dialog .card-image > .card-art-viewport { background:transparent; }
+
+.local-field .ordinary-permanent-zone .full-card-rows { align-content:flex-end; min-height:100%; }
+.opponent-field .ordinary-permanent-zone .full-card-rows { align-content:flex-start; min-height:100%; }
+
+.linked-exile-pile { position:relative; isolation:isolate; height:calc(var(--card-h) * 1.44 + 22px); }
+.linked-exile-source { position:relative; z-index:2; pointer-events:none; }
+.linked-exile-source .card-image { pointer-events:auto; }
+.linked-exile-thumbnails { position:absolute; z-index:1; top:calc(var(--card-h) * .82); left:4px; width:calc(100% - 4px); display:flex; align-items:flex-start; gap:6px; overflow-x:auto; overscroll-behavior:contain; scrollbar-width:thin; }
+.linked-exile-thumbnails .exile-thumbnail { width:calc(var(--card-w) * .62); flex-shrink:0; }
+.full-card-zone .exile-thumbnail .card-art-viewport { height:calc(var(--card-h) * .62); }
+.exile-thumbnail .card-caption { background:#182321; }
+.exile-thumbnail .card-name { font-size:9px; }
+
+/* Keep the existing count/backs layout; only add a hand-inspection action. */
+button.opponent-hand,button.hand-inspect-count { background:transparent; border:0; padding:0; border-radius:0; cursor:pointer; font-family:inherit; }
+.opponent-hand-dialog .unknown-hand-count { margin:12px 0 0; color:#acb5ae; }

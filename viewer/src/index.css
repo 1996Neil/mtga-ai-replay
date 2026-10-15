@@ -772,10 +772,10 @@ a{
 .inspector-card { width: 100%; background: transparent; border: 0; box-shadow: none; }
 .inspector-card > .card-art-viewport { height: auto; aspect-ratio: 5 / 7; }
 .inspector-card .card-art img { object-fit: contain; }
-.relationship-arrows { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 20; pointer-events: none; overflow: hidden; }
-.relationship-arrow { fill: none; stroke-width: 3; stroke-linecap: round; filter: drop-shadow(0 1px 2px #000); }
-.relationship-arrow.source { stroke: #f1f3f5; }
-.relationship-arrow.target { stroke: #fff36a; }
+.relationship-arrows { --relationship-source:#f1f3f5; --relationship-target:hsl(56 75% 68%); --relationship-attack:hsl(30 75% 68%); --relationship-block:hsl(208 75% 68%); position: absolute; inset: 0; width: 100%; height: 100%; z-index: 20; pointer-events: none; overflow: hidden; }
+.relationship-arrow { fill: none; stroke-width: 2.5; opacity: .9; stroke-linecap: round; filter: drop-shadow(0 1px 2px #000); }
+.relationship-arrow.source { stroke: var(--relationship-source); }
+.relationship-arrow.target { stroke: var(--relationship-target); }
 @media(max-width:700px) {
   .card-inspector-overlay { right: 12px; width: min(280px, 75vw, calc((100dvh - 160px) * 5 / 7)); }
 }
