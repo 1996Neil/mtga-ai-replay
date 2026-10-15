@@ -91,3 +91,7 @@
 .full-card-board .player-extras { grid-column:3; display:flex; flex-wrap:wrap; justify-content:flex-end; align-items:center; min-width:0; gap:6px; }
 .full-card-board .player-extras .player-zones { margin-left:0; }
 @media(max-width:700px) { .full-card-board .player-info { gap:6px; } .full-card-board .player-name { max-width:66px; } .full-card-board .player-zone-counts { display:block; font-size:10px; } .full-card-board .player-extras .opponent-hand { display:none; } }
+
+.card-image-retry { position: relative; z-index: 2; padding: .4rem; font-size: .8rem; color: inherit; background: #1c2635; border: 1px solid #8192ab; border-radius: .35rem; cursor: pointer; }
+.card-image-retry:disabled { opacity: .7; cursor: wait; }
+.card-inspector-overlay > .preview-dismiss { position: absolute; right: 0; top: -2rem; width: auto; height: auto; padding: .2rem .6rem; background: #1c2635; color: white; }

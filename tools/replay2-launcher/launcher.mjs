@@ -1,3 +1,4 @@
+import { waitForOwnedServiceExit } from './launcher-exit.mjs';
 import { access, chmod, mkdir, readFile, rm, stat, writeFile, open } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { spawn, execFile } from 'node:child_process';
@@ -71,7 +72,7 @@ export function createLauncher({ projectRoot, nodePath = process.execPath, port 
     try {
       command = (await run('/bin/ps', ['-p', String(health.pid), '-o', 'command='])).stdout.trim();
       started = (await run('/bin/ps', ['-p', String(health.pid), '-o', 'lstart='])).stdout.trim();
-    } catch { throw new Error('无法确认 Replay 2.0 进程身份。'); }
+    } catch { const error = new Error('无法确认 Replay 2.0 进程身份。'); error.code = 'REPLAY_PROCESS_IDENTITY_UNAVAILABLE'; throw error; }
     if (!command.includes(cli) || !command.includes('live-coach')) {
       throw new Error(`端口 ${port} 的进程来自另一个项目；未打开页面或终止该进程。`);
     }
@@ -225,15 +226,7 @@ export function createLauncher({ projectRoot, nodePath = process.execPath, port 
       const current = await probe();
       if (!current || current.pid !== service.pid || current.started !== service.started) throw new Error('停止前进程身份改变，未发送退出信号。');
       process.kill(service.pid, 'SIGTERM');
-      const deadline = Date.now() + timeoutMs;
-      while (true) {
-        let current;
-        try { current = await probe(); }
-        catch (e) { if (e.code !== 'ECONNRESET') throw e; current = service; }
-        if (!current) break;
-        if (Date.now() > deadline) throw new Error('服务尚未完成正常退出；未强制终止。请查看原终端或本机启动日志。');
-        await pause(100);
-      }
+      await waitForOwnedServiceExit({ probe, service, timeoutMs });
       await rm(recordPath, { force: true });
       return { stopped: true, enabled: false, muted: true };
     });
