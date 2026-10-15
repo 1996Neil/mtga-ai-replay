@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { resolveCoachBundle, serializeCoachJson } from '../coach-bundle.mjs';
-import { validateBundleFiles } from '../sync-security.mjs';
+import { validateBundleFiles, validateExpandedCoach } from '../sync-security.mjs';
 import { findReviewGame, normalizeReplayReview, visibleCardNames, reviewFingerprintAsync } from './review-model.mjs';
 import { CLOUD_REVIEW_POLICY, parseCloudReview, reviewPath, reviewReject } from './cloud-review-contract.mjs';
 
@@ -53,7 +53,7 @@ export function readPublishedReviewSource({ files, matchId, revision }) {
   catch { reviewReject('unresolved-source'); }
   if (replay.schema !== 'MTGA_FULL_COACH_V1' || replay.match?.id !== matchId || objects.get('summary.json')?.match_id !== matchId || !Array.isArray(replay.games)) reviewReject('source-identity');
   // Reassembled chunks must undergo the same privacy checks as continuous data.
-  validateBundleFiles(new Map([['latest/coach.json', serializeCoachJson(replay)]]));
+  validateExpandedCoach(replay);
   const numbers = new Set();
   for (const [i, game] of replay.games.entries()) {
     const number = game.game_number ?? i + 1;

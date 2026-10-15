@@ -1,0 +1,12 @@
+✔ attachment and stack target projection uses public identities and removes deleted relationships (1.075541ms)
+✔ ability stack sources and controllers use current legal GRE objects across both Arena seat assignments (0.2985ms)
+✔ a later public reveal never fills earlier hidden ability source identity or unknown controller (0.272166ms)
+✔ action anchors reparse deterministically and every action links valid before/after observations (27.119042ms)
+ℹ tests 470
+ℹ suites 0
+ℹ pass 462
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 8
+ℹ todo 0
+ℹ duration_ms 338617.643542

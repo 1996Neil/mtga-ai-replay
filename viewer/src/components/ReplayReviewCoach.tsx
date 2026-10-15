@@ -4,6 +4,9 @@ import { createPortal } from 'react-dom';
 import './ReplayReviewCoach.css';
 import { reviewPresentation, importanceLabel } from '../replay/reviewPresentation';
 import type { Severity, Importance, Assessment } from '../replay/reviewPresentation';
+import { useCardImage } from '../hooks/useCardImage';
+import { reviewCardId, reviewCardTranslation } from '../replay/reviewCardIdentity';
+import type { GameState } from '../types/game';
 
 type Boundary = 'before' | 'after';
 type Note = { anchor: string; boundary: Boundary; severity: Severity; confidence: 'high'|'medium'|'low';
@@ -11,11 +14,17 @@ type Note = { anchor: string; boundary: Boundary; severity: Severity; confidence
   title: string; observation: string; suggestion: string; rationale?: string; cards: string[]; limitation?: string };
 type Review = { schema_version: string; match_id: string; game_number: number; source: string; created_at: string;
   summary: { headline: string; overview: string; strengths: string[]; improvements: string[]; limitations: string[] }; notes: Note[] };
-type Match = { matchId: string; gameNumber: number; steps: Array<{ anchor: string }> };
+type Match = { matchId: string; gameNumber: number; steps: Array<{ anchor: string; gameState?: GameState; beforeGameState?: GameState }> };
 type Rect = { left: number; top: number; width: number; height: number };
 const bounded = (value: number, max: number) => Math.max(8, Math.min(Math.max(8, max), value));
 const displayDate = (value?: string | null) => value && Number.isFinite(Date.parse(value))
   ? new Date(value).toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai' }) : '未知日期';
+
+function ReviewCardLabel({ english, id }: { english: string; id: number }) {
+  const metadata = useCardImage(id);
+  const chinese = reviewCardTranslation(english, metadata.name, metadata.displayNameZh);
+  return <code>{chinese && <span lang="zh-CN">{chinese} · </span>}<span lang="en">{english}</span></code>;
+}
 
 export function ReplayReviewCoach({ match, currentStepIndex, viewBefore, onJump }: {
   match: Match; currentStepIndex: number; viewBefore: boolean; onJump: (anchor: string, boundary: Boundary) => void;
@@ -125,6 +134,8 @@ export function ReplayReviewCoach({ match, currentStepIndex, viewBefore, onJump 
       .filter(note => note.index >= 0).sort((a, b) => a.index - b.index);
   }, [review, match.steps]);
   const selected = ordered.find(note => note.anchor === selectedAnchor) ?? null;
+  const selectedStep = selected ? match.steps[selected.index] : undefined;
+  const selectedObjects = (selected?.boundary === 'before' ? selectedStep?.beforeGameState : selectedStep?.gameState)?.gameObjects;
   const selectedIndex = selected ? ordered.findIndex(note => note.anchor === selected.anchor) : -1;
   const markers: Array<typeof ordered> = [];
   const width = track ? Math.max(track.width - 16, 1) : 800;
@@ -223,7 +234,7 @@ export function ReplayReviewCoach({ match, currentStepIndex, viewBefore, onJump 
           <p className="replay-review-muted">AI 判断：{reviewPresentation(selected).judgment} · 不代表规则裁定</p>
           <h3>{selected.title}</h3>
           {selected.cards.length > 0 && <div className="replay-review-cards">{selected.cards.map(card =>
-            <code key={card}>{card}</code>)}</div>}
+            <ReviewCardLabel key={card} english={card} id={reviewCardId(card, selectedObjects)} />)}</div>}
           <p><b>观察：</b>{selected.observation}</p><p><b>建议：</b>{selected.suggestion}</p>
           {selected.rationale && <p><b>原因：</b>{selected.rationale}</p>}
           {selected.limitation && <p className="replay-review-muted">限制：{selected.limitation}</p>}
