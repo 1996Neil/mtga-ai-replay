@@ -499,17 +499,21 @@ test('SQLite-only pending archives retry a rejected push with fixed identities a
   assert.equal((await validateStagedRepository(h.checkout)).ok, true);
 });
 
-test('catalog performs one final security scan on the exact revision it pushes', async t => {
+test('catalog sync checks history before generation and scans the exact publication commit once', async t => {
   const h = await harness(t); await configureCoachSync(REPOSITORY, h.options);
   await archiveReplays([catalogReplay('synthetic-pinned-A', 1), catalogReplay('synthetic-pinned-B', 2)], h.options);
   const scans = [], result = await syncCoachCatalog({ ...h.options, onValidation: value => scans.push(value) });
-  assert.equal(result.published, 2); assert.equal(scans.length, 1);
+  assert.equal(result.published, 2);
+  assert.ok(scans.some(scan => scan.history_revision === null));
+  const finalScans = scans.filter(scan => scan.history_revision !== null);
+  assert.equal(finalScans.length, 1);
   const push = h.control.calls.find(call => call.file === 'git' && call.args.includes('push'));
-  assert.ok(push); const [revision, ref] = push.args.at(-1).split(':');
-  assert.match(revision, /^[0-9a-f]{40,64}$/); assert.equal(ref, 'refs/heads/main');
-  assert.equal(revision, (await getCoachSyncStatus({ ...h.options, verify: false })).last_synced.commit);
-  assert.equal((await execute('git', ['--git-dir', h.bare, 'rev-parse', 'refs/heads/main'], { env })).stdout.trim(), revision);
-  assert.equal(await h.commits(), 2);
+  assert.ok(push); const sourceAndTarget = push.args.at(-1).split(':');
+  assert.match(sourceAndTarget[0], /^[0-9a-f]{40,64}$/); assert.equal(sourceAndTarget[1], 'refs/heads/main');
+  assert.equal(finalScans[0].history_revision, sourceAndTarget[0]);
+  assert.equal(sourceAndTarget[0], (await getCoachSyncStatus({ ...h.options, verify: false })).last_synced.commit);
+  assert.equal((await execute('git', ['--git-dir', h.bare, 'rev-parse', 'refs/heads/main'], { env })).stdout.trim(), sourceAndTarget[0]);
+  assert.equal(await h.commits(), 2); // Per-match commits remain separate.
 });
 
 test('remote publication confirmation reads the server ref despite an excluding fetch refspec', async t => {
@@ -569,7 +573,9 @@ test('catalog retry reuses a matching pending bundle but reruns the final fixed-
   const retried = await syncCoachCatalog({ ...options, onProgress: progress => retryPhases.push(progress.phase), onValidation: value => scans.push(value) });
   assert.equal(retried.published, 1); assert.equal(retried.committed, 0); assert.equal(retried.pending, 0);
   assert.equal(retryPhases.includes('cards'), false); assert.equal(retryPhases.includes('generating'), false);
-  assert.ok(retryPhases.includes('security')); assert.equal(scans.length, 1);
+  assert.ok(retryPhases.includes('security'));
+  assert.ok(scans.some(scan => scan.history_revision === null));
+  assert.equal(scans.filter(scan => scan.history_revision !== null).length, 1);
   const push = h.control.calls.filter(call => call.file === 'git' && call.args.includes('push')).at(-1);
   assert.equal(push.args.at(-1).split(':')[0], (await execute('git', ['rev-parse', 'HEAD'], { cwd: h.checkout, env })).stdout.trim());
   assert.equal(Number((await execute('git', ['rev-list', '--count', 'HEAD'], { cwd: h.checkout, env })).stdout.trim()), localCommits);
@@ -595,28 +601,29 @@ test('branch movement during the pinned scan blocks a mixed-revision push', asyn
   assert.equal(h.control.calls.some(call => call.file === 'git' && call.args.includes('push')), false);
 });
 
-test('deleted private historical payload still blocks the exact final revision', async t => {
+test('deleted historical private data blocks the catalog before generation or queue mutation', async t => {
   const h = await harness(t); await configureCoachSync(REPOSITORY, h.options);
   await archiveReplays([catalogReplay('synthetic-history-sentinel', 1)], h.options); await syncCoachCatalog(h.options);
   const historical = 'matches/synthetic-history-sentinel/summary.json';
   await mkdir(join(h.checkout, 'matches', 'synthetic-history-sentinel'), { recursive: true });
-  await writeFile(join(h.checkout, historical), '{\"internalAccountId\":\"SyntheticPrivateSentinel\"}');
+  await writeFile(join(h.checkout, historical), '{"internalAccountId":"SyntheticPrivateSentinel"}');
   await execute('git', ['add', '--', historical], { cwd: h.checkout, env });
   const fixed = ['-c', 'user.name=mtga-replay-coach', '-c', 'user.email=mtga-replay-coach@users.noreply.github.com', '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null'];
   await execute('git', [...fixed, 'commit', '--quiet', '-m', 'Synthetic safe identity'], { cwd: h.checkout, env });
   await execute('git', ['rm', '--quiet', '--', historical], { cwd: h.checkout, env });
   await execute('git', [...fixed, 'commit', '--quiet', '-m', 'Remove synthetic historical fixture'], { cwd: h.checkout, env });
   await archiveReplays([catalogReplay('synthetic-history-pending', 2)], h.options);
-  const pushesBefore = h.control.calls.filter(call => call.file === 'git' && call.args.includes('push')).length;
-  const result = await syncCoachCatalog(h.options);
-  assert.ok(result.sync_error);
-  assert.equal((await getCoachSyncStatus({ ...h.options, verify: false })).pending, 1);
-  assert.equal(h.control.calls.filter(call => call.file === 'git' && call.args.includes('push')).length, pushesBefore);
-  assert.equal((await execute('git', ['rev-list', '--count', 'origin/main..HEAD'], { cwd: h.checkout, env })).stdout.trim(), '3');
-  assert.equal(await h.commits(), 1);
+  const callsBefore = h.control.calls.filter(call => call.file === 'git' && call.args.includes('push')).length;
+  const phases = [];
+  await assert.rejects(syncCoachCatalog({ ...h.options, onProgress: value => phases.push(value.phase) }), error => error.code === 'MTGA_SYNC_SECURITY');
+  assert.equal(phases.includes('cards'), false); assert.equal(phases.includes('generating'), false);
+  assert.equal((await getCoachSyncStatus({ ...h.options, verify: false })).pending, 0);
+  assert.equal(h.control.calls.filter(call => call.file === 'git' && call.args.includes('push')).length, callsBefore);
+  assert.equal((await execute('git', ['rev-list', '--count', 'origin/main..HEAD'], { cwd: h.checkout, env })).stdout.trim(), '2');
+  assert.equal(await h.commits(), 1); // Remote remains at the first published match.
 });
 
-test('incoming personal research commits are rejected by the final scan before push', async t => {
+test('incoming personal research is rejected before merging, generation or queue mutation', async t => {
   const h = await harness(t); await configureCoachSync(REPOSITORY, h.options);
   await archiveReplays([catalogReplay('synthetic-before-research', 1)], h.options); await syncCoachCatalog(h.options);
   const writer = join(h.dataDir, 'research-writer');
@@ -630,14 +637,17 @@ test('incoming personal research commits are rejected by the final scan before p
   await execute('git', ['push', 'origin', 'main'], { cwd: writer, env });
   await archiveReplays([catalogReplay('synthetic-after-research', 2)], h.options);
   const localHead = (await execute('git', ['rev-parse', 'HEAD'], { cwd: h.checkout, env })).stdout.trim();
-  const pushesBefore = h.control.calls.filter(call => call.file === 'git' && call.args.includes('push')).length;
-  const result = await syncCoachCatalog(h.options);
-  assert.ok(result.sync_error);
-  assert.equal((await getCoachSyncStatus({ ...h.options, verify: false })).pending, 1);
-  assert.notEqual((await execute('git', ['rev-parse', 'HEAD'], { cwd: h.checkout, env })).stdout.trim(), localHead);
+  const statePath = join(h.dataDir, 'coach-sync/state.json'), stateBefore = await readFile(statePath, 'utf8');
+  const callsBefore = h.control.calls.length, phases = [];
+  await assert.rejects(syncCoachCatalog({ ...h.options, onProgress: value => phases.push(value.phase) }),
+    error => error.code === 'MTGA_SYNC_SECURITY' && error.rule === 'commit-personal-identity');
+  assert.equal(phases.includes('cards'), false); assert.equal(phases.includes('generating'), false);
+  assert.equal((await getCoachSyncStatus({ ...h.options, verify: false })).pending, 0);
+  assert.equal(await readFile(statePath, 'utf8'), stateBefore);
+  assert.equal((await execute('git', ['rev-parse', 'HEAD'], { cwd: h.checkout, env })).stdout.trim(), localHead);
   assert.equal((await listReplays({ ...h.options, limit: null })).length, 2);
   assert.equal(JSON.parse(await h.published('index.json')).matches.length, 1);
-  assert.equal(h.control.calls.filter(call => call.file === 'git' && call.args.includes('push')).length, pushesBefore);
+  assert.equal(h.control.calls.slice(callsBefore).some(call => call.args.some(arg => ['merge', 'commit', 'push'].includes(arg))), false);
 });
 
 test('explicit local approval preserves existing remote research history while backfilling SQLite and remaining idempotent', async t => {
@@ -658,9 +668,11 @@ test('explicit local approval preserves existing remote research history while b
   const approval = { schema: 'MTGA_SYNC_HISTORY_APPROVAL_V1', approved: true, repository: REPOSITORY, branch: 'main',
     approved_at: '2026-10-05T00:00:00.000Z', commits: [sha], files: [{ path: document, blob, mode: '100644', sha256: digest(text), bytes: Buffer.byteLength(text) }] };
   await archiveReplays([catalogReplay('synthetic-after-approved-history', 2)], h.options);
-  const unapproved = await syncCoachCatalog(h.options);
-  assert.ok(unapproved.sync_error);
-  assert.equal((await getCoachSyncStatus({ ...h.options, verify: false })).pending, 1);
+  const beforeRejected = h.control.calls.length, blockedPhases = [];
+  await assert.rejects(syncCoachCatalog({ ...h.options, onProgress: value => blockedPhases.push(value.phase) }), e => e.rule === 'commit-personal-identity');
+  assert.equal(blockedPhases.includes('cards'), false); assert.equal(blockedPhases.includes('generating'), false);
+  assert.equal((await getCoachSyncStatus({ ...h.options, verify: false })).pending, 0);
+  assert.equal(h.control.calls.slice(beforeRejected).some(call => call.args.includes('push') || call.args.includes('commit')), false);
   await assert.rejects(approveCoachSyncHistory({ ...approval, repository: 'another/private' }, h.options), e => e.rule === 'invalid-history-approval');
   await approveCoachSyncHistory(approval, h.options);
   assert.deepEqual(JSON.parse(await readFile(join(h.dataDir, 'coach-sync/state.json'), 'utf8')).history_approval, approval);
@@ -908,4 +920,29 @@ test('individually safe string chunks cannot conceal a credential after multipar
 test('push success with lost acknowledgement is freshly reconciled without another commit or upload',async t=>{
  const h=await harness(t);await configureCoachSync(REPOSITORY,h.options);const value=await bundle();await enqueueCoachBundle(value,h.options);h.control.losePushResponse=true;
  const result=await syncCoachBundles(h.options);assert.equal(result.synced,true);assert.equal(result.pending,0);assert.equal(await h.commits(),1);assert.equal(h.control.calls.filter(call=>call.args.includes('push')).length,1);assert.equal(await h.published('latest/cards.json'),serializeCoachJson(value.cards));
+});
+
+test('warm catalog with no candidates refuses newly fetched unsafe history before changing receipts', async t => {
+  const h = await harness(t); await configureCoachSync(REPOSITORY, h.options);
+  await archiveReplays([catalogReplay('synthetic-warm-guard', 1)], h.options);
+  await syncCoachCatalog(h.options);
+  const statePath = join(h.dataDir,'coach-sync/state.json'), beforeState = await readFile(statePath,'utf8');
+  const writer = join(h.dataDir,'synthetic-unsafe-history-writer');
+  await execute('git',['clone',h.bare,writer],{env});
+  await writeFile(join(writer,'Player.log'),'Synthetic forbidden historical file.');
+  await execute('git',['add','-f','--','Player.log'],{cwd:writer,env});
+  const fixedEnv = {...env,GIT_AUTHOR_NAME:'Synthetic Agent',GIT_AUTHOR_EMAIL:'synthetic@users.noreply.github.com',
+    GIT_COMMITTER_NAME:'Synthetic Agent',GIT_COMMITTER_EMAIL:'synthetic@users.noreply.github.com'};
+  const commit = message => execute('git',['-c','commit.gpgsign=false','-c','core.hooksPath=/dev/null','commit','-m',message],{cwd:writer,env:fixedEnv});
+  await commit('Synthetic unsafe ancestor');
+  await execute('git',['rm','--','Player.log'],{cwd:writer,env}); await commit('Remove synthetic file');
+  await execute('git',['push','origin','main'],{cwd:writer,env});
+  const remoteCount = await h.commits(), calls = h.control.calls.length, phases = [];
+  await assert.rejects(syncCoachCatalog({...h.options,onProgress:value=>phases.push(value.phase)}), error=>error.code==='MTGA_SYNC_SECURITY');
+  assert.ok(phases.includes('security'));
+  assert.equal(phases.includes('cards'),false); assert.equal(phases.includes('generating'),false);
+  assert.equal(await readFile(statePath,'utf8'),beforeState);
+  assert.equal(h.control.calls.slice(calls).some(call=>call.args.includes('push')||call.args.includes('commit')),false);
+  assert.equal(await h.commits(),remoteCount);
+  assert.equal((await getCoachSyncStatus({...h.options,verify:false})).pending,0);
 });

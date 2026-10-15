@@ -141,3 +141,50 @@ export async function loadCounterNames(path) {
     return names;
   } catch { return new Map(); } finally { database.close(); }
 }
+
+
+/** Local Arena color codes for draft deck color summaries; read-only and no network fallback. */
+export async function loadCardColors(path) {
+  if (!path) return new Map();
+  try { if (!(await stat(path)).isFile()) return new Map(); }
+  catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return new Map(); throw error; }
+  const { DatabaseSync } = await import('node:sqlite');
+  const database = new DatabaseSync(path, { readOnly: true });
+  try {
+    const rows = database.prepare('SELECT GrpId AS grpId, Colors AS colors FROM Cards').all();
+    const colors = new Map(), names = { '1': 'W', '2': 'U', '3': 'B', '4': 'R', '5': 'G' };
+    for (const row of rows) {
+      if (!Number.isSafeInteger(row.grpId) || typeof row.colors !== 'string') continue;
+      const value = row.colors.split(',').map(code => names[code.trim()]).filter(Boolean);
+      colors.set(row.grpId, [...new Set(value)]);
+    }
+    return colors;
+  } finally { database.close(); }
+}
+
+/** Land color labels only. null means a known nonland; a missing ID is unknown.
+ * Lands are colorless as cards, so use their land color identity, not Colors.
+ * Generic fetch/rainbow lands with no fixed identity add no guessed colors. */
+export async function loadCardLandColors(path) {
+  if (!path) return new Map();
+  const { DatabaseSync } = await import('node:sqlite');
+  const database = new DatabaseSync(path, { readOnly: true });
+  try {
+    const tables = new Set(database.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(row => row.name));
+    if (!['Cards', 'Enums', 'Localizations_enUS'].every(name => tables.has(name))) return new Map();
+    const columns = new Set(database.prepare('PRAGMA table_info(Cards)').all().map(row => row.name));
+    if (!['GrpId', 'Types', 'ColorIdentity'].every(name => columns.has(name))) return new Map();
+    const land = database.prepare(`SELECT e.Value FROM Enums e JOIN Localizations_enUS l ON e.LocId=l.LocId
+      WHERE e.Type='CardType' AND l.Loc IN ('Land', '地') LIMIT 1`).get()?.Value;
+    if (!Number.isSafeInteger(land)) return new Map();
+    const names = { '1': 'W', '2': 'U', '3': 'B', '4': 'R', '5': 'G' }, result = new Map();
+    for (const row of database.prepare('SELECT GrpId,Types,ColorIdentity FROM Cards').all()) {
+      if (!String(row.Types).split(',').map(value => value.trim()).includes(String(land))) {
+        result.set(row.GrpId, null); continue;
+      }
+      const codes = String(row.ColorIdentity ?? '').split(',').map(value => value.trim()).filter(Boolean);
+      if (codes.every(code => names[code])) result.set(row.GrpId, [...new Set(codes.map(code => names[code]))]);
+    }
+    return result;
+  } finally { database.close(); }
+}
