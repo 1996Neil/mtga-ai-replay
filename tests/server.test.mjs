@@ -143,13 +143,16 @@ test('offline card image failure returns card text and never blocks replay endpo
   assert.equal(metadata.name, 'Synthetic Forest');
   assert.equal(metadata.image_available, false);
   assert.equal(metadata.image_url, null);
-  assert.equal((await fetch(running.url + 'api/cards/100/image')).status, 404);
+  const failed = await fetch(running.url + 'api/cards/100/image');
+  assert.equal(failed.status, 503);
+  assert.ok(Number(failed.headers.get('retry-after')) >= 1);
   assert.equal((await fetch(running.url + 'api/matches/latest')).status, 200);
   assert.equal(requests, 1); // Failed metadata is cached briefly, so playback does not retry every step.
 });
 
 test('public Scryfall metadata and DFC images are cached locally, preserving MIME type without repeat network', async (t) => {
   const requests = [];
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6ZAAAAABJRU5ErkJggg==', 'base64');
   const fetchFn = async (url) => {
     requests.push(String(url));
     if (String(url).startsWith('https://api.scryfall.com/cards/arena/')) return new Response(JSON.stringify({
@@ -157,7 +160,7 @@ test('public Scryfall metadata and DFC images are cached locally, preserving MIM
         { name: 'Synthetic Transform', mana_cost: '{2}{G}', type_line: 'Creature', power: '3', toughness: '3', image_uris: { normal: 'https://cards.scryfall.io/normal/front/synthetic.jpg' } },
       ],
     }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-    return new Response(Buffer.from('synthetic-image-bytes'), { status: 200, headers: { 'Content-Type': 'image/png' } });
+    return new Response(png, { status: 200, headers: { 'Content-Type': 'image/png' } });
   };
   const running = await setup(t, { fetchFn });
   const metadata = await fetch(running.url + 'api/cards/100').then(response => response.json());
@@ -166,7 +169,7 @@ test('public Scryfall metadata and DFC images are cached locally, preserving MIM
   const imageUrl = new URL(metadata.image_url, running.url);
   const image = await fetch(imageUrl);
   assert.equal(image.headers.get('content-type'), 'image/png');
-  assert.equal(await image.text(), 'synthetic-image-bytes');
+  assert.deepEqual(Buffer.from(await image.arrayBuffer()), png);
   assert.equal((await fetch(imageUrl)).headers.get('content-type'), 'image/png');
   const cached = await fetch(running.url + 'api/cards/100').then(response => response.json());
   assert.equal(cached.image_cached, true);

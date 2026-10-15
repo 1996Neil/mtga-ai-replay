@@ -317,3 +317,14 @@ test('bounded positive memo preserves key types, escaped duplicates, overflow an
   for (const raw of cases) assert.throws(() => validateBundleFiles(files(raw)), error => error.code === 'MTGA_SYNC_SECURITY');
   assert.equal(validateBundleFiles(files({ token: false, rows: Array(3000).fill({ name: 'Bearer of the Heavens', token: true }) })).ok, true);
 });
+
+test('a shallow history boundary cannot hide a parent from full-history validation', async t => {
+  const dir = await repository(t);
+  await add(dir, 'README.md', 'Safe initial fixture.'); await commit(dir);
+  await add(dir, 'README.md', 'Safe second fixture.'); await commit(dir);
+  assert.equal((await validateStagedRepository(dir)).ok, true);
+  const head = (await git(dir, ['rev-parse', 'HEAD'])).stdout.trim();
+  await writeFile(join(dir, '.git', 'shallow'), `${head}\n`);
+  await assert.rejects(validateStagedRepository(dir), error =>
+    error.code === 'MTGA_SYNC_SECURITY' && error.rule === 'incomplete-git-history');
+});
