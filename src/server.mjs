@@ -1,9 +1,11 @@
+import { listDraftRuns, withDraftRunLandColors } from './draft-runs.mjs';
+import { discoverCardDatabase, loadCardLandColors } from './cards.mjs';
 import { createTaskJournal } from './task-journal.mjs';
 import { createServer } from 'node:http';
 import { readFile, stat, realpath, mkdir, writeFile, rm } from 'node:fs/promises';
 import { resolve, join, extname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { defaultDataDir, listReplays, getReplay, getArchivedCard } from './history.mjs';
+import { defaultDataDir, listReplays, listReplayDecks, getReplay, getArchivedCard } from './history.mjs';
 import { getCardMetadata, getCardImage, cardImageIsCached } from './card-cache.mjs';
 import { createCoachContext } from './coach-context.mjs';
 import { loadInstalledChineseDisplayNames } from './display-names.mjs';
@@ -27,6 +29,17 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
   const collection = createViewerCollection({ dataDir, update: collectionUpdate, sync: collectionSync, notify: notifyTask, journal });
   const localHistory = includeLocalHistory && observeLocalLogs ? createLocalReplayHistory({ ...localHistoryOptions, dataDir }) : null;
   const reviews = reviewReader ?? createCloudReviewReader({ loadReplay: replayById, dataDir });
+  let landColorCatalog;
+  const draftDeckCache = new Map();
+  async function draftRunsForDisplay() {
+    if (!includeLocalHistory) return [];
+    const runs = await listDraftRuns({ dataDir });
+    if (!runs.length) return runs;
+    landColorCatalog ??= discoverCardDatabase().then(loadCardLandColors).catch(() => new Map());
+    const latestIds = runs.flatMap(run => [...run.matches].sort((a, b) => String(b.started_at).localeCompare(String(a.started_at)) || b.id.localeCompare(a.id)).slice(0, 1).map(match => match.id));
+    const decks = await listReplayDecks(latestIds, { dataDir, cache: draftDeckCache });
+    return withDraftRunLandColors(runs, decks, await landColorCatalog);
+  }
   function send(response, status, value, contentType = 'application/json; charset=utf-8', extraHeaders = {}) {
     response.writeHead(status, { 'Content-Type': contentType, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
       'Cross-Origin-Resource-Policy': 'same-origin', 'Referrer-Policy': 'no-referrer', ...extraHeaders });
@@ -123,6 +136,7 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
         const value = await reviews.read(reviewRoute[1], gameNumber);
         return send(response, value.code ?? 200, request.method === 'HEAD' ? '' : value);
       }
+      if (path === '/api/draft-runs') return send(response, 200, request.method === 'HEAD' ? '' : await draftRunsForDisplay());
       if (path === '/api/matches/latest') {
         const entries = await replayCatalog();
         const replay = replayProvider && !includeLocalHistory ? await replayProvider.latest() : entries.length ? await replayById(entries[0].id) : null;
