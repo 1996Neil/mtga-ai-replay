@@ -1,0 +1,45 @@
+{
+  "backend": {
+    "passed": 417,
+    "failed": 0,
+    "skipped": 8,
+    "duration_ms": 344663.964667,
+    "command": "npm test"
+  },
+  "viewer": {
+    "passed": 80,
+    "failed": 0,
+    "skipped": 0,
+    "duration_ms": 298.696,
+    "command": "npm run viewer:test"
+  },
+  "typecheck_and_build": {
+    "result": "passed",
+    "command": "npm run viewer:build (tsc --noEmit && vite build)"
+  },
+  "release": {
+    "result": "passed",
+    "historical_commits": 46,
+    "manifest_pinned_viewer_files": 19,
+    "shallow": false,
+    "command": "npm run check:release"
+  },
+  "independent_targeted": {
+    "passed": 22,
+    "failed": 0,
+    "skipped": 0
+  },
+  "initial_backend_attempt": {
+    "result": "aborted",
+    "reason": "old cloudReviewSync race hook no longer reached; route fixture unexpectedly observed machine logs; fixed fixture boundaries preserving assertions",
+    "counted_as_pass": false
+  },
+  "private_corpus": {
+    "matches": 8,
+    "assertions": 73,
+    "passed": true
+  },
+  "remote_ci": {
+    "result": "see PR checks; local results do not imply remote success"
+  }
+}

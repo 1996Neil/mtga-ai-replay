@@ -112,6 +112,13 @@ export function createCloudReviewReader({ loadReplay, dataDir = defaultDataDir()
   const tasks = new Map(); let closing = false;
   let ownedPool;
   const compute = () => options.computePool ?? (ownedPool ??= createComputePool({ size: 2 }));
+  // Heavy stages own short-lived heaps. Await teardown before constructing the
+  // next stage; keep the small read/fingerprint pool separate from bulk scans.
+  async function phaseCompute(callback) {
+    if (options.computePool) return callback(options.computePool);
+    const pool = createComputePool({ size: 2 });
+    try { return await callback(pool); } finally { await pool.close(); }
+  }
   const keyOf = (id, game) => `${id}:${game}`;
   async function read(id, gameNumber) {
     reviewPath(id, gameNumber);
@@ -184,8 +191,8 @@ export function createCloudReviewReader({ loadReplay, dataDir = defaultDataDir()
           });
           verifiedRevision = value.revision;
         };
-        const { source, sourceInput, report, repository, branch } = await fetchReview(id, gameNumber,
-          { ...options, computePool: compute(), deferSourceVerification: true, dataDir, onVerifiedTarget, onVerifiedRevision });
+        let { source, sourceInput, report, repository, branch } = await phaseCompute(pool => fetchReview(id, gameNumber,
+          { ...options, computePool: pool, deferSourceVerification: true, dataDir, onVerifiedTarget, onVerifiedRevision }));
         if (closing) return;
         const settings = await readCoachSyncState(dataDir);
         if (repository !== settings.repository || !/^[A-Za-z0-9][A-Za-z0-9_.\/-]{0,127}$/.test(branch ?? '')) reviewReject('sync-target');
@@ -210,17 +217,30 @@ export function createCloudReviewReader({ loadReplay, dataDir = defaultDataDir()
             db.exec('COMMIT'); return true;
           } catch (error) { db.exec('ROLLBACK'); throw error; }
         });
-        if (!report) {
-          if (sourceInput) await compute().run('cloudReviewSync', { sourceInput, report: null });
+        let metadata;
+        if (sourceInput) {
+          const pending = phaseCompute(pool => pool.run('cloudReviewSource', { sourceInput, report }));
+          sourceInput = undefined;
+          const checked = await pending;
+          if (closing) return;
+          if (!report) { task.status = await publish('missing') ? 'missing' : 'stale'; return; }
+          if (checked.status !== 'ready') { await publish('stale'); task.status = 'stale'; return; }
+          metadata = checked.metadata;
+        } else if (!report) {
           task.status = await publish('missing') ? 'missing' : 'stale'; return;
         }
         // Injected fetchers are trusted dependencies, but still need an opaque
         // source verdict. Production fetch returns raw bytes for worker checks.
-        if (!sourceInput && validateCloudReviewBinding(report, source).status !== 'ready') { await publish('stale'); task.status = 'stale'; return; }
-        const replay = await loadReplay(id), game = findReviewGame(replay, gameNumber);
-        if (!game) reviewReject('local-game');
-        const verified = await compute().run('cloudReviewSync', { sourceInput,
-          sourceMetadata: sourceInput ? undefined : { cards: source.cards, history_key: source.history_key, content_hash: source.content_hash }, report, replay });
+        if (!metadata) {
+          if (validateCloudReviewBinding(report, source).status !== 'ready') { await publish('stale'); task.status = 'stale'; return; }
+          metadata = { cards: source.cards, history_key: source.history_key, content_hash: source.content_hash };
+        }
+        source = undefined;
+        let replay = await loadReplay(id);
+        if (!findReviewGame(replay, gameNumber)) reviewReject('local-game');
+        const pending = phaseCompute(pool => pool.run('cloudReviewLocal', { sourceMetadata: metadata, report, replay }));
+        replay = undefined;
+        const verified = await pending;
         if (verified.status !== 'ready') { await publish('stale'); task.status = 'stale'; return; }
         const fingerprint = verified.fingerprint;
         const current = await loadReplay(id), currentGame = findReviewGame(current, gameNumber);
