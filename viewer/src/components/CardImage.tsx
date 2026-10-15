@@ -31,9 +31,9 @@ export function CardImage({ grpId, card, className = '', style, isTapped = false
   const hidden = visibleId === 0 && /hidden|post.?game/i.test(card?.visibility ?? '');
   const info = useCardImage(visibleId);
   const [viewport, size] = useElementSize<HTMLDivElement>();
-  const [imgError, setImgError] = useState(false), [loaded, setLoaded] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const togglePinned = useHoverStore(s => s.togglePinned), selected = useHoverStore(s => s.card), pinned = useHoverStore(s => s.pinned);
-  useEffect(() => { setImgError(false); setLoaded(false); }, [visibleId]);
+  useEffect(() => { setLoaded(false); }, [visibleId, info.imageAttempt]);
   const englishName = hidden ? undefined : card?.name ?? info.name;
   const name = hidden ? '未知牌' : info.displayNameZh ?? englishName ?? fallbackLabel ?? '未知牌';
   const manaCost = hidden ? undefined : card?.manaCost ?? info.manaCost;
@@ -53,11 +53,11 @@ export function CardImage({ grpId, card, className = '', style, isTapped = false
   const content = <>
     <div ref={viewport} className="card-art-viewport">
       <div className={`card-art ${isTapped ? 'tapped' : ''}`} style={artStyle}>
-        <div className={`card-fallback ${loaded && !imgError ? 'invisible' : ''}`} aria-hidden={loaded && !imgError}>
+        <div className={`card-fallback ${loaded && Boolean(info.imageUrl) ? 'invisible' : ''}`} aria-hidden={loaded && Boolean(info.imageUrl)}>
           <span className="card-fallback-type">{hidden ? '牌面隐藏' : isToken ? '衍生物' : card?.typeLine ?? info.typeLine ?? '卡牌'}</span>
           <strong>{name}</strong><ManaCost cost={manaCost} />{pt && <b>{pt}</b>}
         </div>
-        {info.imageUrl && !imgError && <img src={info.imageUrl} alt={name} className={loaded ? 'loaded' : ''} loading="lazy" onLoad={() => setLoaded(true)} onError={() => setImgError(true)} draggable={false} />}
+        {info.imageUrl && <img key={`${visibleId}:${info.imageAttempt}`} src={info.imageUrl} alt={name} className={loaded ? 'loaded' : ''} loading="lazy" onLoad={() => { setLoaded(true); info.imageLoaded(); }} onError={() => { setLoaded(false); info.imageError(); }} draggable={false} />}
       </div>
       {handNumber !== undefined && <span className="hand-number" aria-hidden="true">{handNumber}</span>}
     </div>
@@ -72,7 +72,7 @@ export function CardImage({ grpId, card, className = '', style, isTapped = false
     onMouseLeave={() => useCombatFocusStore.getState().clear(card?.instanceId)}
     onFocus={event => { if (event.currentTarget.matches(':focus-visible')) useCombatFocusStore.getState().set(card && event.currentTarget.closest('.full-battlefield:not(.full-land-field)') ? card.instanceId : null); }}
     onBlur={() => useCombatFocusStore.getState().clear(card?.instanceId)} onClick={() => togglePinned(previewCard)}>{content}</button>
-    : <div className={classes} style={style}>{content}</div>;
+    : <div className={classes} style={style}>{content}{!hidden && (info.imagePhase === 'waiting' || info.imagePhase === 'failed') && <button type="button" className="card-image-retry" disabled={info.imagePhase === 'waiting'} onClick={event => { event.stopPropagation(); info.retryImage(); }} aria-label={`重新加载 ${name} 的图片`}>{info.imagePhase === 'waiting' ? '图片暂不可用，稍后重试' : '重新加载图片'}</button>}</div>;
 }
 
 /** One face-only modal. Background clicks and Escape close only this preview. */
@@ -85,9 +85,9 @@ export function CardInspectorOverlay() {
   if (!card) return null;
   return createPortal(<dialog ref={dialog} className="card-inspector-overlay pinned face-only-dialog" aria-label="卡牌预览"
     onCancel={event => { event.preventDefault(); event.stopPropagation(); close(); }} onClick={event => { event.stopPropagation(); close(); }}>
-    <button type="button" className="preview-dismiss" onClick={close} aria-label="关闭卡牌预览">
+    <div className="preview-dismiss">
       <CardImage grpId={card.grpId} card={card} className="inspector-card" showTooltip={false} showCaption={false} />
-    </button>
+    </div>
   </dialog>, document.body);
 }
 

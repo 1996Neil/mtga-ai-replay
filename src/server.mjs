@@ -4,7 +4,8 @@ import { readFile, stat, realpath, mkdir, writeFile, rm } from 'node:fs/promises
 import { resolve, join, extname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defaultDataDir, listReplays, getReplay, getArchivedCard } from './history.mjs';
-import { getCardMetadata, getCardImage, cardImageIsCached } from './card-cache.mjs';
+import { createCardIdentityResolver } from './card-image-identity.mjs';
+import { getCardMetadata, getCardImage, cardImageIsCached, cardImageRetryAfter } from './card-cache.mjs';
 import { createCoachContext } from './coach-context.mjs';
 import { loadInstalledChineseDisplayNames } from './display-names.mjs';
 import { createViewerSync } from './viewer-sync.mjs';
@@ -18,8 +19,9 @@ const defaultViewer = fileURLToPath(new URL('../viewer/dist/', import.meta.url))
 const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.ico': 'image/x-icon', '.woff2': 'font/woff2' };
 
-export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir = defaultViewer, port = 0, cardNames = new Map(), cardMetadata = new Map(), displayNamesZh, fetchFn = fetch, writeInfo = true, syncWorkflow, collectionUpdate, collectionSync, notifyTask = notifyViewerTask, requestExtension, closeExtension, extraCapabilities = [], replayProvider, enableReplaySync = !replayProvider, enableCollection = enableReplaySync && !replayProvider, includeLocalHistory = enableReplaySync || !replayProvider, observeLocalLogs = includeLocalHistory, localHistoryOptions = {}, reviewReader, sourceIdentity = null } = {}) {
+export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir = defaultViewer, port = 0, cardNames = new Map(), cardMetadata = new Map(), displayNamesZh, cardIdentityResolver, fetchFn = fetch, writeInfo = true, syncWorkflow, collectionUpdate, collectionSync, notifyTask = notifyViewerTask, requestExtension, closeExtension, extraCapabilities = [], replayProvider, enableReplaySync = !replayProvider, enableCollection = enableReplaySync && !replayProvider, includeLocalHistory = enableReplaySync || !replayProvider, observeLocalLogs = includeLocalHistory, localHistoryOptions = {}, reviewReader, sourceIdentity = null } = {}) {
   const root = await realpath(resolve(viewerDir)).catch(() => resolve(viewerDir));
+  const identityResolver = cardIdentityResolver ?? createCardIdentityResolver();
   const chineseNames = displayNamesZh ?? await loadInstalledChineseDisplayNames();
   let assignedPort, closePromise, closing = false;
   const journal = enableReplaySync || enableCollection ? createTaskJournal(dataDir) : null;
@@ -175,15 +177,15 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
             metadata_source: 'published-history', source_revision: sourceIdentity.revision,
             image_url: imageCached ? `/api/cards/${id}/image` : null, image_available: imageCached, image_cached: imageCached });
         }
-        const options = { dataDir, fetchFn, local: await localCard(id) };
+        const options = { dataDir, fetchFn, identityResolver, refreshImage: url.searchParams.get('retry') === '1', local: await localCard(id) };
         if (cardRoute[2]) {
           const image = await getCardImage(id, options);
-          return image ? send(response, 200, image.data, image.contentType) : send(response, 404, { error: 'Image unavailable. Use card text.' });
+          return image ? send(response, 200, image.data, image.contentType) : send(response, 503, { error: 'Image temporarily unavailable. Use card text.', retry_after: cardImageRetryAfter(id, options) }, 'application/json; charset=utf-8', { 'Retry-After': String(Math.max(1, Math.ceil((cardImageRetryAfter(id, options) - Date.now()) / 1000))) });
         }
         const metadata = await getCardMetadata(id, options);
         return send(response, 200, { ...metadata, display_name_zh: chineseNames.get(id) ?? null,
           image_url: metadata.image_source ? `/api/cards/${id}/image` : null,
-          image_available: Boolean(metadata.image_source), image_cached: await cardImageIsCached(id, { dataDir }) });
+          image_retry_after: cardImageRetryAfter(id, options), image_available: Boolean(metadata.image_source), image_cached: await cardImageIsCached(id, { dataDir }) });
       }
       if (path.startsWith('/api/')) return send(response, 404, { error: 'Unknown API route.' });
       const requested = resolve(root, `.${path === '/' ? '/index.html' : path}`);
