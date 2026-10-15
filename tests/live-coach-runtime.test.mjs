@@ -40,6 +40,7 @@ async function server(t, options = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'mtga-coach-route-')), viewerDir = join(dir, 'viewer');
   await mkdir(viewerDir); await writeFile(join(viewerDir, 'index.html'), '<!doctype html><title>Offline contract viewer</title>');
   const running = await startReplayServer({ viewerDir, dataDir: join(dir, 'data'), writeInfo: false,
+    observeLocalLogs: false, // Route contracts must not discover real machine logs.
     displayNamesZh: new Map(), fetchFn: async () => { throw new Error('No cloud calls in route tests'); }, ...options });
   t.after(async () => { await running.close(); await rm(dir, { recursive: true, force: true }); });
   const post = (action, input = {}, override = {}) => fetch(`${running.url}api/live-coach/${action}`, { method: 'POST',

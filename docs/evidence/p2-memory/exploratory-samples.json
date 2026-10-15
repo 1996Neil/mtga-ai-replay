@@ -1,0 +1,49 @@
+[
+  {
+    "experiment": "pilot-B1",
+    "formal": false,
+    "wall_ms": 28354.151749999997,
+    "cpu_ms": 21665.994,
+    "peak_mib": 1607.515625,
+    "loop_ms": 80.216063,
+    "http_ms": 28.59204200000022,
+    "settle_seconds": 60,
+    "status": "ready"
+  },
+  {
+    "experiment": "profile-B1",
+    "formal": false,
+    "wall_ms": 31596.061999999998,
+    "cpu_ms": 22939.673,
+    "peak_mib": 1645.9375,
+    "loop_ms": 97.583103,
+    "http_ms": 86.63195800000176,
+    "settle_seconds": 0,
+    "status": "ready"
+  },
+  {
+    "experiment": "pilot-B2",
+    "formal": false,
+    "wall_ms": 26299.989833000003,
+    "cpu_ms": 19507.277,
+    "peak_mib": 818.015625,
+    "loop_ms": 83.951615,
+    "http_ms": 33.44429200000013,
+    "settle_seconds": 0,
+    "status": "ready"
+  },
+  {
+    "experiment": "old-copied-fixture",
+    "formal": false,
+    "status": "stale",
+    "accepted": false,
+    "reason": "rebuilt a matching source with exact baseline before formal comparisons"
+  },
+  {
+    "experiment": "initial-observer-copy",
+    "formal": false,
+    "status": "failed",
+    "accepted": false,
+    "reason": "missing schema resources in observation-only copy; corrected before valid profile"
+  }
+]

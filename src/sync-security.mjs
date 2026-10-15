@@ -155,6 +155,57 @@ function textContent(value, path) {
   catch { reject(path, 'invalid-utf8'); }
 }
 
+function scanSerializedJsonText(text, path) {
+  const decoded = text.replace(/\\u([0-9a-f]{4})/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16))).replace(/\\\//g, '/');
+  if (/"\/(?!\/)[^"\r\n]+/.test(decoded)) reject(path, 'local-machine-path');
+  scanText(decoded, path);
+  scanText(text, path);
+}
+
+/** Additional continuous-value check for an already parsed/reconstructed coach.
+ * Raw files STILL require validateBundleFiles (UTF-8, duplicate members, etc.).
+ * Canonical pretty JSON separates tokens by punctuation/newlines; the only
+ * credential pattern spanning that punctuation is key + closing quote + colon.
+ * Scan that exact token as well as every complete string and semantic key.
+ * No toJSON/getter/prototype can substitute a different serialized value. */
+export function validateExpandedCoach(value) {
+  const path = 'latest/coach.json';
+  if (!value || typeof value !== 'object' || Object.getOwnPropertyDescriptor(value, 'schema')?.value !== 'MTGA_FULL_COACH_V1') reject(path, 'expanded-coach-type');
+  const pending = [{ value }], active = new WeakSet(), done = new WeakSet();
+  while (pending.length) {
+    const frame = pending.pop(), current = frame.value;
+    if (frame.exit) { active.delete(current); done.add(current); continue; }
+    if (typeof current === 'string') {
+      if (/^\/(?!\/)[^\s]/.test(current)) reject(path, 'local-machine-path');
+      scanText(current, path); scanSerializedJsonText(JSON.stringify(current), path); continue;
+    }
+    if (current === null || current === undefined || typeof current === 'boolean' || typeof current === 'number') continue;
+    if (typeof current !== 'object') reject(path, 'non-json-coach-value');
+    const array = Array.isArray(current), proto = Object.getPrototypeOf(current);
+    if (proto !== (array ? Array.prototype : Object.prototype) && proto !== null) reject(path, 'non-json-coach-value');
+    if (Object.getOwnPropertyDescriptor(Object.prototype, 'toJSON') || Object.getOwnPropertyDescriptor(Array.prototype, 'toJSON')) reject(path, 'non-json-coach-value');
+    if (active.has(current)) reject(path, 'cyclic-coach-value');
+    if (done.has(current)) continue;
+    const descriptors = Object.getOwnPropertyDescriptors(current);
+    if (Reflect.ownKeys(descriptors).some(key => typeof key !== 'string' || !('value' in descriptors[key]) ||
+        (key === 'toJSON' && typeof descriptors[key].value === 'function'))) reject(path, 'non-json-coach-value');
+    active.add(current); pending.push({ value: current, exit: true });
+    const keys = array ? null : Object.keys(current);
+    for (let i = 0, length = array ? current.length : keys.length; i < length; i++) {
+      const key = array ? String(i) : keys[i];
+      // JSON.stringify reads inherited array indices, including getters. Reject
+      // those holes without invoking inherited code or silently skipping data.
+      if (array && !Object.hasOwn(descriptors, key) && key in current) reject(path, 'non-json-coach-value');
+      const child = Object.hasOwn(descriptors, key) ? descriptors[key].value : undefined;
+      // JSON.stringify omits undefined object fields and encodes array holes as null.
+      if (child === undefined) continue;
+      if (!array) { scanJsonKey(key, typeof child === 'string', path); scanSerializedJsonText(JSON.stringify(key) + ':', path); }
+      pending.push({ value: child });
+    }
+  }
+  return { ok: true };
+}
+
 /** Validate the complete publishable tree without truncating or rewriting it. */
 export function validateBundleFiles(filesMap) {
   let entries;
@@ -177,11 +228,8 @@ export function validateBundleFiles(filesMap) {
       scanJson(value, path);
       // Also inspect discarded duplicate values: JSON.parse keeps only the final
       // property, while the earlier text would still be committed to Git.
-      const decoded = text.replace(/\\u([0-9a-f]{4})/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16))).replace(/\\\//g, '/');
-      if (/"\/(?!\/)[^"\r\n]+/.test(decoded)) reject(path, 'local-machine-path');
-      scanText(decoded, path);
-    }
-    scanText(text, path);
+      scanSerializedJsonText(text, path);
+    } else scanText(text, path);
   }
   return { ok: true, fileCount: entries.length };
 }

@@ -1,0 +1,68 @@
+{
+  "baseline": "bf70d7934e9aa5d3b9c06f93b41b335f0697525b",
+  "candidate_production_sha256": {
+    "src/coach-bundle.mjs": "3843b7c07579fc26d2d47f61ff4abbde15afee3ba54ccdbf8cb98cc1327a0940",
+    "src/compute-pool.mjs": "50658136e55af5627293a6bd8c7c554e394efaedc634f4514771a9e888215f11",
+    "src/compute-worker.mjs": "cd8cb0446886f8cc910963edef70bd09aeef3fa9e9c72dea18548b989aaf809e",
+    "src/review/cloud-review-compute.mjs": "54a28dee35e03d204a4ea05a8a757a9af2d0af3a5becdf68bbd8fd45ad0b5753",
+    "src/review/cloud-review.mjs": "714d9d17cf4d4d320e4a8390c957798ac75b484ee7c9d8b77ee44984456f1e3a",
+    "src/review/review-sync.mjs": "d3b89d273c30fab9da3cf2a33d9508da73afd7fc19a2ef05c0866ff41ea2e587",
+    "src/sync-security.mjs": "0297871ae19d2b6e10bff26508e6cd9a24eddc49e3340bf71b03ad9e2dd08f7e"
+  },
+  "frozen_replay_sha256": "a47d8640c93a3d362ed1d0a8a75e669773c5e505f7dcda75eaa5efb6b5d1a82f",
+  "remote_revision": "8bb06a56a12f43355f0027c1eccb87746dc3a169",
+  "node": "v24.19.0",
+  "os": "macOS-27.0.1-arm64-arm-64bit",
+  "cpu": "Apple M1 Pro",
+  "memory_bytes": 34359738368,
+  "harness": {
+    "harness_sha256": "81a3141c2c9e0298ce4551b2058229c80f45d2e0e7e3ea1a93854eb16b05eaab",
+    "inherited_git_variable_names": [
+      "GIT_PAGER"
+    ]
+  },
+  "corpus": [
+    {
+      "actions": 340,
+      "unchanged": true,
+      "readonly_mode": "0o400"
+    },
+    {
+      "actions": 545,
+      "unchanged": true,
+      "readonly_mode": "0o400"
+    },
+    {
+      "actions": 548,
+      "unchanged": true,
+      "readonly_mode": "0o400"
+    },
+    {
+      "actions": 807,
+      "unchanged": true,
+      "readonly_mode": "0o400"
+    },
+    {
+      "actions": 561,
+      "unchanged": true,
+      "readonly_mode": "0o400"
+    },
+    {
+      "actions": 382,
+      "unchanged": true,
+      "readonly_mode": "0o400"
+    },
+    {
+      "actions": 391,
+      "unchanged": true,
+      "readonly_mode": "0o400"
+    },
+    {
+      "actions": 387,
+      "unchanged": true,
+      "readonly_mode": "0o400"
+    }
+  ],
+  "shipping_harness_sha256": "824528166d7ec06a17635d445b5aa243e9738cb51baa506e4a072adb5686f5c3",
+  "archived_harness_sha256": "81a3141c2c9e0298ce4551b2058229c80f45d2e0e7e3ea1a93854eb16b05eaab"
+}
