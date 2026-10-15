@@ -3,7 +3,12 @@ import { createHash } from 'node:crypto';
 import { StringDecoder } from 'node:string_decoder';
 
 const isReplayRecord = (obj, text) => Boolean(obj.greToClientEvent || obj.matchGameRoomStateChangedEvent ||
-  text.includes('CourseDeckSummary') || text.includes('EventSetDeckV2'));
+  text.includes('CourseDeckSummary') || text.includes('EventSetDeckV2') ||
+  text.includes('\"DraftPack\"') || text.includes('\"PackCards\"') ||
+  text.includes('\"PickedCards\"') ||
+  ((text.includes('\"PackNumber\"') || text.includes('\"SelfPack\"')) &&
+   (text.includes('\"PickNumber\"') || text.includes('\"SelfPick\"')) &&
+   (text.includes('\"CardId\"') || text.includes('\"GrpId\"'))));
 
 // Shared framing only; semantic state remains the canonical PerspectiveState.
 // An unfinished event stays here between reads and never crosses a file reset.

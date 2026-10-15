@@ -123,6 +123,10 @@ test('offline fetch and rejected push retain local publication status and retry 
   assert.doesNotMatch(JSON.stringify(status), /SyntheticSecret|\/Users\/|token@example/);
   h.control.offline = false; h.control.rejectPush = true;
   await assert.rejects(syncCollectionSnapshot(value, h.options), error => error.code === 'SYNC_PUSH_FAILED');
+  status = await getCollectionSyncStatus(h.options);
+  assert.equal(status.pending, 1); assert.equal(status.last_synced, null);
+  assert.match(status.last_error.message, /remote outcome is unverified/);
+  assert.doesNotMatch(JSON.stringify(status), /SyntheticSecret|\/Users\/|token@example/);
   assert.equal(await h.commits(), firstCommits);
   const localCommit = (await execute('git', ['rev-parse', 'HEAD'], { cwd: h.checkout, env })).stdout.trim();
   h.control.rejectPush = false;

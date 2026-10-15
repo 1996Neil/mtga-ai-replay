@@ -783,17 +783,16 @@ a{
 .sync-details .task-note { color: #b3c1b8; font-size: 11px; }
 .sync-details > .task-retry { float: none; margin-top: 6px; padding: 7px 10px; }
 
-
 .draft-runs h2,.all-matches>summary{
   margin:8px 4px;color:#d4ddd9;font-size:12px;font-weight:700;letter-spacing:.04em}
 .draft-run,.all-matches{border-top:1px solid #384143;padding:5px 0}
 .draft-run>summary{
-  display:grid;grid-template-columns:72px minmax(65px,1fr) auto auto;gap:5px 8px;
+  display:grid;grid-template-columns:minmax(0,1fr);gap:5px;
   align-items:center;cursor:pointer;font-size:11px;padding:8px 4px;list-style:none}
 .draft-run>summary::-webkit-details-marker,.draft-pool>summary::-webkit-details-marker,.all-matches>summary::-webkit-details-marker{display:none}
 .draft-run>summary strong{white-space:nowrap}
 .draft-run-colors{color:#bdcbc5;white-space:nowrap}
-.draft-run-status{grid-column:2 / -1;color:#b9c5be;font-size:10px}
+.draft-run-status{color:#b9c5be;font-size:10px}
 .draft-run-status.in_progress{color:#9ed7b1}
 .draft-run-status.incomplete{color:#f2c77b}
 .draft-run-warning{margin:2px 6px 7px;color:#f2c77b;font-size:10px;line-height:1.4}
@@ -802,7 +801,20 @@ a{
 .draft-pool ol{columns:2;margin:0;padding:0 8px 8px 26px;color:#c3ceca;font-size:10px}
 .draft-run-matches{padding:0 3px}
 .all-matches>summary{padding:8px;cursor:pointer;list-style:none}
-.history-menu{max-height:min(78dvh,680px)}
+.history-menu{width:min(352px,calc(80dvw - 25.6px));max-height:min(78dvh,680px)}
+.history-date,.history-item strong{white-space:nowrap;flex-shrink:0}
+.history-date{font-variant-numeric:tabular-nums}
+.history-event{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.history-item{display:grid;grid-template-columns:minmax(0,1fr);gap:5px}
+.history-row-top,.history-row-bottom{display:flex;align-items:baseline;gap:8px;min-width:0;width:100%}
+.history-row-bottom{justify-content:space-between}
+.history-row-result{display:flex;align-items:baseline;gap:8px;margin-left:auto;white-space:nowrap}
+.history-row-context{color:#b9c5be;font-size:10px}
+@media(max-width:760px){
+  .app-header{position:relative}
+  .history-picker{position:static}
+  .history-menu{left:12px;right:auto;top:calc(100% + 4px);width:calc(80% - 19.2px);max-height:min(65dvh,540px)}
+}
 
 .draft-picks{margin:0 4px 6px;background:#202628;border-radius:5px}
 .draft-picks>summary{padding:7px;cursor:pointer;font-size:11px}
