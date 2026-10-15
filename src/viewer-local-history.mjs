@@ -64,7 +64,8 @@ export function createLocalReplayHistory({ dataDir, logPath, logDir, cardDb,
       pending = null; nextImportAt = now() + minImportIntervalMs;
       status = { status: 'succeeded', imports: status.imports + 1,
         last_success_at: new Date(now()).toISOString(), error: null,
-        cached: Boolean(imported.cached), archived: imported.archive?.archived ?? 0 };
+        cached: Boolean(imported.cached), archived: imported.archive?.archived ?? 0,
+        preserved_conflicts: imported.archive?.conflicts ?? 0 };
     } catch {
       // Paths and raw log/parser errors never enter the browser status API.
       status = { ...status, status: 'failed', error: '本地回放更新暂时失败；会自动重试。' };

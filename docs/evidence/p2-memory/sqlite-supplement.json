@@ -1,0 +1,203 @@
+{
+  "formal_five_pair_dataset": false,
+  "n_pairs": 1,
+  "description": "Production getReplay reads a new isolated SQLite copy, same-origin HTTP POST starts sync; normal GC, 60s idle, three warm reads. Includes fixture setup in process maxRSS. No real database writes.",
+  "samples": [
+    {
+      "arm": "A",
+      "loader": "sqlite",
+      "actions": 807,
+      "status": "ready",
+      "notes": 1,
+      "wall_ms": 28518.05475,
+      "node_cpu_ms": 21769.111,
+      "node_peak_rss": 2197684224,
+      "node_sampled_peak_rss": 2196570112,
+      "node_kernel_peak_rss": 2197684224,
+      "node_after": {
+        "rss": 1715585024,
+        "heapTotal": 265830400,
+        "heapUsed": 162426192,
+        "external": 54944252,
+        "arrayBuffers": 50889070
+      },
+      "idle": {
+        "30": {
+          "stage": "idle:30",
+          "at": 1792048266900.5862,
+          "isolate": "parent",
+          "rss": 1465106432,
+          "heapTotal": 265830400,
+          "heapUsed": 163786416,
+          "external": 54944252,
+          "arrayBuffers": 50889070,
+          "gc": {
+            "count": 45,
+            "ms": 48.605916023254395,
+            "max_ms": 7.884833008050919
+          }
+        },
+        "60": {
+          "stage": "idle:60",
+          "at": 1792048296902.4521,
+          "isolate": "parent",
+          "rss": 1466368000,
+          "heapTotal": 265830400,
+          "heapUsed": 165196192,
+          "external": 54944252,
+          "arrayBuffers": 50889070,
+          "gc": {
+            "count": 45,
+            "ms": 48.605916023254395,
+            "max_ms": 7.884833008050919
+          }
+        }
+      },
+      "warm": [
+        {
+          "wall_ms": 353.4339580000087,
+          "cpu_ms": 489.53,
+          "rss": 1004175360,
+          "notes": 1
+        },
+        {
+          "wall_ms": 358.91924999999173,
+          "cpu_ms": 424.436,
+          "rss": 1150009344,
+          "notes": 1
+        },
+        {
+          "wall_ms": 347.57762500000536,
+          "cpu_ms": 398.941,
+          "rss": 1297956864,
+          "notes": 1
+        }
+      ],
+      "event_loop_max_ms": 177.209343,
+      "http_max_ms": 169.6205000000009,
+      "http_p95_ms": 2.417915999999991,
+      "http_failures": 0,
+      "git": {
+        "node_observed_peak_rss": 2193145856,
+        "single_peak_rss": 86056960,
+        "concurrent_peak_rss": 120508416,
+        "positive_samples": 32,
+        "interval_ms": 100
+      },
+      "git_commands": 164,
+      "parent_gc": {
+        "count": 57,
+        "ms": 83.46245902776718,
+        "max_ms": 8.726750016212463
+      },
+      "process_versions": {
+        "node": "v24.19.0",
+        "platform": "darwin",
+        "arch": "arm64"
+      },
+      "observer": {
+        "rss_interval_ms": 20,
+        "git_interval_ms": 100,
+        "explicit_gc": false
+      }
+    },
+    {
+      "arm": "B",
+      "loader": "sqlite",
+      "actions": 807,
+      "status": "ready",
+      "notes": 1,
+      "wall_ms": 27689.896834,
+      "node_cpu_ms": 20338.935,
+      "node_peak_rss": 1090568192,
+      "node_sampled_peak_rss": 1086324736,
+      "node_kernel_peak_rss": 1090568192,
+      "node_after": {
+        "rss": 1086324736,
+        "heapTotal": 265306112,
+        "heapUsed": 162521552,
+        "external": 4330258,
+        "arrayBuffers": 275076
+      },
+      "idle": {
+        "30": {
+          "stage": "idle:30",
+          "at": 1792048356595.0134,
+          "isolate": "parent",
+          "rss": 1045970944,
+          "heapTotal": 265306112,
+          "heapUsed": 163839048,
+          "external": 4330258,
+          "arrayBuffers": 275076,
+          "gc": {
+            "count": 47,
+            "ms": 49.0951269865036,
+            "max_ms": 5.835084021091461
+          }
+        },
+        "60": {
+          "stage": "idle:60",
+          "at": 1792048386595.781,
+          "isolate": "parent",
+          "rss": 1046020096,
+          "heapTotal": 265306112,
+          "heapUsed": 165197120,
+          "external": 4330258,
+          "arrayBuffers": 275076,
+          "gc": {
+            "count": 47,
+            "ms": 49.0951269865036,
+            "max_ms": 5.835084021091461
+          }
+        }
+      },
+      "warm": [
+        {
+          "wall_ms": 370.47420900000725,
+          "cpu_ms": 499.775,
+          "rss": 859193344,
+          "notes": 1
+        },
+        {
+          "wall_ms": 360.0711670000019,
+          "cpu_ms": 430.399,
+          "rss": 936132608,
+          "notes": 1
+        },
+        {
+          "wall_ms": 414.63495800000965,
+          "cpu_ms": 431.685,
+          "rss": 1046134784,
+          "notes": 1
+        }
+      ],
+      "event_loop_max_ms": 216.662015,
+      "http_max_ms": 200.45037500000035,
+      "http_p95_ms": 5.46337499999936,
+      "http_failures": 0,
+      "git": {
+        "node_observed_peak_rss": 1086324736,
+        "single_peak_rss": 84758528,
+        "concurrent_peak_rss": 117821440,
+        "positive_samples": 33,
+        "interval_ms": 100
+      },
+      "git_commands": 164,
+      "parent_gc": {
+        "count": 59,
+        "ms": 82.87675195932388,
+        "max_ms": 8.594958007335663
+      },
+      "process_versions": {
+        "node": "v24.19.0",
+        "platform": "darwin",
+        "arch": "arm64"
+      },
+      "observer": {
+        "rss_interval_ms": 20,
+        "git_interval_ms": 100,
+        "explicit_gc": false
+      }
+    }
+  ]
+}

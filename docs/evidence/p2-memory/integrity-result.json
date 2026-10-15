@@ -1,0 +1,55 @@
+{
+  "replays.sqlite3": {
+    "cards": {
+      "before": 1045,
+      "after": 1045,
+      "missing": 0,
+      "changed": 0,
+      "added": 0
+    },
+    "coach_notes": {
+      "before": 1,
+      "after": 1,
+      "missing": 0,
+      "changed": 0,
+      "added": 0
+    },
+    "replays": {
+      "before": 171,
+      "after": 171,
+      "missing": 0,
+      "changed": 0,
+      "added": 0
+    }
+  },
+  "draft-runs.sqlite3": {
+    "draft_run_matches": {
+      "before": 88,
+      "after": 88,
+      "missing": 0,
+      "changed": 0,
+      "added": 0
+    },
+    "draft_run_meta": {
+      "before": 1,
+      "after": 1,
+      "missing": 0,
+      "changed": 0,
+      "added": 0
+    },
+    "draft_run_picks": {
+      "before": 0,
+      "after": 0,
+      "missing": 0,
+      "changed": 0,
+      "added": 0
+    },
+    "draft_runs": {
+      "before": 15,
+      "after": 15,
+      "missing": 0,
+      "changed": 0,
+      "added": 0
+    }
+  }
+}

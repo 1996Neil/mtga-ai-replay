@@ -130,7 +130,10 @@ test('a malicious review on another fetched branch still blocks read and upload 
   const result = await localAgentClient(h).compareAndSwapReview({ ...plan, contents: '{"unknown":"malicious fixture"}' });
   await execute(h, ['update-ref', 'refs/heads/untrusted-agent', result.commitOid]);
   await execute(h, ['update-ref', 'refs/heads/main', input.expectedHeadOid, result.commitOid]);
-  await assert.rejects(fetchCloudReview(input.report.match_id, 1, h.options), error => error.code === 'MTGA_SYNC_SECURITY');
+  const { createComputePool } = await import('../src/compute-pool.mjs');
+  const pool = createComputePool();
+  try { await assert.rejects(fetchCloudReview(input.report.match_id, 1, { ...h.options, computePool: pool }), error => error.code === 'MTGA_SYNC_SECURITY'); }
+  finally { await pool.close(); }
   await enqueueCoachBundle(await bundle({ id: 'synthetic-next-match' }), h.options);
   await assert.rejects(syncCoachBundles(h.options), error => error.code === 'MTGA_SYNC_SECURITY');
 });
@@ -174,4 +177,59 @@ test('fetch lease serializes target discovery and target persistence across inde
   assert.equal(h.control.visibilityChecks, checks); release(); await first;
   await fetchCloudReview(input.report.match_id, 1, { ...h.options, onVerifiedTarget: async target => { targets.push(target.branch); } });
   assert.deepEqual(targets, ['main', 'new-main']);
+});
+
+test('explicit historical published session stays pinned after remote source advances and never touches local archive/cache', async t => {
+  const { openPublishedReplaySession } = await import('../src/review/published-replay-session.mjs');
+  const { startReplayServer } = await import('../src/server.mjs');
+  const { h, input, first } = await setup(t), receipt = await publishCloudReview(input, localAgentClient(h));
+  const beforeSettings = await readFile(join(h.dataDir, 'coach-sync/state.json'));
+  const timings = [], session = await openPublishedReplaySession({ ...h.options, matchId: input.report.match_id, gameNumber: 1, revision: receipt.commitOid, onTiming: value => timings.push(value.stage) });
+  assert.equal(session.identity.revision, receipt.commitOid); assert.equal(session.identity.local_archive, false);
+  const ready = await session.reviewReader.read(input.report.match_id, 1);
+  assert.equal(ready.status, 'ready'); assert.equal(ready.can_sync, false); assert.equal(ready.review.notes.length, 1);
+  assert.equal(session.reviewReader.start().code, 403);
+  assert.throws(() => { session.replay.games[0].states.S1.players.me.life = 0; }, TypeError);
+  assert.throws(() => { session.review.notes[0].title = 'changed'; }, TypeError);
+  const wire = await session.replayProvider.bytes(input.report.match_id);
+  assert.deepEqual(JSON.parse(wire), session.replay);
+  wire.fill(0);
+  assert.deepEqual(JSON.parse(await session.replayProvider.bytes(input.report.match_id)), session.replay);
+  assert.deepEqual(await readFile(join(h.dataDir, 'coach-sync/state.json')), beforeSettings);
+  const { access } = await import('node:fs/promises');
+  await assert.rejects(access(join(h.dataDir, 'reviews.sqlite3')), { code: 'ENOENT' });
+  await assert.rejects(access(join(h.dataDir, 'replays.sqlite3')), { code: 'ENOENT' });
+  assert.deepEqual(timings, ['private-repository','git-fetch','history-safety','published-files','source-verification','session-freeze']);
+  let externalCalls = 0;
+  const runtime = await startReplayServer({ dataDir: h.dataDir, port: 0, writeInfo: false, displayNamesZh: new Map(),
+    replayProvider: session.replayProvider, reviewReader: session.reviewReader, sourceIdentity: session.identity,
+    cardMetadata: new Map(session.cards.map(card => [card.arena_id, card])), fetchFn: async () => { externalCalls++; throw Error('No historical network'); },
+    includeLocalHistory: false, observeLocalLogs: false, enableReplaySync: false, enableCollection: false });
+  t.after(() => runtime.close());
+  assert.deepEqual(await (await fetch(runtime.url+'api/source')).json(), session.identity);
+  assert.deepEqual(await (await fetch(runtime.url+'api/matches/'+input.report.match_id)).json(), session.replay);
+  assert.deepEqual(await (await fetch(runtime.url+'api/matches/latest')).json(), session.replay);
+  assert.equal((await fetch(runtime.url+'api/matches/unknown-match')).status, 404);
+  assert.equal((await (await fetch(runtime.url+'api/local-history')).json()).status, 'disabled');
+  const card = await (await fetch(runtime.url+'api/cards/1')).json();
+  for (const [key, value] of Object.entries(session.cards[0])) if (key !== 'display_name_zh') assert.deepEqual(card[key], value);
+  assert.equal(card.display_name_zh, null);
+  assert.equal((await fetch(runtime.url+'api/cards/999')).status, 404);
+  assert.equal((await fetch(runtime.url+'api/cards/1/image')).status, 404);
+  assert.equal(externalCalls, 0);
+  const changed = structuredClone(first.coach); changed.games[0].result.reason = 'remote evidence update';
+  const { buildCoachBundle } = await import('../src/coach-bundle.mjs');
+  await enqueueCoachBundle(await buildCoachBundle(changed, { cards: first.cards, historyKey: first.historyKey, multipart: true }), h.options);
+  assert.equal((await syncCoachBundles(h.options)).synced, true);
+  const latest = await fetchCloudReview(input.report.match_id, 1, h.options);
+  assert.equal(validateCloudReviewBinding(latest.report, latest.source).status, 'stale');
+  const pinned = await fetchCloudReview(input.report.match_id, 1, { ...h.options, revision: receipt.commitOid });
+  assert.equal(validateCloudReviewBinding(pinned.report, pinned.source).status, 'ready');
+  assert.equal((await session.reviewReader.read(input.report.match_id, 1)).status, 'ready');
+  await assert.rejects(fetchCloudReview(input.report.match_id, 1, { ...h.options, revision: 'f'.repeat(40) }));
+  await assert.rejects(openPublishedReplaySession({ ...h.options, matchId: input.report.match_id, gameNumber: 1, revision: 'HEAD' }), /historical-explicit-source/);
+  const { historicalPublishedView } = await import('../src/review/published-replay-session.mjs');
+  const files = await readTree(h, receipt.commitOid); const part = `matches/${input.source.history_key}/coach.json`;
+  files.set(part, Buffer.from('{}'));
+  await assert.rejects(historicalPublishedView({ sourceInput: { files, matchId: input.report.match_id, revision: receipt.commitOid }, report: input.report }), /source-file-hash/);
 });

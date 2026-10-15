@@ -96,6 +96,13 @@ function plainText(value) {
   }).trim();
 }
 
+// enUS may have been patched in place. Never use translated labels as machine
+// identity. Unavailable English variants retain the parser's Arena-ID fallback.
+function machineLabel(value) {
+  const text = typeof value === 'string' ? plainText(value) : '';
+  return text && !/[^\p{Script=Latin}\p{Number}\p{Punctuation}\p{Symbol}\p{Separator}\p{Mark}]/u.test(text) ? text : null;
+}
+
 /** English display names from Arena's own SQLite database, opened strictly read-only. */
 export async function loadCardNames(path) {
   if (!path) return new Map();
@@ -118,7 +125,7 @@ export async function loadCardNames(path) {
     const names = new Map();
     for (const row of rows) {
       if (typeof row.grpId !== 'number' || typeof row.name !== 'string' || names.has(row.grpId)) continue;
-      const name = plainText(row.name);
+      const name = machineLabel(row.name);
       if (name) names.set(row.grpId, name);
     }
     return names;
@@ -137,7 +144,7 @@ export async function loadCounterNames(path) {
       JOIN Localizations_enUS l ON e.LocId=l.LocId WHERE e.Type='CounterType'
       AND l.Formatted IN (0,1,2) ORDER BY e.Value,l.Formatted`).all();
     const names = new Map();
-    for (const row of rows) if (!names.has(row.id) && row.name) names.set(row.id, plainText(row.name));
+    for (const row of rows) if (!names.has(row.id)) { const name = machineLabel(row.name); if (name) names.set(row.id, name); }
     return names;
   } catch { return new Map(); } finally { database.close(); }
 }

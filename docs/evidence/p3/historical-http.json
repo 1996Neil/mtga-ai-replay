@@ -1,0 +1,116 @@
+{
+  "historical_source": true,
+  "match_get": {
+    "status": 200,
+    "bytes": 49989610,
+    "duration_ms": 1929.583584
+  },
+  "health": {
+    "requests": 25,
+    "all_200": true,
+    "max_ms": 1594.572666,
+    "p95_ms": 205.52491700000002
+  },
+  "samples": [
+    {
+      "duration_ms": 0.8933750000001055,
+      "status": 200
+    },
+    {
+      "duration_ms": 1.622957999999926,
+      "status": 200
+    },
+    {
+      "duration_ms": 1.7217500000001564,
+      "status": 200
+    },
+    {
+      "duration_ms": 2.0764170000002196,
+      "status": 200
+    },
+    {
+      "duration_ms": 2.129707999999937,
+      "status": 200
+    },
+    {
+      "duration_ms": 2.6317079999998896,
+      "status": 200
+    },
+    {
+      "duration_ms": 2.6836670000002414,
+      "status": 200
+    },
+    {
+      "duration_ms": 2.926915999999892,
+      "status": 200
+    },
+    {
+      "duration_ms": 3.107250000000022,
+      "status": 200
+    },
+    {
+      "duration_ms": 3.204791000000114,
+      "status": 200
+    },
+    {
+      "duration_ms": 3.795333000000028,
+      "status": 200
+    },
+    {
+      "duration_ms": 4.111457999999857,
+      "status": 200
+    },
+    {
+      "duration_ms": 4.117749999999887,
+      "status": 200
+    },
+    {
+      "duration_ms": 6.511790999999903,
+      "status": 200
+    },
+    {
+      "duration_ms": 6.806374999999662,
+      "status": 200
+    },
+    {
+      "duration_ms": 6.965666999999939,
+      "status": 200
+    },
+    {
+      "duration_ms": 7.662332999999762,
+      "status": 200
+    },
+    {
+      "duration_ms": 10.972999999999956,
+      "status": 200
+    },
+    {
+      "duration_ms": 12.97104199999967,
+      "status": 200
+    },
+    {
+      "duration_ms": 14.529874999999947,
+      "status": 200
+    },
+    {
+      "duration_ms": 14.806916000000001,
+      "status": 200
+    },
+    {
+      "duration_ms": 31.43041600000015,
+      "status": 200
+    },
+    {
+      "duration_ms": 192.45958300000007,
+      "status": 200
+    },
+    {
+      "duration_ms": 205.52491700000002,
+      "status": 200
+    },
+    {
+      "duration_ms": 1594.572666,
+      "status": 200
+    }
+  ]
+}
