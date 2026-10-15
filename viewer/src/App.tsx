@@ -19,6 +19,13 @@ export function App() {
   const [anchorInput, setAnchorInput] = useState(''), [anchorError, setAnchorError] = useState('');
   const [showWarnings, setShowWarnings] = useState(false);
   const [analysis, setAnalysis] = useState(false);
+  const [publishedSource, setPublishedSource] = useState<{ revision: string; content_hash: string } | null>(null);
+  useEffect(() => { const controller = new AbortController();
+    void fetch('/api/source', { signal: controller.signal, cache: 'no-store' }).then(r => r.ok ? r.json() : null).then(value => {
+      if (!controller.signal.aborted && value?.kind === 'published-history' && /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(value.revision) && /^[a-f0-9]{64}$/.test(value.content_hash)) setPublishedSource(value);
+    }).catch(() => {});
+    return () => controller.abort();
+  }, []);
   const s = useReplayStore(), match = s.currentMatch(), step = s.currentStep();
   const actualBefore = s.viewBefore && Boolean(step?.beforeGameState);
   const request = useRef<AbortController | null>(null);
@@ -124,6 +131,7 @@ export function App() {
     <a className="skip-link" href="#replay-controls">跳至回放控制</a>
     <header className="app-header">
       <h1>MTGA <span>Replay Coach</span></h1>
+      {publishedSource && <span role="status" className="published-source" title={`来源哈希 ${publishedSource.content_hash}`}>历史发布源 · {publishedSource.revision.slice(0, 7)} · 只读（独立于本地归档）</span>}
       <details className="history-picker"><summary>比赛记录 <span>⌄</span></summary><div className="history-menu">
         {history.map(item => <button type="button" key={item.id} aria-label={`${when(item.startedAt)} · ${item.event} · ${item.result==='Win' ? '胜' : item.result==='Loss' ? '负' : item.result}`} className={`history-item ${match?.matchId===item.id ? 'selected' : ''}`} onClick={e=>{loadMatch(item.id); e.currentTarget.closest('details')?.removeAttribute('open');}}>
           <span>{when(item.startedAt)}</span><span>{item.event}</span><strong>{item.result==='Win' ? '胜' : item.result==='Loss' ? '负' : item.result}</strong></button>)}

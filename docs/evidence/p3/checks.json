@@ -1,0 +1,27 @@
+{
+  "backend": {
+    "tests": 470,
+    "pass": 462,
+    "fail": 0,
+    "skip": 8,
+    "skip_reason": "Locked private corpus; eight real QuickDraft archive regressions are recorded separately."
+  },
+  "viewer": {
+    "tests": 98,
+    "pass": 98,
+    "fail": 0
+  },
+  "viewer_build": "passed",
+  "archive_real_copies": 8,
+  "archive_total_rows": 176,
+  "notes_rows": 1,
+  "cards_rows": 1045,
+  "archive_tables_unchanged": true,
+  "formal_source_modules_unchanged": 11,
+  "formal_pid_unchanged": true,
+  "models_called": 0,
+  "real_data_repository_writes": 0,
+  "desktop_replaced": false,
+  "independent_review": "No blocking findings; source Draft only, subject to release safety scan.",
+  "release_scan": "passed: complete non-shallow history, 49 commits, 334 paths, 19 pinned Viewer files; final staged tree separately audited"
+}

@@ -146,5 +146,18 @@ test('English F0 titles remain discoverable while mixed translated variants use 
   const explicit = await discoverCardDatabase({ home, cardDb: installed });
   assert.equal(explicit, installed);
   assert.equal((await loadCardNames(explicit)).get(86835), 'Hearth Elemental');
-  assert.equal((await loadCardNames(explicit)).get(86836), '炉光一笔');
+  assert.equal((await loadCardNames(explicit)).get(86836), undefined); // No English variant: retain Arena ID fallback.
+});
+
+test('patched enUS card and counter labels cannot become Chinese machine identities', async t => {
+  const { loadCounterNames } = await import('../src/cards.mjs');
+  const dir = await mkdtemp(join(tmpdir(), 'mtga-mixed-names-')); t.after(() => rm(dir, { recursive: true, force: true }));
+  const path = join(dir, 'mixed.mtga'), db = new DatabaseSync(path);
+  db.exec(`CREATE TABLE Cards(GrpId INTEGER,TitleId INTEGER); CREATE TABLE Localizations_enUS(LocId INTEGER,Formatted INTEGER,Loc TEXT);
+    CREATE TABLE Enums(Type TEXT,Value INTEGER,LocId INTEGER);
+    INSERT INTO Cards VALUES(1,1),(2,2),(3,3);
+    INSERT INTO Localizations_enUS VALUES(1,0,'Forest'),(2,0,'中文机器名'),(2,1,'English Variant'),(3,0,'仅中文'),(7,0,'忠诚'),(8,0,'Loyalty');
+    INSERT INTO Enums VALUES('CounterType',7,7),('CounterType',8,8);`); db.close();
+  assert.deepEqual(await loadCardNames(path), new Map([[1,'Forest'],[2,'English Variant']]));
+  assert.deepEqual(await loadCounterNames(path), new Map([[8,'Loyalty']]));
 });

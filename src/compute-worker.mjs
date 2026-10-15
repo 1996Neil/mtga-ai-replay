@@ -3,6 +3,7 @@ import { parentPort } from 'node:worker_threads';
 import { validateBundleFiles } from './sync-security.mjs';
 import { buildCoachBundle } from './coach-bundle.mjs';
 import { verifyCloudReviewSync, verifyCloudReviewSource, verifyCloudReviewLocal, presentCloudReview } from './review/cloud-review-compute.mjs';
+import { historicalPublishedView } from './review/published-replay-session.mjs';
 import { replayInputFingerprintAsync } from './review/review-model.mjs';
 parentPort.on('message', async ({id,operation,input}) => {
   try {
@@ -14,9 +15,10 @@ parentPort.on('message', async ({id,operation,input}) => {
     else if(operation==='cloudReviewSync')value=await verifyCloudReviewSync(input);
     else if(operation==='cloudReviewSource')value=await verifyCloudReviewSource(input);
     else if(operation==='cloudReviewLocal')value=await verifyCloudReviewLocal(input);
+    else if(operation==='cloudReviewHistorical')value=await historicalPublishedView(input);
     else if(operation==='cloudReviewRead')value=await presentCloudReview(input);
     else if(operation==='cloudReviewFingerprint')value=await replayInputFingerprintAsync(input.replay);
     else throw Error('Unsupported operation');
-    parentPort.postMessage({id,value});
+    parentPort.postMessage({id,value}, operation === 'cloudReviewHistorical' ? [value.replayBytes.buffer] : []);
   } catch(error) { parentPort.postMessage({id,error:true,security:error.code==='MTGA_SYNC_SECURITY',code:error.code==='SYNC_BUNDLE'?'SYNC_BUNDLE':undefined}); }
 });

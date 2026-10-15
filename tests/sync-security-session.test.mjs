@@ -208,3 +208,15 @@ test('session scope cannot reuse approved metadata in another repository or with
   const other = await approvedFixture(t); await validateStagedRepository(other.dir, other.options);
   await assert.rejects(validateStagedRepository(other.dir, { validationSession: other.options.validationSession }), securityError);
 });
+
+test('worker batches inspect every historical version of one path and drain errors before returning', async t => {
+  const { createComputePool } = await import('../src/compute-pool.mjs');
+  const dir = await fixture(t), pool = createComputePool(); t.after(() => pool.close());
+  await add(dir, 'latest/coach.json', '{"safe":"second version"}'); await commit(dir);
+  let metrics;
+  assert.equal((await validateStagedRepository(dir, { computePool: pool, onValidation: value => { metrics = value; } })).ok, true);
+  assert.equal(metrics.checked, 3); // README plus both versions of coach.json.
+  await add(dir, 'latest/coach.json', '{"token":false,"token":"must reject","token":true}'); await commit(dir);
+  await add(dir, 'latest/coach.json', '{"safe":"clean final version"}'); await commit(dir);
+  await assert.rejects(validateStagedRepository(dir, { computePool: pool }), securityError);
+});

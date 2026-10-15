@@ -1,0 +1,74 @@
+{
+  "events": [
+    {
+      "stage": "private-repository",
+      "duration_ms": 3325.273625,
+      "elapsed_ms": 3332.122542
+    },
+    {
+      "stage": "git-fetch",
+      "duration_ms": 5332.667749999999,
+      "elapsed_ms": 8826.404917
+    },
+    {
+      "stage": "history-detail",
+      "objects": 4185,
+      "checked": 4185,
+      "reused": 0,
+      "commits": 220,
+      "trees": 1043,
+      "hash_ms": 1735.007232000251,
+      "semantic_ms": 131581.72274000032,
+      "object_reads": {
+        "commit": 220,
+        "tree": 1043,
+        "blob": 4185
+      },
+      "object_bytes": {
+        "commit": 70185,
+        "tree": 1954224,
+        "blob": 2276033769
+      },
+      "git_calls": 152,
+      "git_commands": {
+        "diff": 1,
+        "ls-files": 1,
+        "rev-list": 1,
+        "cat-file --batch-check": 6,
+        "cat-file --batch": 143
+      },
+      "duration_ms": 76814.490458,
+      "rss_bytes": 710803456,
+      "elapsed_ms": 85641.713292
+    },
+    {
+      "stage": "history-safety",
+      "duration_ms": 76833.993042,
+      "elapsed_ms": 85660.45870799999
+    },
+    {
+      "stage": "published-files",
+      "duration_ms": 488.05404199998884,
+      "files": 80,
+      "bytes": 51607839,
+      "elapsed_ms": 86148.67958299999
+    },
+    {
+      "stage": "source-verification",
+      "duration_ms": 6489.059292000005,
+      "elapsed_ms": 92650.501167
+    },
+    {
+      "stage": "session-freeze",
+      "duration_ms": 191.13004200000432,
+      "elapsed_ms": 92841.69504199999
+    }
+  ],
+  "duration_ms": 92841.906917,
+  "peak_rss_mib": 1153.484375,
+  "event_loop_max_ms": 212.074495,
+  "cpu": {
+    "user": 96739422,
+    "system": 3136939
+  }
+}
