@@ -3,18 +3,20 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { useReplayStore } from './store/replayStore';
 import { useHoverStore } from './store/hoverStore';
 import { useReplayEngine } from './hooks/useReplayEngine';
-import { normalizeHistory, normalizeReplay } from './lib/canonicalAdapter';
-import type { HistoryMatch } from './types/game';
+import { normalizeDraftRuns, normalizeHistory, normalizeReplay } from './lib/canonicalAdapter';
+import type { DraftRun, HistoryMatch } from './types/game';
 import { GameBoard } from './components/GameBoard';
-import { GameLog, NearbyActions } from './components/GameLog';
+import { GameLog } from './components/GameLog';
 import { ReplayControls } from './components/ReplayControls';
 import { ReplaySyncButton } from './components/ReplaySyncButton';
 import { CollectionUpdateButton } from './components/CollectionUpdateButton';
 import { LiveCoachPanel } from './components/LiveCoachPanel';
 
+const COLOR_LABELS: Record<string, string> = { W: '白', U: '蓝', B: '黑', R: '红', G: '绿' };
 function when(value: string) { const date = new Date(value); return Number.isNaN(date.getTime()) ? '时间未记录' : new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(date); }
 export function App() {
   const [history, setHistory] = useState<HistoryMatch[]>([]), [loading, setLoading] = useState(true), [error, setError] = useState('');
+  const [draftRuns, setDraftRuns] = useState<DraftRun[]>([]);
   const [anchorInput, setAnchorInput] = useState(''), [anchorError, setAnchorError] = useState('');
   const [showWarnings, setShowWarnings] = useState(false);
   const [analysis, setAnalysis] = useState(false);
@@ -58,6 +60,8 @@ export function App() {
         const response = await fetch('/api/matches', { cache: 'no-store', signal: controller.signal });
         if (!response.ok) throw new Error(`无法读取比赛记录（${response.status}）。会自动重试。`);
         const entries = normalizeHistory(await response.json());
+        const draftResponse = await fetch('/api/draft-runs', { cache: 'no-store', signal: controller.signal });
+        if (draftResponse.ok) setDraftRuns(normalizeDraftRuns(await draftResponse.json()));
         if (controller.signal.aborted) return;
         if (JSON.stringify(historyEntries.current) !== JSON.stringify(entries)) {
           historyEntries.current = entries; setHistory(entries);
@@ -124,8 +128,40 @@ export function App() {
     <header className="app-header">
       <h1>MTGA <span>Replay Coach</span></h1>
       <details className="history-picker"><summary>比赛记录 <span>⌄</span></summary><div className="history-menu">
-        {history.map(item => <button type="button" key={item.id} aria-label={`${when(item.startedAt)} · ${item.event} · ${item.result==='Win' ? '胜' : item.result==='Loss' ? '负' : item.result}`} className={`history-item ${match?.matchId===item.id ? 'selected' : ''}`} onClick={e=>{loadMatch(item.id); e.currentTarget.closest('details')?.removeAttribute('open');}}>
-          <span>{when(item.startedAt)}</span><span>{item.event}</span><strong>{item.result==='Win' ? '胜' : item.result==='Loss' ? '负' : item.result}</strong></button>)}
+        {draftRuns.length > 0 && <section className="draft-runs"><h2>轮抽记录</h2>{draftRuns.map(run => <details className="draft-run" key={run.run_id}>
+          <summary><span>{when(run.started_at ?? '')}</span><span>{run.event}</span>
+            <span className="draft-run-colors">{run.colors_complete ? (run.colors.map(color => COLOR_LABELS[color] ?? color).join('') || '无色') : '颜色未知'}</span>
+            <strong>{run.replay_wins}胜{run.replay_losses}负</strong>
+            <span className={'draft-run-status ' + run.status}>{run.status === 'in_progress' ? '进行中' : run.status === 'completed' ? '已结束' : '记录不完整'}</span>
+          </summary>
+          {!run.score_verified && <p className="draft-run-warning">课程计数与归档回放尚未核对一致；胜负仅按可见比赛汇总。</p>}
+          {run.picks.length > 0 && <details className="draft-picks"><summary>逐手记录 · {run.picks.length} 手 · {run.picks.filter(pick => pick.complete).length} 手完整</summary>
+            <ol>{run.picks.map(pick => <li key={pick.pack_number + '-' + pick.pick_number} className={pick.complete ? 'complete' : 'incomplete'}>
+              <strong>Pack {pick.pack_number} · Pick {pick.pick_number}</strong><time>{when(pick.picked_at ?? '')}</time>
+              <p>选择：{pick.selected?.name ?? '缺少选择记录'}</p>
+              <details><summary>候选 {pick.candidates.length} 张 · 牌池 {pick.pool_before.length} → {pick.pool_after.length} 张</summary>
+                <p>候选：{pick.candidates.length ? pick.candidates.map(card => card.name).join('、') : '缺少候选包记录'}</p>
+                <p>选择前：{pick.pool_before.map(card => card.name).join('、') || '空'}</p>
+                <p>选择后：{pick.pool_after.map(card => card.name).join('、') || '空'}</p>
+                {!pick.complete && <p>记录不完整：{pick.missing.join('、') || '源记录字段不足'}</p>}
+              </details>
+            </li>)}</ol>
+          </details>}
+          {run.card_pool.length > 0 && <details className="draft-pool"><summary>最终牌池 · {run.card_pool.length} 张（无逐选记录）</summary>
+            <ol>{run.card_pool.map((card, index) => <li key={card.arena_id + '-' + index}>{card.name}</li>)}</ol>
+          </details>}
+          <div className="draft-run-matches">{run.matches.map(item => <button type="button" className="history-item" key={item.id}
+            aria-label={when(item.started_at) + ' · ' + (item.result ?? '结果未知')}
+            onClick={event => { loadMatch(item.id); event.currentTarget.closest('details')?.removeAttribute('open'); }}>
+            <span>{when(item.started_at)}</span><span>{item.game_count ? item.game_count + ' 局' : '局数未知'}</span>
+            <strong>{item.result === 'Win' ? '胜' : item.result === 'Loss' ? '负' : '结果未知'}</strong></button>)}
+          </div>
+        </details>)}</section>}
+        <details className="all-matches"><summary>全部比赛 · {history.length}</summary>
+          {history.map(item => <button type="button" key={item.id} aria-label={when(item.startedAt) + ' · ' + item.event + ' · ' + (item.result === 'Win' ? '胜' : item.result === 'Loss' ? '负' : item.result)} className={'history-item ' + (match?.matchId === item.id ? 'selected' : '')} onClick={event => { loadMatch(item.id); event.currentTarget.closest('details')?.removeAttribute('open'); }}>
+            <span>{when(item.startedAt)}</span><span>{item.event}</span><strong>{item.result === 'Win' ? '胜' : item.result === 'Loss' ? '负' : item.result}</strong>
+          </button>)}
+        </details>
       </div></details>
       {match && <span className="match-caption">{when(match.startedAt)} · {match.eventName}</span>}
       {s.matches.length>1 && <select aria-label="选择单局" value={s.currentMatchIndex} onChange={e=>s.selectMatch(Number(e.target.value))}>{s.matches.map((g,i)=><option key={g.gameNumber} value={i}>第 {g.gameNumber} 局</option>)}</select>}
@@ -151,7 +187,6 @@ export function App() {
       <div className="replay-content">
         {error ? <div className="error-state" role="alert"><h2>回放不可用</h2><p>{error}</p><button type="button" className="standard-button" onClick={()=>location.reload()}>重试</button></div> : loading ? <div className="loading-state" role="status">正在读取本机回放…</div> : match && step && <>
           <GameBoard match={match} step={step} viewBefore={actualBefore} analysis={analysis} />
-          <NearbyActions match={match} currentStepIndex={s.currentStepIndex} analysis={analysis} onOpenTimeline={()=>{s.pause();setAnalysis(true);}} />
         </>}
       </div>
     </div>
