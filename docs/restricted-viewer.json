@@ -2,7 +2,7 @@
   "upstream_repository": "https://github.com/m1kk3l/mtg-replay-viewer",
   "upstream_commit": "472969b805c1e62e17797c7cdac7f69f3670597c",
   "license_status": "No declared license; private local copying was authorized, redistribution permission unverified.",
-  "private_repository_inclusion": "User-authorized private UI review, push and PR merge on 2026-10-15; no claim of upstream redistribution rights or authorization for public release.",
+  "private_repository_inclusion": "User-authorized for private PR #3 review on 2026-10-14 only; this does not grant or claim upstream redistribution rights.",
   "files": [
     {
       "path": "viewer/src/components/GameBoard.tsx",
@@ -80,5 +80,6 @@
       "path": "viewer/src/index.css",
       "sha256": "f9f44b8953cf1ce8bc2d27f28d6c6e071387b22ce12d73998ca6c3c23aa1baac"
     }
-  ]
+  ],
+  "ui_interaction_update": "User-authorized private UI review, push and PR merge on 2026-10-15; original inclusion declaration is preserved; no claim of public redistribution rights."
 }
