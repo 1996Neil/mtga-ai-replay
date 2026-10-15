@@ -1,3 +1,5 @@
+import { prepareHandKnowledge, updateHandKnowledge, handKnowledgeView } from './hand-knowledge.mjs';
+import { prepareExileLinks, updateExileLinks, visibleExileSource } from './exile-links.mjs';
 // Visual projection of the existing chronological PerspectiveState. This module
 // has no log reader/parser of its own and never resolves a future identity.
 const has = (a, type) => (Array.isArray(a.type) ? a.type : [a.type]).includes(`AnnotationType_${type}`);
@@ -8,6 +10,8 @@ const detail = (a, key) => {
 const numeric = value => typeof value === 'object' ? value?.value : value;
 
 export function prepareVisualState(state, gsm) {
+  prepareExileLinks(state, gsm);
+  prepareHandKnowledge(state, gsm);
   state.logicalIds ??= new Map(); state.counterCounts ??= new Map(); state.persistent ??= new Map();
   if (gsm.type === 'GameStateType_Full') { state.counterCounts.clear(); state.persistent.clear(); }
   const oldTurn = state.turn.turnNumber;
@@ -79,6 +83,8 @@ export function updateVisualState(state, gsm) {
       state.counterCounts.set(id, counters);
     }
   }
+  updateExileLinks(state);
+  updateHandKnowledge(state);
 }
 
 export function visualSnapshot(state, names, { me = 'Me', opponent = 'Opponent', counterNames = new Map(), gameStateId } = {}) {
@@ -113,7 +119,8 @@ export function visualSnapshot(state, names, { me = 'Me', opponent = 'Opponent',
     const counters = Object.entries(state.counterCounts.get(id) ?? object.counters ?? {})
       .filter(([, count]) => Number(count) > 0)
       .map(([type, count]) => ({ type: Number(type), name: counterNames.get(Number(type)) ?? `Counter ${type}`, count }));
-    return { ...identity, logical_id: state.logicalIds.get(id) ?? `C${id}`,
+    const exileSource = visibleExileSource(state,id,names);
+    return { ...identity, ...(exileSource ? { exiled_by:exileSource } : {}), logical_id: state.logicalIds.get(id) ?? `C${id}`,
       owner: role(object.ownerSeatId), controller: role(object.controllerSeatId),
       ...(isAbility ? { ability_source: abilitySource } : {}),
       card_types: (object.cardTypes ?? []).map(type => type.replace('CardType_', '')),
@@ -142,6 +149,13 @@ export function visualSnapshot(state, names, { me = 'Me', opponent = 'Opponent',
     const zones = [...state.zones.values()];
     const zoneFor = type => zones.find(zone => zone.type === `ZoneType_${type}` && zone.ownerSeatId === seat);
     const zoneCards = type => {
+      // Arena can use one public exile zone for both players. Object ownership
+      // remains authoritative; never assign the shared zone wholesale to a seat.
+      if (type === 'Exile') {
+        const ids = new Set(zones.filter(zone => zone.type === 'ZoneType_Exile').flatMap(zone =>
+          (zone.objectInstanceIds ?? []).filter(id => (state.objects.get(id)?.ownerSeatId ?? zone.ownerSeatId) === seat)));
+        return [...ids].map(card).filter(Boolean);
+      }
       const zone = zoneFor(type);
       return (zone?.objectInstanceIds ?? []).map(card).filter(Boolean);
     };
@@ -149,10 +163,14 @@ export function visualSnapshot(state, names, { me = 'Me', opponent = 'Opponent',
       .flatMap(zone => (zone.objectInstanceIds ?? []).filter(id => {
         const object = state.objects.get(id); return (object?.controllerSeatId ?? object?.ownerSeatId) === seat;
       })).map(card).filter(Boolean);
+    const knowledge = playerRole === 'opponent' ? handKnowledgeView(state,seat,names) : {known:[],history:[]};
+    const revealedHand = knowledge.known;
     const observedMana = state.players.get(seat)?.manaPool;
     players[playerRole] = { name: playerRole === 'me' ? me : opponent,
       life: state.players.get(seat)?.lifeTotal ?? null,
       hand: playerRole === 'me' ? zoneCards('Hand').filter(c => c.visibility !== 'hidden') : [],
+      ...(revealedHand.length ? { revealed_hand: revealedHand } : {}),
+      ...(knowledge.history.length ? { hand_history: knowledge.history } : {}),
       handSize: zoneFor('Hand')?.objectInstanceIds?.length ?? null,
       librarySize: zoneFor('Library')?.objectInstanceIds?.length ?? null,
       mana_pool: Array.isArray(observedMana) ? observedMana.map(mana => ({

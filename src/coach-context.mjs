@@ -1,10 +1,12 @@
 // Slice the canonical, chronologically filtered replay. Do not reconstruct logs
 // or resolve names from any later snapshot when exporting a selected decision.
+// Exile provenance drives the Viewer only. Public exile-zone facts remain
+// eligible for Coach input. Omit Viewer-only relationships and hand inspection.
 function safeValue(value) {
   if (Array.isArray(value)) return value.map(safeValue);
   if (!value || typeof value !== 'object') return value;
   if (value.hidden === true || /hidden|post.?game/i.test(value.visibility ?? '')) return { hidden: true };
-  return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, safeValue(child)]));
+  return Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'exiled_by' && key !== 'revealed_hand' && key !== 'hand_history').map(([key, child]) => [key, safeValue(child)]));
 }
 
 export function createCoachContext(replay, { gameNumber = 1, anchor, boundary = 'after' } = {}) {

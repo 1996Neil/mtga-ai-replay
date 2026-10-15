@@ -97,3 +97,32 @@ test('history mode labels never default to Jump In and use event identifiers bef
     { id: 'jump', event_id: 'Jump_In_2024' }, { id: 'standard', event_id: 'Traditional_Standard_Ladder' }]);
   assert.deepEqual(entries.map(e => e.event), ['排位（赛制未知）', '未知模式', 'Jump In', '传统标准排位']);
 });
+
+test('only the explicit visible opponent inspection projection is accepted, never arbitrary hand identities', () => {
+  const raw = fixture().games[0].states.S0;
+  raw.players.opponent.hand = [{name:'Untrusted Hand Sentinel',arena_id:777,visibility:'public'}];
+  raw.players.opponent.revealed_hand = [
+    {instance_id:301,name:'Observed Sentinel',arena_id:5,visibility:'public'},
+    {instance_id:302,name:'Private Visible Sentinel',arena_id:6,visibility:'player_known'},
+    {instance_id:303,name:'Hidden Sentinel',arena_id:999,visibility:'hidden'},
+    {instance_id:304,name:'Missing Visibility Sentinel',arena_id:888},
+    {instance_id:305,name:'Postgame Sentinel',arena_id:889,visibility:'postgame'},
+  ];
+  const before = JSON.stringify(raw), state = normalizeState(raw);
+  assert.deepEqual(state.handByOwner[2].map(c=>c.instanceId),[301,302]);
+  assert.equal(JSON.stringify(state.handByOwner[2]).includes('Sentinel'),true);
+  assert.equal([...state.gameObjects.values()].some(c=>[777,888,889,999].includes(c.grpId)),false);
+  assert.equal(JSON.stringify(raw),before);
+  const hidden = structuredClone(raw);hidden.players.opponent.revealed_hand=[];
+  assert.deepEqual(normalizeState(hidden).handByOwner[2],[]);
+});
+
+test('observed hand history stays outside current hand and game objects; hidden history is rejected', () => {
+  const raw=fixture().games[0].states.S0;
+  raw.players.opponent.hand_history=[{instance_id:-1,name:'Earlier Observation',arena_id:701,visibility:'player_known'}, {instance_id:-2,name:'Hidden History',arena_id:702,visibility:'hidden'}, {instance_id:-3,name:'Unverified History',arena_id:703}];
+  const state=normalizeState(raw);
+  assert.equal(state.handHistoryByOwner?.[2].length,1);
+  assert.equal(state.handHistoryByOwner?.[2][0].grpId,701);
+  assert.equal(state.handByOwner[2].some(c=>c.grpId===701),false);
+  assert.equal([...state.gameObjects.values()].some(c=>[701,702,703].includes(c.grpId)),false);
+});

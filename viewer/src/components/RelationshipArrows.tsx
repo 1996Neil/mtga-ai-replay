@@ -1,19 +1,21 @@
 import { useId, useEffect, useState } from 'react';
 import type { RefObject } from 'react';
+import { relationshipGeometry } from '../lib/relationshipGeometry';
+import { withoutCombatDuplicates } from '../lib/relationshipLayers';
 import { boardRelationships } from '../lib/relationships';
 import type { Endpoint, Relationship } from '../lib/relationships';
 import type { CanonicalEvent, GameState } from '../types/game';
 import type { CombatLink } from '../lib/combatPresentation';
 
-interface Line { key: string; kind: Relationship['kind'] | CombatLink['kind']; from: string; to: string; x1: number; y1: number; x2: number; y2: number; }
-export function RelationshipArrows({ board, state, event, localSeat, combatLinks = [] }: { board: RefObject<HTMLElement | null>; state: GameState; event?: CanonicalEvent; localSeat: number; combatLinks?: CombatLink[] }) {
+interface Line { key: string; kind: Relationship['kind'] | CombatLink['kind']; from: string; to: string; path: string; }
+export function RelationshipArrows({ board, state, event, localSeat, combatLinks = [], allCombatLinks = combatLinks }: { board: RefObject<HTMLElement | null>; state: GameState; event?: CanonicalEvent; localSeat: number; combatLinks?: CombatLink[]; allCombatLinks?: CombatLink[] }) {
   const marker = useId().replace(/:/g, '');
   const [drawing, setDrawing] = useState<{ width: number; height: number; lines: Line[] }>({ width: 0, height: 0, lines: [] });
   useEffect(() => {
     const root = board.current;
     if (!root) return;
     let frame = 0;
-    const links = [...boardRelationships(state, event, localSeat), ...combatLinks];
+    const links = [...withoutCombatDuplicates(boardRelationships(state, event, localSeat), allCombatLinks), ...combatLinks];
     function element(endpoint: Endpoint) {
       return root!.querySelector<HTMLElement>('card' in endpoint ? `[data-card-instance="${endpoint.card}"]` : `[data-player-seat="${endpoint.player}"]`);
     }
@@ -28,7 +30,7 @@ export function RelationshipArrows({ board, state, event, localSeat, combatLinks
         if ((/(auto|scroll|hidden|clip)/.test(style.overflowX) && (x < clip.left || x > clip.right)) ||
             (/(auto|scroll|hidden|clip)/.test(style.overflowY) && (y < clip.top || y > clip.bottom))) return;
       }
-      return { x: x - bounds.left, y: y - bounds.top };
+      return { x: x - bounds.left, y: y - bounds.top, height:rect.height, width:rect.width };
     }
     function measure() {
       frame = 0;
@@ -39,7 +41,8 @@ export function RelationshipArrows({ board, state, event, localSeat, combatLinks
         if (!from || !to) continue;
         const a = center(from, bounds), b = center(to, bounds);
         if (!a || !b) continue;
-        lines.push({ key: JSON.stringify(link), kind: link.kind, from: JSON.stringify(link.from), to: JSON.stringify(link.to), x1: a.x, y1: a.y, x2: b.x, y2: b.y });
+        lines.push({ key: JSON.stringify(link), kind: link.kind, from: JSON.stringify(link.from), to: JSON.stringify(link.to),
+          path: relationshipGeometry(link.kind, a, b).path });
       }
       const next = { width: bounds.width, height: bounds.height, lines };
       setDrawing(previous => JSON.stringify(previous) === JSON.stringify(next) ? previous : next);
@@ -55,13 +58,15 @@ export function RelationshipArrows({ board, state, event, localSeat, combatLinks
     window.addEventListener('resize', schedule);
     schedule();
     return () => { cancelAnimationFrame(frame); resize.disconnect(); mutation.disconnect(); root.removeEventListener('scroll', schedule, true); window.removeEventListener('resize', schedule); };
-  }, [board, state, event, localSeat, combatLinks]);
+  }, [board, state, event, localSeat, combatLinks, allCombatLinks]);
   if (!drawing.width || !drawing.lines.length) return null;
   return <svg className="relationship-arrows" viewBox={`0 0 ${drawing.width} ${drawing.height}`} aria-label="来源与目标指向" role="img">
     <title>白色为异能来源，黄色为目标，橙色虚线为攻击，蓝色为阻挡；卡牌 A 编号表示对应关系</title>
     <defs>{(['source', 'target', 'attack', 'block'] as const).map(kind => <marker key={kind} id={`${marker}-${kind}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill={{ source: '#f1f3f5', target: '#fff36a', attack: '#f3b46d', block: '#7ed7e6' }[kind]} />
+      <path d="M 0 0 L 10 5 L 0 10 z" fill={`var(--relationship-${kind})`} />
     </marker>)}</defs>
-    {drawing.lines.map(line => <line key={line.key} data-kind={line.kind} data-from={line.from} data-to={line.to} className={`relationship-arrow ${line.kind}`} x1={line.x1} y1={line.y1} x2={line.x2} y2={line.y2} markerEnd={`url(#${marker}-${line.kind})`} />)}
+    {drawing.lines.map(line => <path key={line.key} data-kind={line.kind} data-from={line.from} data-to={line.to} className={`relationship-arrow ${line.kind}`}
+      d={line.path}
+      markerEnd={`url(#${marker}-${line.kind})`} />)}
   </svg>;
 }

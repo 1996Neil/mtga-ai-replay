@@ -40,3 +40,11 @@ test('ordinary semantic targets respect a second-seat local player without chang
   assert.ok(links.some(l=>'card' in l.to && l.to.card===10 && 'card' in l.from && l.from.card===30));
   assert.equal(boardRelationships(state,{type:'target',card:{instance_id:10},targets:[{player:'opponent',hidden:true}]},2).filter(l=>'card' in l.from&&l.from.card===10).length,0);
 });
+
+test('attack events never add an ordinary yellow target line; independent stack links remain visible',()=>{
+ const state=normalizeState(snapshot());
+ const attack={type:'attack',card:{instance_id:10},targets:[{player:'opponent'}]};
+ assert.deepEqual(boardRelationships(state,attack),boardRelationships(state));
+ assert.equal(boardRelationships(normalizeState({players:snapshot().players}),attack).length,0);
+ assert.equal(boardRelationships(state,attack).filter(link=>link.kind==='target').length,2);
+});

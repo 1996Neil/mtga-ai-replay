@@ -28,6 +28,8 @@ export function normalizeCard(raw: Json, containingSeat: number, zoneId: number)
     isBlocking: Boolean(raw.is_blocking ?? raw.isBlocking ?? raw.blocked_attacker_ids?.length),
     blockedAttackerIds: raw.blocked_attacker_ids ?? raw.blockedAttackerIds ?? [],
     attackingTargetId: raw.attacking_target_id ?? raw.attackingTargetId,
+    exiledBy: !isHidden && raw.exiled_by && !hidden(raw.exiled_by) ? number(raw.exiled_by.instance_id) : undefined,
+    exileSourceLogicalId: !isHidden && raw.exiled_by && !hidden(raw.exiled_by) ? raw.exiled_by.logical_id : undefined,
     attachedTo: raw.attached_to ?? raw.attachedTo, attachments: raw.attachments ?? [],
     targetIds: raw.target_ids ?? raw.targetIds ?? [],
     targets: arr(raw.targets).map(target => hidden(target) ? { hidden: true } : target),
@@ -46,12 +48,14 @@ export function normalizeState(snapshot: Json, fallbackTurn = 0): GameState {
   const zones = new Map<number, Zone>();
   const battlefieldByOwner: Record<number, CardInstance[]> = {};
   const handByOwner: Record<number, CardInstance[]> = {};
+  const handHistoryByOwner: Record<number, CardInstance[]> = {};
   const graveyardByOwner: Record<number, CardInstance[]> = {};
   const exileObjects: CardInstance[] = [];
   const players: PlayerState[] = [];
   const sourcePlayers = snapshot.players ?? {};
   for (const [key, id] of [['me', 1], ['opponent', 2]] as const) {
     const p = sourcePlayers[key] ?? {};
+    handHistoryByOwner[id] = key === 'opponent' ? arr(p.hand_history).filter(card => !hidden(card) && ['public','player_known'].includes(card.visibility)).map(card => normalizeCard(card,id,id*100+2)) : [];
     players.push({ systemSeatId: id, playerName: p.name ?? (id === 1 ? 'Me' : 'Opponent'),
       lifeTotal: number(p.life ?? p.lifeTotal) ?? null,
       handSize: number(p.handSize ?? p.hand_size) ?? null,
@@ -61,8 +65,12 @@ export function normalizeState(snapshot: Json, fallbackTurn = 0): GameState {
       ['graveyard', 'ZoneType_Graveyard', 3], ['exile', 'ZoneType_Exile', 4],
     ] as const) {
       const zoneId = id * 100 + offset;
-      // Default opponent hand is count/backs only, even if a future consumer adds known cards.
-      const cards = key === 'opponent' && field === 'hand' ? [] : arr(p[field]).map((card, i) => {
+      // Opponent inspection accepts only explicitly visible, current-frame cards
+      // from the dedicated projection, never arbitrary/raw opponent hand data.
+      const input = key === 'opponent' && field === 'hand'
+        ? arr(p.revealed_hand).filter(card => !hidden(card) && ['public', 'player_known'].includes(card.visibility))
+        : arr(p[field]);
+      const cards = input.map((card, i) => {
         const value = normalizeCard(card, id, zoneId);
         if (!value.instanceId) value.instanceId = -(zoneId * 1000 + i + 1); // anonymous renderer key, never a game identity
         return value;
@@ -84,7 +92,7 @@ export function normalizeState(snapshot: Json, fallbackTurn = 0): GameState {
       phase: String(snapshot.phase ?? ''), step: snapshot.step ?? '',
       activePlayer: seat(snapshot.activePlayer ?? snapshot.active_player),
       priorityPlayer: seat(snapshot.priorityPlayer ?? snapshot.priority_player) || undefined },
-    players, zones, gameObjects: objects, annotations: [], battlefieldByOwner, handByOwner,
+    players, zones, gameObjects: objects, annotations: [], battlefieldByOwner, handByOwner, handHistoryByOwner,
     graveyardByOwner, exileObjects, stackObjects,
     zoneTypeMap: new Map([...zones].map(([id, z]) => [id, z.type])),
   };

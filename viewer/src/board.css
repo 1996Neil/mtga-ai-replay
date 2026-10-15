@@ -21,8 +21,6 @@
 .full-card-board .card-art img { object-fit:contain; object-position:center; }
 .full-card-board .card-image { background:transparent; box-shadow:none; }
 .permanent-combat { height:20px; line-height:20px; text-align:center; font-size:10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#efc28c; }
-.permanent[data-attacking] .card-art-viewport { outline:2px solid #ef9d4a; outline-offset:1px; }
-.permanent[data-blocking] .card-art-viewport { outline:2px solid #6dbbff; outline-offset:1px; }
 .permanent[data-blocking] .permanent-combat { color:#8bccff; }
 .permanent-status { position:absolute; display:flex; pointer-events:none; z-index:2; top:2px; left:4px; max-width:calc(100% - 8px); gap:2px; font-size:8px; }
 .permanent-status span { padding:0 2px; background:#485449; color:#f3f1dc; border-radius:3px; white-space:nowrap; }
@@ -55,7 +53,6 @@
 .stack-instance { display:block; margin-top:2px; font-size:10px; color:#a4b2aa; }
 .stack-zone.expanded .stack-cards { display:flex; flex-direction:column; gap:12px; height:auto; }
 .stack-zone.expanded .stack-object { position:relative; top:auto; left:auto; margin-top:0; flex-shrink:0; }
-body:has(.stack-card:hover,.stack-card:focus-visible,.stack-card.inspected) .card-inspector-overlay { right:auto; left:20px; }
 .own-hand { min-width:0; min-height:0; display:flex; flex-direction:column; background:#202a26; border-radius:5px; }
 .hand-heading { display:flex; justify-content:space-between; align-items:center; gap:4px; font-size:11px; color:#c7d7cb; height:28px; flex-shrink:0; padding:0 7px; }
 .hand-scroll-controls { display:flex; gap:4px; }
@@ -64,8 +61,8 @@ body:has(.stack-card:hover,.stack-card:focus-visible,.stack-card.inspected) .car
 .hand-strip { display:flex; gap:var(--hand-gap); width:max-content; }
 .hand-face { width:var(--card-w); }
 .empty-hand-label { display:block; margin-top:12px; }
-.relationship-arrow.attack { stroke:#ef9d4a; stroke-width:2; stroke-dasharray:5 4; opacity:.8; }
-.relationship-arrow.block { stroke:#6dbbff; stroke-width:2; opacity:.9; }
+.relationship-arrow.attack { stroke:var(--relationship-attack); stroke-dasharray:5 4; }
+.relationship-arrow.block { stroke:var(--relationship-block); }
 @media(max-width:700px) { .game-board {padding-inline:6px;} .board-play-area {grid-template-columns:minmax(155px,32%) minmax(0,1fr);gap:8px;} .board-center-lane {grid-template-columns:1fr;gap:0;} .combat-summary {font-size:10px;gap:0;} .combat-legend {display:none;} }
 
 .board-scroll-controls { display:none; }
