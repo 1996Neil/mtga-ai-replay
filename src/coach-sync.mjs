@@ -292,7 +292,7 @@ async function prepareCheckout(state, meta, run, repoDir, options = {}) {
     options.onProgress?.({ phase: 'security' });
     return validateStagedRepository(repoDir, { ...historyOptions, validationSession,
       ...(historyRevision ? { historyRevision } : {}), computePool:options.computePool,
-      onValidation: options.onValidation, gitBatchFactory: options.gitBatchFactory ? ()=>options.gitBatchFactory({repoDir}) : !options.runCommand ? ()=>createGitBatch({cwd:repoDir,gitArgs:['-c','core.hooksPath=/dev/null','-c','commit.gpgsign=false'],env:{GIT_DIR:join(repoDir,'.git'),GIT_WORK_TREE:repoDir,GIT_INDEX_FILE:join(repoDir,'.git/index'),GIT_TERMINAL_PROMPT:'0',GIT_CONFIG_NOSYSTEM:'1'}}) : undefined, runGit: (args, settings) => git(args, settings.encoding, settings.input) });
+      onValidation: value => options.onValidation?.({ ...value, history_revision: historyRevision ?? null }), gitBatchFactory: options.gitBatchFactory ? ()=>options.gitBatchFactory({repoDir}) : !options.runCommand ? ()=>createGitBatch({cwd:repoDir,gitArgs:['-c','core.hooksPath=/dev/null','-c','commit.gpgsign=false'],env:{GIT_DIR:join(repoDir,'.git'),GIT_WORK_TREE:repoDir,GIT_INDEX_FILE:join(repoDir,'.git/index'),GIT_TERMINAL_PROMPT:'0',GIT_CONFIG_NOSYSTEM:'1'}}) : undefined, runGit: (args, settings) => git(args, settings.encoding, settings.input) });
   };
   let exists = false;
   try { const stat = await lstat(join(repoDir, '.git')); exists = stat.isDirectory() && !stat.isSymbolicLink(); if (!exists) fail('SYNC_WORKTREE', 'Unexpected sync checkout metadata.'); }
@@ -405,7 +405,8 @@ export async function getPublishedCoachIndex(options = {}) {
     if (!state.enabled) fail('SYNC_REPOSITORY', 'Private replay sync is not configured.');
     const run = runner(options); options.onProgress?.({ phase: 'remote' });
     const meta = await privateRepository(state.repository, run);
-    const { git, branch } = await prepareCheckout(state, meta, run, locations(dataDir).repo, options);
+    const { git, branch } = await prepareCheckout(state, meta, run, locations(dataDir).repo,
+      { ...options, deferFullHistoryValidation: false });
     await assertOutgoingSyncOwnership(git, branch, 'coach', Boolean(meta.defaultBranchRef?.name));
     let index = { schema: 'MTGA_COACH_INDEX_V1', matches: [] }, commit = null;
     if (meta.defaultBranchRef?.name) {

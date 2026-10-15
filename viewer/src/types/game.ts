@@ -163,6 +163,7 @@ export interface DraftRun {
   event: string;
   started_at: string | null;
   status: 'in_progress' | 'completed' | 'incomplete';
+  current_module?: string | null;
   score_verified: boolean;
   replay_wins: number;
   replay_losses: number;
