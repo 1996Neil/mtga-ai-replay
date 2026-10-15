@@ -117,15 +117,6 @@ a{
   flex:1;
   min-width:0;
   min-height:0}
-.game-board{
-  flex:1;
-  min-height:0;
-  position:relative;
-  display:flex;
-  flex-direction:column;
-  overflow:auto;
-  padding:6px 22px 0;
-  background:radial-gradient(ellipse at center,#262d2e 0,#1c2224 62%,#191e20 100%)}
 .player-header{
   display:flex;
   align-items:center;
@@ -205,20 +196,6 @@ a{
   background:#433d49}
 .opponent-info .player-zone-counts{
   display:none}
-.battlefield-zone{
-  flex:1;
-  display:flex;
-  flex-direction:column;
-  justify-content:center;
-  min-height:220px;
-  padding:5px 0;
-  gap:8px}
-.field-support{
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap:20px;
-  min-height:54px}
 .land-row{
   display:flex;
   gap:20px;
@@ -262,25 +239,6 @@ a{
   color:#929e97}
 .tapped-land-pile .land-pile-state{
   color:#bcaf9b}
-.permanent-row{
-  display:flex;
-  justify-content:center;
-  align-items:center;
-  gap:24px;
-  min-height:200px;
-  overflow-x:auto;
-  padding:5px 6px 10px}
-.permanent-group{
-  position:relative;
-  display:flex;
-  align-items:center;
-  flex-shrink:0}
-.permanent{
-  position:relative;
-  width:var(--card-w);
-  flex-shrink:0}
-.permanent.is-tapped{
-  width:var(--card-h)}
 .card-image{
   display:block;
   width:100%;
@@ -378,27 +336,9 @@ a{
 .card-pt{
   font-size:13px;
   font-weight:700}
-.current-event-card{
+.current-event-card .card-art-viewport{
   outline:2px solid var(--own);
-  outline-offset:3px;
-  border-radius:6px}
-.permanent-status{
-  position:absolute;
-  top:-11px;
-  left:0;
-  display:flex;
-  gap:3px;
-  font-size:9px;
-  pointer-events:none;
-  z-index:2}
-.permanent-status span{
-  padding:1px 4px;
-  background:#485449;
-  color:#f3f1dc;
-  border-radius:3px;
-  white-space:nowrap}
-.permanent[data-attacking] .permanent-status span{
-  background:#766849}
+  outline-offset:1px}
 .pile-count{
   position:absolute;
   right:-10px;
@@ -413,206 +353,12 @@ a{
   align-self:flex-end;
   color:#abbdb1;
   font-size:11px}
-.empty-field{
-  font-size:12px;
-  color:#818d89}
-.compact-field{
-  flex:none;
-  min-height:60px;
-  padding:3px 0}
-.compact-field .field-support{
-  min-height:60px}
-.support-permanents{
-  display:flex;
-  gap:14px}
-.support-permanents .card-art-viewport{
-  height:39px}
-.support-permanents .is-tapped>.card-art-viewport{
-  height:39px}
-.support-permanents .card-art:not(.tapped) img{
-  height:165px;
-  top:-18px;
-  object-fit:cover}
-.support-permanents .card-caption{
-  min-height:31px;
-  padding:3px 5px}
-.support-permanents .card-caption-meta{
-  margin-top:0}
-.support-permanents .permanent-status{
-  top:0}
-.combat-arena{
-  flex:1;
-  min-height:380px;
-  display:flex;
-  flex-direction:column;
-  justify-content:center;
-  padding:2px 0 6px;
-  position:relative}
-.combat-arena h2{
-  text-align:center;
-  color:#cabb9e;
-  font-size:12px;
-  margin-bottom:10px}
-.combat-arena h2 span{
-  font-size:11px;
-  color:#a79f8f;
-  margin-left:10px}
-.combat-lanes{
-  display:flex;
-  justify-content:center;
-  gap:20px;
-  overflow-x:auto;
-  padding:4px}
-.combat-lane{
-  min-width:178px;
-  flex:0 0 auto;
-  display:grid;
-  grid-template-rows:210px 30px 210px;
-  position:relative}
-.combat-lane.multi-block{
-  min-width:250px}
-.combat-opponent-row,.combat-local-row{
-  display:flex;
-  gap:10px;
-  justify-content:center;
-  align-items:center}
-.combat-connector{
-  position:relative;
-  display:flex;
-  justify-content:center;
-  align-items:center;
-  color:#c8b893;
-  font-size:11px}
-.combat-connector.blocked:before{
-  content:"";
-  position:absolute;
-  left:50%;
-  top:-16px;
-  bottom:-16px;
-  width:1px;
-  background:#a9946f}
-.combat-connector.blocked span{
-  position:relative;
-  background:#343934;
-  padding:2px 9px;
-  border:1px solid #806f51;
-  border-radius:20px}
-.multi-block .combat-connector:after{
-  content:"";
-  position:absolute;
-  top:-15px;
-  left:25%;
-  right:25%;
-  height:1px;
-  background:#a9946f}
-.multi-block .combat-opponent-row{
-  position:relative}
-.multi-block .combat-opponent-row:after{
-  content:"";
-  position:absolute;
-  bottom:0;
-  left:25%;
-  right:25%;
-  height:15px;
-  border-left:1px solid #a9946f;
-  border-right:1px solid #a9946f}
 .unblocked{
   opacity:.8}
-.combat-local-row .permanent[data-attacking],.combat-opponent-row .permanent[data-attacking]{
-  filter:drop-shadow(0 0 5px #b4965626)}
-.contextual-stack{
-  position:absolute;
-  right:20px;
-  top:25%;
-  z-index:8;
-  max-width:220px;
-  max-height:330px;
-  overflow:auto;
-  background:#292d2deF;
-  border:1px solid #666f63;
-  border-radius:8px;
-  padding:10px;
-  box-shadow:0 10px 28px #0007}
-.stack-heading{
-  font-size:13px;
-  font-weight:600;
-  margin-bottom:8px;
-  display:flex;
-  justify-content:space-between}
-.stack-cards{
-  display:flex;
-  gap:10px}
-.stack-object{
-  width:118px;
-  flex-shrink:0}
-.stack-card{
-  width:118px}
-.stack-order,.stack-instance{
-  font-size:9px;
-  color:#b4bbb4}
-.stack-targets{
-  font-size:11px;
-  margin-top:5px;
-  color:#d3d3b7}
-.own-hand{
-  flex-shrink:0;
-  height:214px;
-  padding:6px 0 10px}
-.hand-label{
-  font-size:11px;
-  color:#bcc9c1;
-  text-align:center;
-  height:20px}
-.hand-fan-scroll{
-  height:180px;
-  overflow-x:auto;
-  overflow-y:visible;
-  position:relative}
-.hand-fan{
-  position:relative;
-  height:180px;
-  margin-inline:auto}
-.hand-card{
-  position:absolute;
-  bottom:0;
-  height:176px}
-.hand-card>.card-art-viewport{
-  height:133px}
-.hand-card img{
-  object-fit:cover;
-  object-position:top}
-.hand-card:hover,.hand-card:focus-visible{
-  z-index:20!important;
-  transform:translateY(-3px)}
-.own-hand.empty{
-  height:32px;
-  padding:3px 0;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  gap:9px;
-  color:#8e9992}
-.own-hand.empty .hand-label{
-  height:auto}
-.own-hand.empty .hand-fan-scroll{
-  height:auto}
+
 .empty-hand-label{
   font-size:11px;
   color:#87938b}
-.nearby-actions{
-  flex-shrink:0;
-  background:#22282a;
-  padding:6px 24px 8px}
-.nearby-heading{
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  font-size:11px;
-  color:#b5c0b9;
-  margin-bottom:3px}
-.nearby-heading button{
-  font-size:11px;
-  color:#c4d4cb}
 .nearby-list{
   display:grid;
   grid-template-columns:repeat(5,minmax(0,1fr));
@@ -639,42 +385,18 @@ a{
   flex-shrink:0}
 #replay-controls{
   flex-shrink:0}
-.replay-controls{
-  position:relative;
-  display:grid;
-  grid-template-columns:1fr auto;
-  column-gap:28px;
-  padding:9px 24px 8px;
-  background:#252b2d;
-  border-top:1px solid #414745}
-.replay-position-title{
-  font-size:14px;
-  font-weight:550;
-  color:#d2d9d3}
-.replay-current-action{
-  font-size:13px;
-  color:#a8b5ac;
-  margin-top:2px}
 .replay-technical-position{
   font-size:10px;
   color:#9aa39d}
-.control-button-row{
-  display:flex;
-  align-items:center;
-  gap:9px}
-.standard-button,.control-button-row button{
+.standard-button{
   background:#353e3d;
   padding:8px 12px;
   border-radius:5px;
   font-size:12px;
   color:#d4dfd7;
   min-height:35px}
-.standard-button:hover,.control-button-row button:hover{
+.standard-button:hover{
   background:#47534e}
-.control-button-row .play-button{
-  background:#587367;
-  color:#fff;
-  min-width:90px}
 .playback-options{
   position:relative;
   margin-left:5px}
@@ -845,16 +567,8 @@ a{
 .coach-indicator{
   grid-column:2;
   font-size:9px}
-.analysis-mode .combat-lanes{
-  gap:6px}
-.analysis-mode .combat-lane{
-  min-width:166px}
-.analysis-mode .combat-lane.multi-block{
-  min-width:248px}
 .analysis-mode .land-row{
   gap:10px}
-.analysis-mode .game-board{
-  padding-inline:14px}
 .analysis-mode .player-name{
   max-width:100px}
 .analysis-mode .player-info{
@@ -914,35 +628,6 @@ a{
   height:46px}
 .player-header{
   min-height:30px}
-.compact-field{
-  min-height:54px}
-.compact-field .field-support{
-  min-height:54px}
-.combat-lane{
-  grid-template-rows:192px 28px 192px;
-  min-width:163px}
-.combat-lane.multi-block{
-  min-width:230px}
-.combat-arena{
-  min-height:330px}
-.combat-arena h2{
-  margin-bottom:4px}
-.own-hand{
-  height:185px}
-.hand-fan-scroll,.hand-fan{
-  height:155px}
-.hand-card{
-  height:152px}
-.hand-card>.card-art-viewport{
-  height:109px}
-.nearby-actions{
-  padding-block:3px}
-.replay-controls{
-  padding-block:7px}
-.analysis-mode .combat-lane{
-  min-width:151px}
-.analysis-mode .combat-lane.multi-block{
-  min-width:230px}
 }
 
 @media(max-width:1100px){
@@ -953,12 +638,6 @@ a{
   gap:12px}
 .analysis-drawer{
   width:280px}
-.combat-lanes{
-  justify-content:flex-start}
-.control-button-row{
-  gap:4px}
-.control-button-row button{
-  padding:7px 8px}
 .player-name{
   display:none}
 .nearby-list{
@@ -972,122 +651,18 @@ a{
   scroll-behavior:auto!important;
   transition:none!important}
 }
-
-/* Reserve actual combat card heights: never clip blockers to fit a flex row. */
 .player-header{
   min-height:30px}
-.compact-field,.compact-field .field-support{
-  min-height:64px}
-.support-permanents .card-art-viewport,.support-permanents .is-tapped>.card-art-viewport{
-  height:32px}
-.support-permanents .card-caption{
-  min-height:30px}
-.combat-arena{
-  flex:1;
-  min-height:465px}
-.combat-lanes{
-  flex-shrink:0}
-.combat-lane{
-  grid-template-rows:210px 22px 210px}
-.attacking-down.combat-arena{
-  min-height:425px}
-.attacking-down .combat-lane{
-  grid-template-rows:172px 22px 210px}
-.combat-arena h2{
-  margin-bottom:4px}
-.own-hand{
-  height:178px;
-  padding:4px 0 6px}
-.hand-fan-scroll,.hand-fan{
-  height:150px}
-.hand-card{
-  height:150px}
-.hand-card>.card-art-viewport{
-  height:107px}
 
 @media(max-height:960px){
-  .combat-arena{
-  min-height:429px}
-.combat-lane{
-  grid-template-rows:193px 22px 193px}
-.attacking-down.combat-arena{
-  min-height:385px}
-.attacking-down .combat-lane{
-  grid-template-rows:157px 22px 193px}
-.own-hand{
-  height:163px}
-.hand-fan-scroll,.hand-fan{
-  height:136px}
-.hand-card{
-  height:136px}
-.hand-card>.card-art-viewport{
-  height:93px}
 .card-caption{
   min-height:39px}
-.compact-field,.compact-field .field-support{
-  min-height:57px}
-.support-permanents .card-art-viewport{
-  height:26px}
-}
-
-.compact-field{
-  padding:0;
-  gap:0}
-.compact-field .field-support{
-  min-height:60px}
-.support-permanents .card-art-viewport,.support-permanents .is-tapped>.card-art-viewport{
-  height:26px}
-
-.upright-opponent.combat-arena{
-  min-height:465px}
-.upright-opponent .combat-lane{
-  grid-template-rows:210px 22px 210px}
-
-@media(max-height:960px){
-  .upright-opponent.combat-arena{
-  min-height:429px}
-.upright-opponent .combat-lane{
-  grid-template-rows:193px 22px 193px}
 }
 
 @media(max-height:960px){
   .player-header{
   min-height:29px}
-.compact-field .field-support{
-  min-height:60px}
-.support-permanents .card-caption{
-  padding:1px 3px;
-  min-height:28px}
-.own-hand{
-  height:153px;
-  padding-top:3px;
-  padding-bottom:2px}
-.hand-fan-scroll,.hand-fan{
-  height:128px}
-.hand-card{
-  height:128px}
-.hand-card>.card-art-viewport{
-  height:89px}
 }
-
-@media(max-height:960px){
-  .own-hand{
-  height:148px;
-  padding:2px 0}
-.hand-fan-scroll,.hand-fan{
-  height:124px}
-.hand-card{
-  height:124px}
-.hand-card>.card-art-viewport{
-  height:84px}
-}
-
-/* Compact support cards crop full-sized sideways art; they never miniaturize it. */
-.support-permanents .is-tapped .card-art{width:var(--card-w)!important;height:var(--card-h)!important}
-
-/* HUD rows are reserved flow space. Only the central play area may paint
-   battlefield/stack/inspector cards; its clip boundary excludes both HUDs. */
-.board-play-area{position:relative;display:flex;flex-direction:column;flex:1 1 auto;min-height:0;overflow:auto;isolation:isolate}
 .player-header{flex-wrap:wrap;gap:6px 12px;padding-block:4px;min-height:38px;isolation:isolate}
 .player-info{flex:1 0 240px;max-width:100%;min-width:0}
 .player-identity{flex-wrap:wrap;overflow:hidden}
@@ -1096,7 +671,6 @@ a{
 .player-zones{flex-shrink:0;margin-left:auto}
 .opponent-hand{flex:0 1 auto;min-width:0;max-width:100%;overflow:clip}
 .opponent-hand-backs{min-width:0;overflow:clip;padding-block:2px}
-.own-hand{overflow:clip}
 
 .app-header{height:auto;min-height:50px;flex-wrap:wrap;gap:8px 18px;padding-block:7px}
 .app-header h1,.history-picker,.mode-switch{flex-shrink:0}
@@ -1160,46 +734,17 @@ a{
   #root, .app-shell { min-height: 0; }
   .app-header { padding-block: 5px; gap: 5px 10px; min-height: 42px; }
   .app-header h1 { margin: 0; }
-  .game-board { padding: 2px 12px 0; overflow: clip; --card-w: 96px; --card-h: 134.4px; }
   .player-header { min-height: 32px; padding-block: 2px; gap: 3px 8px; }
   .life-total strong { font-size: 24px; }
   .player-info { flex-basis: 190px; gap: 8px; }
   .player-zones { gap: 4px; }
   .zone-pile { font-size: 11px; padding: 3px 6px; }
-  .board-play-area { container-type: size; }
-  .battlefield-zone { min-height: 0; flex: 1 1 0; padding: 2px 0; gap: 4px; }
-  .field-support, .compact-field .field-support { min-height: 36px; gap: 8px; }
   .land-row { gap: 8px; flex-wrap: nowrap; overflow-x: auto; }
   .land-pile { width: 76px; height: 36px; }
   .land-pile-art { width: 72px; height: 14px; }
   .land-pile-name { font-size: 10px; }
   .land-pile-state { font-size: 9px; }
-  .permanent-row { min-height: 0; flex: 1 1 auto; padding: 3px 6px; gap: 12px; }
-  .board-play-area .permanent .card-art-viewport { height: clamp(24px, calc(50cqh - 88px), 95px); }
-  .board-play-area .permanent .card-art.tapped { width: var(--card-w) !important; height: var(--card-h) !important; }
-  .board-play-area .card-caption { min-height: 32px; padding: 2px 4px; }
-  .board-play-area .card-name { font-size: 11px; }
-  .board-play-area .card-caption-meta { margin-top: 0; font-size: 10px; }
-  .permanent-status { top: -7px; }
-  .compact-field { flex: 0 0 auto; padding: 0; gap: 0; }
-  .board-play-area .combat-arena .permanent .card-art-viewport { height: clamp(20px, calc(50cqh - 100px), 95px); }
-  .board-play-area .support-permanents .card-art-viewport { height: 12px; }
-  .support-permanents { gap: 8px; }
-  .combat-arena, .attacking-down.combat-arena, .upright-opponent.combat-arena { min-height: 0; padding: 0; }
-  .combat-arena h2 { font-size: 11px; margin: 1px 0 3px; }
-  .combat-lanes { flex: 1; min-height: 0; padding: 3px; gap: 10px; }
-  .combat-lane, .attacking-down .combat-lane, .upright-opponent .combat-lane { grid-template-rows: minmax(0, 1fr) 18px minmax(0, 1fr); min-width: 138px; }
-  .combat-lane.multi-block { min-width: 202px; }
-  .own-hand { height: 98px; padding: 2px 0; }
-  .hand-label { height: 16px; }
-  .hand-fan-scroll, .hand-fan, .hand-card { height: 78px; }
-  .hand-card > .card-art-viewport { height: 44px; }
-  .hand-card .card-caption { min-height: 34px; padding: 2px 5px; }
-  .hand-card .card-caption-meta { margin-top: 0; }
-  .nearby-actions { padding: 2px 12px 3px; }
-  .nearby-heading { margin-bottom: 1px; }
   .nearby-action { min-height: 22px; padding-block: 2px; }
-  .replay-controls { padding: 5px 12px; column-gap: 10px; }
   .turn-scrubber { height: 12px; margin-top: 5px; }
   .live-coach-panel { max-height: calc(100dvh - 120px); }
 }
@@ -1208,76 +753,13 @@ a{
   .land-row { gap: 6px; }
   .land-pile { width: 70px; }
   .land-pile-art { width: 66px; }
-  .replay-controls { grid-template-columns: 1fr; row-gap: 4px; }
-  .replay-position-title { font-size: 12px; }
-  .replay-current-action { font-size: 11px; margin-top: 0; }
-  .control-button-row { justify-content: center; gap: 4px; }
-  .control-button-row button { font-size: 11px; min-height: 28px; padding: 4px 6px; }
-  .control-button-row .play-button { min-width: 70px; }
   .playback-options summary { font-size: 11px; padding: 4px; }
   .turn-scrubber { margin-top: 1px; }
 }
-@media(min-height:761px) and (max-height:960px) {
-  .board-play-area { container-type: size; }
-  .battlefield-zone { min-height: 0; }
-  .permanent-row { min-height: 0; padding-block: 3px; }
-  .board-play-area .permanent .card-art-viewport { height: clamp(32px, calc(50cqh - 122px), 151.2px); }
-  .board-play-area .permanent .card-art.tapped { width: var(--card-w) !important; height: var(--card-h) !important; }
-  .board-play-area .support-permanents .card-art-viewport { height: 26px; }
-  .combat-arena, .attacking-down.combat-arena, .upright-opponent.combat-arena { min-height: 0; }
-  .combat-lanes { flex: 1; min-height: 0; }
-  .combat-lane, .attacking-down .combat-lane, .upright-opponent .combat-lane { grid-template-rows: minmax(0, 1fr) 22px minmax(0, 1fr); }
-}
-
-/* Full faces share the available board space; every observed instance stays visible. */
 #root, .app-shell { min-height: 0; }
-.full-card-board { overflow: clip; }
-.full-card-board .board-play-area {
-  display: grid; grid-template-columns: minmax(0, 32%) minmax(0, 1fr);
-  gap: 12px; overflow: clip; container-type: normal;
-}
-.board-land-column { display: grid; grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; min-width: 0; min-height: 0; }
-.board-main-column { display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; }
-.full-card-board .full-battlefield { display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; min-width: 0; padding: 2px 0; gap: 2px; overflow: visible; }
-.full-land-heading { flex-shrink: 0; height: 18px; font-size: 10px; color: #9daa9f; text-align: center; }
-.full-land-heading b { margin-left: 5px; font-weight: 500; }
-.full-card-zone { flex: 1 1 0; width: 100%; min-height: 0; min-width: 0; position: relative; display: flex; justify-content: center; align-items: center; }
-.full-card-rows { display: flex; flex-direction: column; align-items: center; gap: 6px; max-width: 100%; }
-.full-card-row { display: flex; justify-content: center; align-items: center; gap: 6px; }
-.full-card-row .permanent, .full-card-row .full-row-card, .full-card-overflow .permanent, .full-card-overflow .full-row-card { width: var(--card-w); flex-shrink: 0; }
-.full-card-row .permanent.is-tapped, .full-card-row .full-row-card.is-tapped, .full-card-overflow .permanent.is-tapped, .full-card-overflow .full-row-card.is-tapped { width: var(--card-h); }
-.full-card-board .full-card-zone .card-art-viewport { height: var(--card-h); border-radius: 4px; }
-.full-card-board .full-card-zone .is-tapped > .card-art-viewport { height: var(--card-w); }
-.full-card-board .board-play-area .full-card-zone .permanent .card-art-viewport { height: var(--card-h); }
-.full-card-board .board-play-area .full-card-zone .permanent .is-tapped > .card-art-viewport { height: var(--card-w); }
-.full-card-overflow { width: 100%; height: 100%; overflow: auto; display: flex; flex-wrap: wrap; align-items: start; justify-content: center; gap: 6px; overscroll-behavior: contain; }
-.full-card-board .card-art img { object-fit: contain; object-position: center; }
-.full-card-board .card-image { background: transparent; box-shadow: none; }
 .card-readout.card-caption { display: flex; align-items: center; gap: 4px; height: 18px; min-height: 18px; padding: 0 1px; border-radius: 0; background: transparent; }
-.full-card-board .card-readout.card-caption { min-height: 18px; padding: 0 1px; }
 .card-readout .card-name { flex: 1; min-width: 0; font-size: 10px; line-height: 18px; font-weight: 500; }
-.full-card-board .card-readout .card-name { font-size: 10px; }
 .card-readout .card-pt { flex-shrink: 0; font-size: 13px; line-height: 18px; color: #f5f7ef; font-variant-numeric: tabular-nums; }
-.full-card-board .permanent-status { top: 2px; left: 2px; max-width: calc(100% - 4px); gap: 2px; overflow: hidden; font-size: 8px; }
-.full-card-board .permanent-status span { padding: 0 2px; overflow: hidden; text-overflow: ellipsis; }
-.full-card-board.has-combat .board-main-column > .full-battlefield[data-empty=true] { display: none; }
-.full-card-board .combat-arena { flex: 3.2 1 0; min-height: 0; padding: 2px 0; }
-.full-card-board .combat-arena h2 { flex-shrink: 0; margin: 0 0 3px; font-size: 11px; line-height: 16px; }
-.full-card-board .combat-lanes { flex: 1; min-height: 0; gap: 10px; padding: 1px; overflow-x: auto; overflow-y: clip; justify-content: safe center; }
-.full-card-board .combat-lane { flex: 1 1 0; min-width: 36px; max-width: 360px; min-height: 0; grid-template-rows: minmax(0, 1fr) 20px minmax(0, 1fr); }
-.full-card-board .combat-lane.multi-block { min-width: 36px; }
-.full-card-board .combat-connector { font-size: 10px; }
-.full-card-board .combat-connector.blocked:before { top: -3px; bottom: -3px; }
-.full-card-board .multi-block .combat-connector:after, .full-card-board .multi-block .combat-opponent-row:after { display: none; }
-.full-card-board .own-hand { display: flex; flex-direction: column; height: clamp(120px, 21dvh, 196px); padding: 3px 0; }
-.full-card-board .own-hand .hand-label { flex-shrink: 0; height: 18px; }
-.full-card-board .own-hand.empty { height: 32px; flex-direction: row; }
-.full-card-board .empty-field { font-size: 10px; }
-@media(max-width:700px) {
-  .full-card-board .board-play-area { grid-template-columns: minmax(0, 42%) minmax(0, 1fr); gap: 8px; }
-  .full-card-board .combat-lanes { gap: 6px; }
-  .full-card-board .combat-arena h2 span { margin-left: 3px; font-size: 10px; }
-}
 
 /* Face-only preview is outside the board clip and always fits the viewport. */
 .card-inspector-overlay {
@@ -1290,7 +772,6 @@ a{
 .inspector-card { width: 100%; background: transparent; border: 0; box-shadow: none; }
 .inspector-card > .card-art-viewport { height: auto; aspect-ratio: 5 / 7; }
 .inspector-card .card-art img { object-fit: contain; }
-.game-board { position: relative; }
 .relationship-arrows { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 20; pointer-events: none; overflow: hidden; }
 .relationship-arrow { fill: none; stroke-width: 3; stroke-linecap: round; filter: drop-shadow(0 1px 2px #000); }
 .relationship-arrow.source { stroke: #f1f3f5; }
@@ -1301,3 +782,32 @@ a{
 
 .sync-details .task-note { color: #b3c1b8; font-size: 11px; }
 .sync-details > .task-retry { float: none; margin-top: 6px; padding: 7px 10px; }
+
+
+.draft-runs h2,.all-matches>summary{
+  margin:8px 4px;color:#d4ddd9;font-size:12px;font-weight:700;letter-spacing:.04em}
+.draft-run,.all-matches{border-top:1px solid #384143;padding:5px 0}
+.draft-run>summary{
+  display:grid;grid-template-columns:72px minmax(65px,1fr) auto auto;gap:5px 8px;
+  align-items:center;cursor:pointer;font-size:11px;padding:8px 4px;list-style:none}
+.draft-run>summary::-webkit-details-marker,.draft-pool>summary::-webkit-details-marker,.all-matches>summary::-webkit-details-marker{display:none}
+.draft-run>summary strong{white-space:nowrap}
+.draft-run-colors{color:#bdcbc5;white-space:nowrap}
+.draft-run-status{grid-column:2 / -1;color:#b9c5be;font-size:10px}
+.draft-run-status.in_progress{color:#9ed7b1}
+.draft-run-status.incomplete{color:#f2c77b}
+.draft-run-warning{margin:2px 6px 7px;color:#f2c77b;font-size:10px;line-height:1.4}
+.draft-pool{margin:0 4px 6px;background:#202628;border-radius:5px}
+.draft-pool>summary{padding:7px;cursor:pointer;font-size:11px}
+.draft-pool ol{columns:2;margin:0;padding:0 8px 8px 26px;color:#c3ceca;font-size:10px}
+.draft-run-matches{padding:0 3px}
+.all-matches>summary{padding:8px;cursor:pointer;list-style:none}
+.history-menu{max-height:min(78dvh,680px)}
+
+.draft-picks{margin:0 4px 6px;background:#202628;border-radius:5px}
+.draft-picks>summary{padding:7px;cursor:pointer;font-size:11px}
+.draft-picks ol{margin:0;padding:0 8px 8px 24px}
+.draft-picks li{padding:6px 3px;border-top:1px solid #384143;font-size:10px;color:#c3ceca}
+.draft-picks li strong{color:#e7efeb}.draft-picks time{float:right;color:#a9b7b0}
+.draft-picks li>p{margin:3px 0}.draft-picks li.incomplete{color:#f2c77b}
+.draft-picks li details>summary{cursor:pointer}.draft-picks li details p{margin:4px 0;line-height:1.5;overflow-wrap:anywhere}
