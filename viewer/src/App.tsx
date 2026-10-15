@@ -23,6 +23,7 @@ export function App() {
   const actualBefore = s.viewBefore && Boolean(step?.beforeGameState);
   const request = useRef<AbortController | null>(null);
   const historyEntries = useRef<HistoryMatch[]>([]);
+  const historyPicker = useRef<HTMLDetailsElement>(null);
   const navigating = useRef(false);
   const loadedRevision = useRef<{ id: string; revision?: string } | null>(null);
   useReplayEngine();
@@ -91,6 +92,15 @@ export function App() {
     return () => { controller.abort(); clearTimeout(timer); request.current?.abort(); };
   }, [loadMatch]);
 
+  useEffect(() => {
+    function dismissHistory(event: MouseEvent) {
+      const picker = historyPicker.current;
+      if (picker?.open && event.target instanceof Node && !picker.contains(event.target)) picker.open = false;
+    }
+    document.addEventListener('click', dismissHistory, true);
+    return () => document.removeEventListener('click', dismissHistory, true);
+  }, []);
+
   useLayoutEffect(() => { useHoverStore.getState().setHovered(null); }, [step, s.currentMatchIndex, match?.matchId, s.viewBefore]);
   useEffect(() => {
     if (!match || !step || loading) return;
@@ -124,8 +134,8 @@ export function App() {
     <a className="skip-link" href="#replay-controls">跳至回放控制</a>
     <header className="app-header">
       <h1>MTGA <span>Replay Coach</span></h1>
-      <details className="history-picker"><summary>比赛记录 <span>⌄</span></summary><div className="history-menu">
-        {history.map(item => <button type="button" key={item.id} aria-label={`${when(item.startedAt)} · ${item.event} · ${item.result==='Win' ? '胜' : item.result==='Loss' ? '负' : item.result}`} className={`history-item ${match?.matchId===item.id ? 'selected' : ''}`} onClick={e=>{loadMatch(item.id); e.currentTarget.closest('details')?.removeAttribute('open');}}>
+      <details className="history-picker" ref={historyPicker}><summary>比赛记录 <span>⌄</span></summary><div className="history-menu">
+        {history.map(item => <button type="button" key={item.id} aria-label={`${when(item.startedAt)} · ${item.event} · ${item.result==='Win' ? '胜' : item.result==='Loss' ? '负' : item.result}`} className={`history-item ${match?.matchId===item.id ? 'selected' : ''}`} onClick={()=>{loadMatch(item.id); if (historyPicker.current) historyPicker.current.open=false;}}>
           <span>{when(item.startedAt)}</span><span>{item.event}</span><strong>{item.result==='Win' ? '胜' : item.result==='Loss' ? '负' : item.result}</strong></button>)}
       </div></details>
       {match && <span className="match-caption">{when(match.startedAt)} · {match.eventName}</span>}
