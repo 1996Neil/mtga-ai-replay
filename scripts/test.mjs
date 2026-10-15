@@ -12,7 +12,11 @@ const viewer = args.has('--viewer');
 const dir = viewer ? 'viewer/tests' : 'tests';
 let files = (await readdir(new URL(`../${dir}/`, import.meta.url))).filter(name => viewer ? name.endsWith('.test.ts') : name.endsWith('.test.mjs'));
 if (args.has('--coach')) files = files.filter(name => name.startsWith('live-coach-'));
-if (viewer) {
+if (viewer && !args.has('--full-viewer')) {
+  files = files.filter(name => !['adapter.test.ts', 'cardPresentation.test.ts', 'localHistory.test.ts', 'stack-zone.test.ts'].includes(name));
+  console.log('Viewer portable suite excludes adapter/store tests requiring restricted Viewer source; use viewer:test:full after authorized local materialization.');
+}
+if (viewer && args.has('--full-viewer')) {
   for (const name of ['replayStore', 'hoverStore', 'cardCacheStore']) await access(new URL(`../viewer/src/store/${name}.ts`, import.meta.url));
 }
 const command = ['--test', ...files.sort().map(name => `${dir}/${name}`)];

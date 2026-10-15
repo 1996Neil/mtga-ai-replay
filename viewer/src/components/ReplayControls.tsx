@@ -1,16 +1,16 @@
 // Basic transport stays visible; opening/ending and speed options are secondary.
 import { useReplayStore } from '../store/replayStore';
-import { useCardCacheStore } from '../store/cardCacheStore';
-import { actorLabelZh, describeEventZh, phaseTextZh } from '../lib/display';
+import { NearbyActions } from './GameLog';
+import { actorLabelZh, phaseTextZh } from '../lib/display';
 import { TurnSlider } from './TurnSlider';
 const SPEEDS = [0.5, 1, 2, 4];
 export function ReplayControls({ analysis = false }: { analysis?: boolean }) {
-  const s = useReplayStore(), names = useCardCacheStore(state => state.cards), match = s.currentMatch(), step = s.currentStep();
+  const s = useReplayStore(), match = s.currentMatch(), step = s.currentStep();
   const shown = s.viewBefore && step?.beforeGameState ? step.beforeGameState.turnInfo : step?.gameState.turnInfo;
   const total = match?.steps.length ?? 0, first = s.currentStepIndex <= 0, last = s.currentStepIndex >= total - 1;
   return <footer className="replay-controls" aria-label="回放控制">
     <div className="replay-position"><div className="replay-position-title">{shown ? `${shown.turnNumber === 0 ? '起手与调度' : `第 ${shown.turnNumber} 回合 · ${actorLabelZh(shown.activePlayer)}`} · ${phaseTextZh(shown.phase, shown.step)}` : '正在读取回放'}</div>
-      <div className="replay-current-action">{s.viewBefore && step?.beforeGameState ? '动作前局面 · 尚未执行当前动作' : step?.event ? describeEventZh(step.event, names) : '记录局面变化'}</div>
+      {match && <NearbyActions match={match} currentStepIndex={s.currentStepIndex} analysis={analysis} />}
       {analysis && <span className="replay-technical-position">{step?.anchor} · {s.currentStepIndex + 1} / {total} 个动作</span>}</div>
     <div className="control-button-row">
       <button className="standard-button" type="button" onClick={s.previousTurn} disabled={first} title="Shift + 左方向键">上一回合</button>

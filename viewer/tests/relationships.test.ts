@@ -31,3 +31,12 @@ test('before snapshots use only their own stack targets; no later event is requi
   assert.equal(boardRelationships(before).length, 0);
   assert.equal(boardRelationships(after).length, 3);
 });
+
+test('ordinary semantic targets respect a second-seat local player without changing card identities',()=>{
+  const state=normalizeState(snapshot());
+  const links=boardRelationships(state,{type:'cast',card:{instance_id:10},targets:[{player:'opponent'},{player:'me'}]},2);
+  assert.ok(links.some(l=>'player' in l.to && l.to.player===1 && 'card' in l.from && l.from.card===10));
+  assert.ok(links.some(l=>'player' in l.to && l.to.player===2 && 'card' in l.from && l.from.card===30));
+  assert.ok(links.some(l=>'card' in l.to && l.to.card===10 && 'card' in l.from && l.from.card===30));
+  assert.equal(boardRelationships(state,{type:'target',card:{instance_id:10},targets:[{player:'opponent',hidden:true}]},2).filter(l=>'card' in l.from&&l.from.card===10).length,0);
+});

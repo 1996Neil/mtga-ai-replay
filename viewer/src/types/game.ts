@@ -137,6 +137,41 @@ export interface CanonicalEvent {
 }
 export interface HistoryMatch { id: string; startedAt: string; event: string; result: string; gameCount?: number; revision?: string; }
 
+export interface DraftRunMatch {
+  id: string;
+  started_at: string;
+  result: string | null;
+  game_count: number | null;
+}
+export interface DraftPick {
+  pack_number: number;
+  pick_number: number;
+  picked_at: string | null;
+  candidates: { arena_id: number; name: string }[];
+  selected: { arena_id: number; name: string } | null;
+  pool_before: { arena_id: number; name: string }[];
+  pool_after: { arena_id: number; name: string }[];
+  complete: boolean;
+  missing: string[];
+}
+export interface DraftRun {
+  run_id: string;
+  event_id: string;
+  event: string;
+  started_at: string | null;
+  status: 'in_progress' | 'completed' | 'incomplete';
+  score_verified: boolean;
+  replay_wins: number;
+  replay_losses: number;
+  course_wins: number | null;
+  course_losses: number | null;
+  colors: string[];
+  colors_complete: boolean;
+  card_pool: { arena_id: number; name: string }[];
+  matches: DraftRunMatch[];
+  picks: DraftPick[];
+}
+
 export interface WorkerProgress {
   type: 'progress';
   pct: number;

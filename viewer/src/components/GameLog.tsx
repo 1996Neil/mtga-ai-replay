@@ -33,14 +33,12 @@ export function GameLog({ match, currentStepIndex, analysis = true }: Props) {
   </section>;
 }
 
-export function NearbyActions({ match, currentStepIndex, analysis = false, onOpenTimeline }: Props & { onOpenTimeline?: () => void }) {
+export function NearbyActions({ match, currentStepIndex, analysis = false }: Props) {
   const names = useCardCacheStore(s => s.cards), current = match.steps[currentStepIndex];
   const before = useReplayStore(s => s.viewBefore) && Boolean(current?.beforeGameState);
   if (!current) return null;
   const first = Math.max(0, currentStepIndex - 2), last = Math.min(match.steps.length, currentStepIndex + 3);
   return <section className="nearby-actions" aria-label="当前动作附近">
-    <header className="nearby-heading"><span>{(before ? current.beforeGameState!.turnInfo.turnNumber : current.turnNumber) === 0 ? '起手与调度' : `第 ${before ? current.beforeGameState!.turnInfo.turnNumber : current.turnNumber} 回合`} · {phaseLabelZh(before ? current.beforeGameState!.turnInfo.phase : current.phase)}</span>
-      {onOpenTimeline && <button type="button" onClick={onOpenTimeline}>完整时间线</button>}</header>
     <div className="nearby-list">{match.steps.slice(first, last).map((step, offset) => {
       const index = first + offset, selected = index === currentStepIndex;
       return <button type="button" key={step.anchor} className={`nearby-action ${selected ? 'current' : ''}`} aria-current={selected ? 'step' : undefined} onClick={() => jump(index)}>

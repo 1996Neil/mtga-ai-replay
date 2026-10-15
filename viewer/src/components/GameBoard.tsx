@@ -3,55 +3,58 @@ import { RelationshipArrows } from './RelationshipArrows';
 import type { ParsedMatch, ReplayStep } from '../types/game';
 import { PlayerInfo } from './PlayerInfo';
 import { HandZone } from './HandZone';
-import { BattlefieldZone, PermanentCard } from './BattlefieldZone';
+import { BattlefieldZone } from './BattlefieldZone';
 import { GraveyardZone } from './GraveyardZone';
 import { StackZone } from './StackZone';
 import { CardInspectorOverlay } from './CardImage';
-import { combatGroups } from '../lib/boardLayout';
-import { FullCardRows } from './FullCardRows';
+import { useCardCacheStore } from '../store/cardCacheStore';
+import { combatPresentation, observedAttackTargets } from '../lib/combatPresentation';
+
 export function GameBoard({ step, match, viewBefore, analysis = false }: { step: ReplayStep; match: ParsedMatch; viewBefore: boolean; analysis?: boolean }) {
   const board = useRef<HTMLElement>(null);
   const state = viewBefore && step.beforeGameState ? step.beforeGameState : step.gameState;
   const { turnInfo, players, battlefieldByOwner, handByOwner, graveyardByOwner } = state;
-  const localSeat = match.localSeatId, opponentSeat = 2;
-  const own = players.find(p=>p.systemSeatId===localSeat), opponent = players.find(p=>p.systemSeatId===opponentSeat);
-  // Before must not highlight card identities learned in the following event.
-  const highlights = new Set(viewBefore ? [] : [Number(step.event?.card?.instance_id), ...(step.event?.targets ?? []).map(t=>Number(t.instance_id))].filter(Number.isFinite));
-  const all = Object.values(battlefieldByOwner).flat();
-  const combat = turnInfo.phase === 'Phase_Combat' ? combatGroups(all) : [];
-  const fighting = new Set(combat.flatMap(g=>[g.attacker.instanceId,...g.blockers.map(c=>c.instanceId)]));
-  const attackingMe = combat[0]?.attacker.controllerSeatId===localSeat;
-  function field(seat: number) { return (battlefieldByOwner[seat] ?? []).filter(c=>!fighting.has(c.instanceId)); }
-  const isLand = (card: typeof all[number]) => card.cardTypes.includes('CardType_Land') && !card.cardTypes.includes('CardType_Creature');
-  function zones(seat: number) { return <div className="player-zones"><GraveyardZone cards={graveyardByOwner[seat] ?? []} label={`${seat===localSeat ? '我的' : '对手'}墓地`} shortLabel="墓地" />
-    <GraveyardZone cards={state.exileObjects.filter(c=>c.ownerSeatId===seat)} label={`${seat===localSeat ? '我的' : '对手'}放逐区`} shortLabel="放逐区" /></div>; }
-  return <main ref={board} className={`game-board full-card-board ${combat.length ? 'has-combat' : ''}`} aria-label="回放棋盘">
-    <div className="player-header opponent-header">{opponent && <PlayerInfo player={opponent} isActive={turnInfo.activePlayer===opponentSeat} hasPriority={turnInfo.priorityPlayer===opponentSeat} isOpponent analysis={analysis} />}
-      <HandZone cards={[]} count={opponent?.handSize ?? null} faceUp={false} />{zones(opponentSeat)}</div>
+  const localSeat = match.localSeatId;
+  const opponentSeat = players.find(player => player.systemSeatId !== localSeat)?.systemSeatId ?? (localSeat === 1 ? 2 : 1);
+  const own = players.find(player => player.systemSeatId === localSeat), opponent = players.find(player => player.systemSeatId === opponentSeat);
+  const event = viewBefore ? undefined : step.event;
+  const highlights = new Set([Number(event?.card?.instance_id), ...(event?.targets ?? []).map(target => Number(target.instance_id))].filter(Number.isFinite));
+  const metadata = useCardCacheStore(s => s.cards);
+  const combat = combatPresentation(state, localSeat, event, {
+    attackTargets: observedAttackTargets(match.steps, step, viewBefore),
+    displayName: card => metadata.get(card.grpId)?.display_name_zh || card.name,
+  });
+  // Preserve source order and render each instance once, including during combat.
+  const field = (seat: number) => battlefieldByOwner[seat] ?? [];
+  const isLand = (card: typeof state.stackObjects[number]) => card.cardTypes.includes('CardType_Land') && !card.cardTypes.includes('CardType_Creature');
+  function zones(seat: number) {
+    return <div className="player-zones"><GraveyardZone cards={graveyardByOwner[seat] ?? []} label={`${seat === localSeat ? '我的' : '对手'}墓地`} shortLabel="墓地" />
+      <GraveyardZone cards={state.exileObjects.filter(card => card.ownerSeatId === seat)} label={`${seat === localSeat ? '我的' : '对手'}放逐区`} shortLabel="放逐区" /></div>;
+  }
+  return <main ref={board} className="game-board full-card-board" aria-label="回放棋盘">
+    <div className="board-scroll-controls" aria-label="矮窗口棋盘滚动"><span>棋盘可上下滚动</span><button type="button" onClick={() => board.current?.scrollTo({ top: 0 })}>查看棋盘上部</button><button type="button" onClick={() => { const el = board.current; if (el) el.scrollTo({ top: el.scrollHeight }); }}>查看棋盘下部</button></div>
+    <div className="player-header opponent-header">{opponent && <PlayerInfo player={opponent} isActive={turnInfo.activePlayer === opponentSeat} hasPriority={turnInfo.priorityPlayer === opponentSeat} isOpponent analysis={analysis} />}
+      <div className="player-extras"><HandZone cards={[]} count={opponent?.handSize ?? null} faceUp={false} />{zones(opponentSeat)}</div></div>
     <div className="board-play-area">
-    <div className="board-land-column">
-      <BattlefieldZone cards={field(opponentSeat).filter(isLand)} label="对手战场土地" isOpponent lands highlightIds={highlights} />
-      <BattlefieldZone cards={field(localSeat).filter(isLand)} label="我的战场土地" lands highlightIds={highlights} />
+      <div className="board-land-column">
+        <BattlefieldZone cards={field(opponentSeat).filter(isLand)} label="对手土地" isOpponent lands highlightIds={highlights} combatMarks={combat.marks} />
+        <BattlefieldZone cards={field(localSeat).filter(isLand)} label="我的土地" lands highlightIds={highlights} combatMarks={combat.marks} />
+        <HandZone cards={handByOwner[localSeat] ?? []} count={own?.handSize} faceUp />
+      </div>
+      <div className="board-main-column">
+        <BattlefieldZone cards={field(opponentSeat).filter(card => !isLand(card))} label="对手战场" isOpponent highlightIds={highlights} combatMarks={combat.marks} />
+        <section className="board-center-lane" aria-label="战斗状态">
+          <div className="combat-summary" aria-label="战斗对应关系">
+            <span>{combat.attackers ? `${combat.attackers} 个攻击者 · ${combat.blockers} 个阻挡者` : '战场'}</span>
+            <span className="combat-legend">{combat.attackers ? '橙色攻击 · 蓝色阻挡 · 相同 A 编号相互对应' : '卡牌原位显示 · 可滚动查看全部'}</span>
+          </div>
+        </section>
+        <BattlefieldZone cards={field(localSeat).filter(card => !isLand(card))} label="我的战场" highlightIds={highlights} combatMarks={combat.marks} />
+      </div>
+      {!!state.stackObjects.length && <div className="board-stack-overlay contextual-stack"><StackZone cards={state.stackObjects} analysis={analysis} /></div>}
     </div>
-    <div className="board-main-column">
-    <BattlefieldZone cards={field(opponentSeat).filter(card => !isLand(card))} label="对手战场" isOpponent highlightIds={highlights} compact={!!combat.length} />
-    {!!combat.length && <section className={`combat-arena ${attackingMe ? 'attacking-up' : 'attacking-down'}`} aria-label="战斗对应关系">
-      <h2>战斗 <span>{combat.length} 个攻击者 · {new Set(combat.flatMap(g=>g.blockers.map(c=>c.instanceId))).size} 个阻挡者</span></h2>
-      <div className="combat-lanes">{combat.map(({attacker,blockers})=><div key={attacker.instanceId} className={`combat-lane ${blockers.length>1 ? 'multi-block' : ''}`} data-attacker={attacker.instanceId}>
-        <FullCardRows className="combat-opponent-row" cards={attackingMe ? blockers : [attacker]}
-          renderCard={card => <PermanentCard key={card.instanceId} card={card} highlighted={highlights.has(card.instanceId)} />} />
-        <div className={`combat-connector ${blockers.length ? 'blocked' : 'unblocked'}`} aria-label={blockers.length ? `${blockers.length}个阻挡者对应此攻击者` : '未被阻挡'}><span>{blockers.length ? (blockers.length>1 ? `${blockers.length} 对 1` : '阻挡') : (attackingMe ? '↑ 未被阻挡' : '↓ 未被阻挡')}</span></div>
-        <FullCardRows className="combat-local-row" cards={attackingMe ? [attacker] : blockers}
-          renderCard={card => <PermanentCard key={card.instanceId} card={card} highlighted={highlights.has(card.instanceId)} />} />
-      </div>)}</div>
-    </section>}
-    {!!state.stackObjects.length && <div className="contextual-stack"><StackZone cards={state.stackObjects} analysis={analysis} /></div>}
-    <BattlefieldZone cards={field(localSeat).filter(card => !isLand(card))} label="我的战场" highlightIds={highlights} compact={!!combat.length} />
-    </div>
+    <div className="player-header local-header">{own && <PlayerInfo player={own} isActive={turnInfo.activePlayer === localSeat} hasPriority={turnInfo.priorityPlayer === localSeat} isOpponent={false} analysis={analysis} />}<div className="player-extras">{zones(localSeat)}</div></div>
     <CardInspectorOverlay />
-    </div>
-    <div className="player-header local-header">{own && <PlayerInfo player={own} isActive={turnInfo.activePlayer===localSeat} hasPriority={turnInfo.priorityPlayer===localSeat} isOpponent={false} analysis={analysis} />}{zones(localSeat)}</div>
-    <HandZone cards={handByOwner[localSeat] ?? []} count={own?.handSize} faceUp />
-    <RelationshipArrows board={board} state={state} event={viewBefore ? undefined : step.event} />
+    <RelationshipArrows board={board} state={state} event={event} localSeat={localSeat} combatLinks={combat.links} />
   </main>;
 }

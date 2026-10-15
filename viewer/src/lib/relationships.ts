@@ -5,12 +5,14 @@ export interface Relationship { from: Endpoint; to: Endpoint; kind: 'source' | '
 const hidden = (raw: Record<string, unknown>) => raw.hidden === true || /hidden|post.?game/i.test(String(raw.visibility ?? ''));
 
 /** Resolve only identities already present in this frame; never match by name or printed card ID. */
-export function boardRelationships(state: GameState, event?: CanonicalEvent): Relationship[] {
+export function boardRelationships(state: GameState, event?: CanonicalEvent, localSeat = 1): Relationship[] {
   const links = new Map<string, Relationship>();
+  const seats = new Set(state.players.map(player => player.systemSeatId));
+  const opponent = state.players.find(player => player.systemSeatId !== localSeat)?.systemSeatId;
   function endpoint(raw?: Record<string, unknown>): Endpoint | undefined {
     if (!raw || hidden(raw)) return;
-    if (raw.player === 'me') return { player: 1 };
-    if (raw.player === 'opponent') return { player: 2 };
+    if (raw.player === 'me') return seats.has(localSeat) ? { player: localSeat } : undefined;
+    if (raw.player === 'opponent') return opponent != null && seats.has(localSeat) ? { player: opponent } : undefined;
     const id = Number(raw.instance_id ?? raw.instanceId);
     const card = state.gameObjects.get(id) ?? (raw.logical_id ? [...state.gameObjects.values()].find(c => c.logicalId === raw.logical_id) : undefined);
     if (card && !hidden(card as unknown as Record<string, unknown>)) return { card: card.instanceId };

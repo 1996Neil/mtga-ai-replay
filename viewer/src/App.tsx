@@ -6,7 +6,7 @@ import { useReplayEngine } from './hooks/useReplayEngine';
 import { normalizeHistory, normalizeReplay } from './lib/canonicalAdapter';
 import type { HistoryMatch } from './types/game';
 import { GameBoard } from './components/GameBoard';
-import { GameLog, NearbyActions } from './components/GameLog';
+import { GameLog } from './components/GameLog';
 import { ReplayControls } from './components/ReplayControls';
 import { ReplaySyncButton } from './components/ReplaySyncButton';
 import { CollectionUpdateButton } from './components/CollectionUpdateButton';
@@ -154,7 +154,6 @@ export function App() {
       <div className="replay-content">
         {error ? <div className="error-state" role="alert"><h2>回放不可用</h2><p>{error}</p><button type="button" className="standard-button" onClick={()=>location.reload()}>重试</button></div> : loading ? <div className="loading-state" role="status">正在读取本机回放…</div> : match && step && <>
           <GameBoard match={match} step={step} viewBefore={actualBefore} analysis={analysis} />
-          <NearbyActions match={match} currentStepIndex={s.currentStepIndex} analysis={analysis} onOpenTimeline={()=>{s.pause();setAnalysis(true);}} />
         </>}
       </div>
     </div>

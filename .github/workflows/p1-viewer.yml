@@ -1,0 +1,31 @@
+name: P1 portable viewer checks
+on:
+  pull_request:
+  push:
+    branches: ['codex/replay2-p1-layout-stack-20261015']
+permissions:
+  contents: read
+jobs:
+  portable:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 1
+      - name: Fetch complete candidate ancestry without unrelated branches
+        run: |
+          git fetch --no-tags --unshallow origin "$GITHUB_SHA"
+          test "$(git rev-parse --is-shallow-repository)" = false
+          test -z "$(git replace -l)"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            viewer/package-lock.json
+      - run: npm ci --ignore-scripts
+      - run: npm ci --ignore-scripts --prefix viewer
+      - run: npm run viewer:test
+      - run: npm run test:cloud
+      - run: npm run check:release
