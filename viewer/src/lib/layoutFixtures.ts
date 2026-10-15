@@ -4,7 +4,7 @@ export function fixtureCard(id: number, owner: number, extra: Partial<CardInstan
     cardTypes:['CardType_Creature'], isTapped:false, isAttacking:false, counters:{}, power:4, toughness:3, ...extra };
 }
 export function layoutFixture(handCount=7, scenario='many', before=false): {match:ParsedMatch;step:ReplayStep} {
-  const attacking = scenario !== 'idle';
+  const attacking = !['idle','permanents'].includes(scenario);
   const stackCount = scenario === 'stack-many' ? 12 : scenario === 'stack-multi' ? 3 : ['stack','second-seat'].includes(scenario) ? 1 : 0;
   const own=[fixtureCard(101,1,{isAttacking:attacking,attackingTargetId:scenario==='planeswalker'?203:scenario==='second-seat'?999:undefined}),
     fixtureCard(102,1,{isAttacking:attacking&&scenario!=='single',isTapped:attacking}),
@@ -13,6 +13,11 @@ export function layoutFixture(handCount=7, scenario='many', before=false): {matc
   const enemy=[fixtureCard(201,2,{isBlocking:scenario==='many',blockedAttackerIds:scenario==='many'?[101,102]:[]}),
     fixtureCard(202,2,{isBlocking:scenario==='many',blockedAttackerIds:scenario==='many'?[101]:[]}),
     fixtureCard(203,2,{cardTypes:['CardType_Planeswalker'],name:'模拟鹏洛客',counters:{Loyalty:5}})];
+  if (scenario === 'permanents') own.push(
+    fixtureCard(105,1,{grpId:106418,name:"Medic's Kitesail",cardTypes:['CardType_Artifact'],typeLine:'Artifact — Equipment',power:undefined,toughness:undefined}),
+    fixtureCard(106,1,{grpId:106240,name:'Memory Trap',cardTypes:['CardType_Enchantment'],power:undefined,toughness:undefined}),
+    fixtureCard(107,1,{grpId:106487,name:'Ajani Unrelenting',cardTypes:['CardType_Planeswalker'],counters:{Loyalty:4},power:undefined,toughness:undefined}),
+    fixtureCard(108,1,{grpId:97823,name:'Origin of Spider-Man',cardTypes:['CardType_Enchantment'],typeLine:'Enchantment — Saga',power:undefined,toughness:undefined}));
   let state:GameState={gameStateId:1, turnInfo:{turnNumber:5,phase:attacking?'Phase_Combat':'Phase_Main1',activePlayer:1},
     players:[{systemSeatId:1,playerName:'模拟我方',lifeTotal:12,handSize:handCount,librarySize:20},{systemSeatId:2,playerName:'模拟对手',lifeTotal:14,handSize:5,librarySize:22}],
     zones:new Map(),gameObjects:new Map(),zoneTypeMap:new Map(),annotations:[],exileObjects:[],graveyardByOwner:{1:[],2:[]},

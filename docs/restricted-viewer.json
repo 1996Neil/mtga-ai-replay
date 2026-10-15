@@ -6,19 +6,19 @@
   "files": [
     {
       "path": "viewer/src/components/GameBoard.tsx",
-      "sha256": "78ea9527a1b1a1ddaf3a1c392de0404b966dcc5168745e64b9003195d7f0cbea"
+      "sha256": "85a4292c1b206303e0799afd017ca2ad742251c221b55ae2fdd51f892f8f3d63"
     },
     {
       "path": "viewer/src/components/BattlefieldZone.tsx",
-      "sha256": "f8bc056f752097f8926b667ab507dcc78c7e6dd80840f63f401e0cc1635d0a67"
+      "sha256": "e6bf9e2edc3324a70c5033b9e3a1f45d4b20afb1cefe37eb7db7e566edb54bed"
     },
     {
       "path": "viewer/src/components/HandZone.tsx",
-      "sha256": "2a10dd3d54502ea7c11041bbd033799ac8f3f04c8ffdc38cc3841e1605372f39"
+      "sha256": "f31e08fdb48cc7f37e4fa38f18307b59f2bcd0258cff0790773dac9f135b5a49"
     },
     {
       "path": "viewer/src/components/GraveyardZone.tsx",
-      "sha256": "9d31e76ddcedd0131abd89941b57583a22de9884beef39fe72aa4fd6642cceb0"
+      "sha256": "c79c3f3e41f6a1431a0b1c98bbd72a847da59376ea5113f0593b361b611c1c5d"
     },
     {
       "path": "viewer/src/components/StackZone.tsx",
@@ -26,7 +26,7 @@
     },
     {
       "path": "viewer/src/components/PlayerInfo.tsx",
-      "sha256": "8b036502f340e49f1b8ccd79e303e7f44bd06080d668a9a7a0de951a8c2a7199"
+      "sha256": "dce778a6df5732c09444b3e42e2560948229c6f606b220cfc6b91c4469ab9ec2"
     },
     {
       "path": "viewer/src/components/ReplayControls.tsx",
@@ -42,7 +42,7 @@
     },
     {
       "path": "viewer/src/components/CardImage.tsx",
-      "sha256": "2c077bdb723031249ad4bfacf325ddff06aff38b286c503ecc5c2ee3302ed241"
+      "sha256": "757c07336bfd72380aa92a708ae594b3f0712d54e2bd96acce23bf1209665a25"
     },
     {
       "path": "viewer/src/components/GameLog.tsx",
@@ -74,11 +74,12 @@
     },
     {
       "path": "viewer/src/types/game.ts",
-      "sha256": "f31647c6de559cc60aafd501e6dc05f6a25b943bdf8337f81ae11ee9c6354612"
+      "sha256": "1a286c8d81789b53c5504419b77cf56d8289f05afd00703adbfd65b9f5788506"
     },
     {
       "path": "viewer/src/index.css",
-      "sha256": "29521091804fa53b5fe110f82ea8b2d1da28451f40f74977e11f0f4e7d8e8300"
+      "sha256": "f9f44b8953cf1ce8bc2d27f28d6c6e071387b22ce12d73998ca6c3c23aa1baac"
     }
-  ]
+  ],
+  "ui_interaction_update": "User-authorized private UI review, push and PR merge on 2026-10-15; original inclusion declaration is preserved; no claim of public redistribution rights."
 }
