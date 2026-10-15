@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
-import { coachInputFingerprint, fingerprintFile } from '../src/sync-cache.mjs';
+import { coachInputFingerprint, fingerprintFile, archiveFingerprint } from '../src/sync-cache.mjs';
 import { coachCardMetadataIds, buildCoachCards } from '../src/coach-cards.mjs';
 
 const exec = promisify(execFile);
@@ -26,6 +26,24 @@ const metadata = (name, extra = {}) => ({ arena_id: 100, name, source: 'scryfall
 // Each fixture file describes its own Arena ID. Explicit mismatched identities
 // are covered separately by public-card-preparation.test.mjs.
 const put = (options, id, value) => writeFile(join(options.dataDir, 'cards', `${id}.json`), JSON.stringify({ ...value, arena_id:id }));
+
+test('draft sidecar creation, modification, deletion and WAL frames invalidate the import archive receipt', async t => {
+  const {dataDir} = await fixture(t), path = join(dataDir,'draft-runs.sqlite3');
+  const missing = await archiveFingerprint(dataDir);
+  await writeFile(path,'synthetic-sidecar-one');
+  const created = await archiveFingerprint(dataDir);
+  assert.notEqual(created,missing);
+  await writeFile(path,'synthetic-sidecar-two');
+  const changed = await archiveFingerprint(dataDir);
+  assert.notEqual(changed,created);
+  await writeFile(path+'-wal','');
+  assert.equal(await archiveFingerprint(dataDir),changed,'empty WAL is not an archive mutation');
+  await writeFile(path+'-wal','synthetic WAL frames');
+  assert.notEqual(await archiveFingerprint(dataDir),changed);
+  await rm(path+'-wal'); await rm(path);
+  assert.equal(await archiveFingerprint(dataDir),missing);
+  assert.notEqual(await archiveFingerprint(dataDir),created,'deleted sidecar cannot match the stored import receipt');
+});
 
 test('replay receipts ignore unrelated and hidden metadata but bind missing, changed and deleted dependencies', async t => {
   const opts = await fixture(t), item = replay();

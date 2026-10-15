@@ -74,11 +74,11 @@
     },
     {
       "path": "viewer/src/types/game.ts",
-      "sha256": "1a286c8d81789b53c5504419b77cf56d8289f05afd00703adbfd65b9f5788506"
+      "sha256": "1465f5ef6575b15ae6317e188292407d133d6458589f3f1ea95d92bd89772af4"
     },
     {
       "path": "viewer/src/index.css",
-      "sha256": "f9f44b8953cf1ce8bc2d27f28d6c6e071387b22ce12d73998ca6c3c23aa1baac"
+      "sha256": "29a4a4d561c35ae8a26fee700de6e764aa48eaa53552537cb76d706d12fe8a3c"
     }
   ],
   "ui_interaction_update": "User-authorized private UI review, push and PR merge on 2026-10-15; original inclusion declaration is preserved; no claim of public redistribution rights."
