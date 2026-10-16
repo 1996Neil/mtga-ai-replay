@@ -1,8 +1,14 @@
-.replay-review-launch {
-  color: #dce8e5; border: 1px solid #51706b; background: #253832;
-  border-radius: 6px; padding: 9px 13px; white-space: nowrap; cursor: pointer;
+/* Share the adjacent collection button's dimensions, typography and focus treatment. */
+.sync-button.replay-review-launch { flex-shrink: 0; }
+.replay-review-launch-symbol { width: 15px; flex-shrink: 0; text-align: center; }
+.sync-button.replay-review-launch[data-review-status="ready"] {
+  color: #c9ead3; border-color: #507a61; background: #253d30;
 }
-.replay-review-launch:hover, .replay-review-launch[aria-expanded="true"] { background: #365249; }
+.sync-button.replay-review-launch[data-review-status="missing"] {
+  color: #f0cccc; border-color: #885959; background: #482f31;
+}
+.sync-button.replay-review-launch[data-review-status="ready"]:is(:hover, [aria-expanded="true"]) { background: #34513f; }
+.sync-button.replay-review-launch[data-review-status="missing"]:is(:hover, [aria-expanded="true"]) { background: #603c3f; }
 .replay-review-float {
   position: fixed; z-index: 9998; box-sizing: border-box;
   width: min(375px, calc(100vw - 16px)); max-height: min(72vh, 690px);

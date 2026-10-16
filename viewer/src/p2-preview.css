@@ -31,10 +31,11 @@
 .hand-number { position:absolute; left:5px; top:5px; width:19px; height:19px; border-radius:50%; display:grid; place-items:center; background:#17211eef; color:#edf1e9; border:1px solid #91a38a; font-size:11px; z-index:2; }
 .card-art-viewport { position:relative; }
 /* Native modal, with no extra visible UI; any click and Escape dismiss it. */
-dialog.card-inspector-overlay.face-only-dialog { position:fixed; inset:0; transform:none; width:100vw; max-width:100vw; height:100dvh; max-height:100dvh; margin:0; padding:0; border:0; outline:0; background:transparent; overflow:hidden; pointer-events:auto; }
+dialog.card-inspector-overlay.face-only-dialog { position:fixed; inset:0; transform:none; width:100vw; max-width:100vw; height:100dvh; max-height:100dvh; margin:0; padding:16px; border:0; outline:0; background:transparent; overflow:hidden; pointer-events:auto; }
 dialog.face-only-dialog[open] { display:flex; align-items:center; justify-content:center; }
 dialog.face-only-dialog::backdrop { background:#07110bd1; }
-.face-only-dialog .preview-dismiss { width:min(88vw,calc(86dvh * 5 / 7),480px); border:0; outline:0; background:transparent; }
+/* This is the card wrapper, not the legacy absolutely positioned dismiss button. */
+.face-only-dialog > .preview-dismiss { position:static; inset:auto; flex:none; width:min(88vw,calc(86dvh * 5 / 7),480px); max-width:min(100%,calc((100dvh - 32px) * 5 / 7)); max-height:100%; overflow:auto; margin:0; padding:0; border:0; outline:0; background:transparent; }
 .face-only-dialog .card-image > .card-art-viewport { border:0; outline:none; outline-offset:0; border-radius:0; box-shadow:none; }
 .face-only-dialog .card-art { border-radius:0; }
 @media(prefers-reduced-motion:reduce) { .permanent,.light-fan-hand .hand-face { transition:none; } }
