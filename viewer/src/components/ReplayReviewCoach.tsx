@@ -6,6 +6,8 @@ import { reviewPresentation, importanceLabel } from '../replay/reviewPresentatio
 import type { Severity, Importance, Assessment } from '../replay/reviewPresentation';
 import { useCardImage } from '../hooks/useCardImage';
 import { reviewCardId, reviewCardTranslation } from '../replay/reviewCardIdentity';
+import { currentReviewSnapshot, reviewLaunchPresentation } from '../replay/reviewAvailability';
+import type { ReviewSnapshot, ReviewStatus } from '../replay/reviewAvailability';
 import type { GameState } from '../types/game';
 
 type Boundary = 'before' | 'after';
@@ -29,8 +31,8 @@ function ReviewCardLabel({ english, id }: { english: string; id: number }) {
 export function ReplayReviewCoach({ match, currentStepIndex, viewBefore, onJump }: {
   match: Match; currentStepIndex: number; viewBefore: boolean; onJump: (anchor: string, boundary: Boundary) => void;
 }) {
-  const [review, setReview] = useState<Review | null>(null);
-  const [state, setState] = useState<'loading'|'missing'|'stale'|'syncing'|'ready'|'error'>('loading');
+  const [snapshot, setSnapshot] = useState<ReviewSnapshot<Review>>({ ...match, status: 'loading', review: null });
+  const { status: state, review } = currentReviewSnapshot(snapshot, match);
   const [canSync, setCanSync] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState('');
@@ -49,7 +51,9 @@ export function ReplayReviewCoach({ match, currentStepIndex, viewBefore, onJump 
   useEffect(() => {
     const controller = new AbortController(); const ticket = ++epoch.current;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    setReview(null); setState('loading'); setCanSync(false); setError(''); setCheckedAt(null);
+    const update = (status: ReviewStatus, review: Review | null = null) =>
+      setSnapshot({ matchId: id, gameNumber: game, steps: match.steps, status, review });
+    update('loading'); setCanSync(false); setError(''); setCheckedAt(null);
     setSelectedAnchor(null); setGenerating(false); previousStep.current = null;
     async function read() {
       try {
@@ -60,17 +64,18 @@ export function ReplayReviewCoach({ match, currentStepIndex, viewBefore, onJump 
         setCanSync(Boolean(value.can_sync));
         setCheckedAt(typeof value.checked_at === 'string' ? value.checked_at : null);
         if (value.status === 'ready' && value.review?.match_id === id && value.review.game_number === game) {
-          setReview(value.review as Review); setState('ready'); setGenerating(false); setOpen(true); if (value.offline || value.error) setError(value.error ?? '当前离线，显示上次校验的云端复盘。');
+          update('ready', value.review as Review); setGenerating(false); setOpen(true);
+          setError(value.error ?? (value.offline ? '当前离线，显示上次校验的云端复盘。' : ''));
         } else if (value.status === 'syncing') {
-          setState('syncing'); setGenerating(true);
+          update('syncing'); setGenerating(true);
           timer = setTimeout(() => { void read(); }, 800);
         } else {
-          setReview(null); setGenerating(false); setState(value.status === 'stale' ? 'stale' : value.status === 'error' ? 'error' : 'missing');
+          setGenerating(false); update(value.status === 'stale' ? 'stale' : value.status === 'missing' ? 'missing' : 'error');
           if (value.error) setError(value.error);
         }
       } catch (err) {
         if (!controller.signal.aborted && ticket === epoch.current) {
-          setState('error'); setError(err instanceof Error ? err.message : String(err));
+          update('error'); setGenerating(false); setError(err instanceof Error ? err.message : String(err));
           // Reconnect to the same read-only sync; never start a model request.
           timer = setTimeout(() => { void read(); }, 2000);
         }
@@ -173,6 +178,7 @@ export function ReplayReviewCoach({ match, currentStepIndex, viewBefore, onJump 
     if (generating || !canSync) return;
     const ticket = epoch.current;
     setGenerating(true); setError('');
+    setSnapshot({ matchId: id, gameNumber: game, steps: match.steps, status: 'syncing', review: null });
     try {
       const response = await fetch(`/api/matches/${encodeURIComponent(id)}/review/sync?game=${game}`, {
         method: 'POST', headers: { 'X-MTGA-Replay-Action': 'review-sync' },
@@ -180,7 +186,6 @@ export function ReplayReviewCoach({ match, currentStepIndex, viewBefore, onJump 
       const result = await response.json();
       if (!response.ok) throw new Error(result.error ?? `同步失败（${response.status}）`);
       if (ticket !== epoch.current) return;
-      setState('syncing');
       setOpen(true); setPollVersion(v => v + 1);
     } catch (err) { if (ticket === epoch.current) { setError(err instanceof Error ? err.message : String(err)); setPollVersion(v => v + 1); } }
     finally { if (ticket === epoch.current) setGenerating(false); }
@@ -200,10 +205,13 @@ export function ReplayReviewCoach({ match, currentStepIndex, viewBefore, onJump 
     if (drag.current?.pointer === e.pointerId) drag.current = null;
   }
 
+  const launch = reviewLaunchPresentation(state, ordered.length);
   return <>
-    <button type="button" className="replay-review-launch" aria-expanded={open}
+    <button type="button" className="sync-button replay-review-launch" data-review-status={launch.tone}
+      aria-expanded={open} aria-busy={launch.busy} aria-label={`AI 复盘，${launch.description}`} title={launch.description}
       aria-controls="replay-review-panel" onClick={() => { setOpen(o => !o); setFolded(false); }}>
-      ✦ AI 复盘{review ? ` · ${ordered.length}` : ''}
+      <span className="replay-review-launch-symbol" aria-hidden="true">{launch.symbol}</span>
+      <span>{launch.label}</span>
     </button>
     {open && createPortal(<section ref={panel} id="replay-review-panel" className="replay-review-float" role="dialog" aria-label="AI 比赛复盘"
       style={{ left: position.x, top: position.y }} >
@@ -220,7 +228,7 @@ export function ReplayReviewCoach({ match, currentStepIndex, viewBefore, onJump 
       </header>
       {!folded && <div className="replay-review-content">
         {generating || state === 'syncing' ? <p role="status">正在检查云端复盘…</p> : state === 'loading' ? <p role="status">正在读取已保存的复盘…</p> : !review ? <>
-          <p>{state === 'stale' ? '比赛数据或分析政策已经更新，原云端建议不能再安全定位。' :
+          <p>{state === 'error' ? '暂时无法读取这场比赛的复盘记录，请重试。' : state === 'stale' ? '比赛数据或分析政策已经更新，原云端建议不能再安全定位。' :
             '这场比赛尚无已校验的云端 AI 复盘。'}</p>
           <button type="button" className="replay-review-generate" disabled={generating || !canSync} onClick={syncCloudReview}>
             检查/同步云端复盘
