@@ -72,7 +72,7 @@
 .card-image:focus-visible { outline:none; }
 .card-image:focus-visible > .card-art-viewport,.card-image.inspected > .card-art-viewport { outline:2px solid var(--own); outline-offset:1px; }
 .land-stacks { display:flex; flex-wrap:wrap; align-content:flex-start; align-items:flex-start; gap:8px 12px; padding:5px 3px 3px; }
-.land-stack { position:relative; width:calc(var(--pile-face-w) + var(--pile-depth) * 9px); flex-shrink:0; }
+.land-stack { position:relative; isolation:isolate; width:calc(var(--pile-face-w) + var(--pile-depth) * 9px); flex-shrink:0; }
 .land-stack-cards { position:relative; height:calc(var(--card-h) + 18px + var(--pile-depth) * 4px); }
 .land-stack-member { position:absolute; width:var(--pile-face-w); left:calc(var(--pile-offset) * 9px); top:calc(var(--pile-offset) * 4px); }
 .land-stack-member:focus-within { z-index:100 !important; }
