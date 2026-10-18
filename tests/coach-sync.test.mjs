@@ -7,13 +7,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { buildCoachBundle, serializeCoachJson, resolveCoachBundle } from '../src/coach-bundle.mjs';
-import { configureCoachSync, enqueueCoachBundle, syncCoachBundles, getCoachSyncStatus, getCoachHistoryKey, getPublishedCoachIndex, approveCoachSyncHistory } from '../src/coach-sync.mjs';
-import { syncCoachCatalog, printCatalogSync } from '../src/coach-catalog-sync.mjs';
-import { archiveReplays, listReplays } from '../src/history.mjs';
+import { configureCoachSync, enqueueCoachBundle, syncCoachBundles, getCoachSyncStatus, getCoachHistoryKey, getPublishedCoachIndex, approveCoachSyncHistory, verifyCoachReplayReceipt } from '../src/coach-sync.mjs';
+import { prepareCoachReplayUpload, syncCoachCatalog, printCatalogSync } from '../src/coach-catalog-sync.mjs';
+import { archiveReplays, listReplays, getReplay } from '../src/history.mjs';
 import { validateBundleFiles, validateStagedRepository } from '../src/sync-security.mjs';
 import { syncReplayHistory } from '../src/replay-workflow.mjs';
 import { startReplayServer } from '../src/server.mjs';
-import { syntheticLog } from './helpers/synthetic-log.mjs';
+import { createReplayAutoUpload, createReplayUploadTransport } from '../src/replay-auto-upload.mjs';
+import { buildReplays } from '../src/replay.mjs';
+import { syntheticLog, syntheticMatchRecords } from './helpers/synthetic-log.mjs';
 
 const execute = promisify(execFile);
 const REPOSITORY = 'fixture-owner/private-coaching';
@@ -22,7 +24,7 @@ const FILES = ['summary.json', 'coach.json', 'cards.json', 'manifest.json'];
 const digest = content => createHash('sha256').update(content).digest('hex');
 const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' };
 
-async function bundle({ id = 'synthetic-match-one', started = '2026-10-01T12:00:00.000Z', richer = false, generated = '2026-10-02T00:00:00.000Z', coachOptions = {} } = {}) {
+async function bundle({ id = 'synthetic-match-one', started = '2026-10-01T12:00:00.000Z', richer = false, generated = '2026-10-02T00:00:00.000Z', coachOptions = {}, event = 'Jump In', queue_id } = {}) {
   const forest = { arena_id: 1, name: 'Forest', instance_id: 101, logical_id: 'C1', visibility: 'public', card_types: ['Land'], counters: [] };
   const player = (name, battlefield = []) => ({ name, life: 20, hand: [], handSize: 0, librarySize: 39, battlefield, graveyard: [], exile: [] });
   const state = number => ({ gameStateId: number, turn: number, phase: 'Phase_Main1', step: 'Step_Main', activePlayer: 'me', priorityPlayer: 'me', players: { me: player('Synthetic Me', [forest]), opponent: player('Synthetic Opponent') }, stack: [], warnings: [] });
@@ -32,7 +34,7 @@ async function bundle({ id = 'synthetic-match-one', started = '2026-10-01T12:00:
     states.S2 = state(2);
     steps.push({ anchor: 'T2-A1', turn: 2, action: 1, before_state_id: 'S1', state_id: 'S2', event: { type: 'life', actor: 'me', life: { me: 19, opponent: 20 } } });
   }
-  return buildCoachBundle({ schema_version: '1.0', match: { id, started_at: started, event: 'Jump In', is_jump_in: true, result: 'Win', player: 'Synthetic Me', opponent: 'Synthetic Opponent', on_play: true },
+  return buildCoachBundle({ schema_version: '1.0', match: { id, started_at: started, event, ...(queue_id !== undefined ? { queue_id } : {}), is_jump_in: true, result: 'Win', player: 'Synthetic Me', opponent: 'Synthetic Opponent', on_play: true },
     deck: [{ arena_id: 1, name: 'Forest', quantity: 40 }], perspective: { hidden_information: 'omitted' }, warnings: [],
     games: [{ game_number: 1, starting_hand: [], states, steps, turns: [], result: { outcome: 'Win', reason: 'concede', life: { me: 19, opponent: 20 } }, warnings: [] }] },
   { cards: [{ arena_id: 1, name: 'Forest', display_name_zh: '树林', mana_cost: '', type_line: 'Basic Land — Forest', oracle_text: '{T}: Add {G}.', keywords: [], power: null, toughness: null, metadata_complete: true, source: 'scryfall' }], generatedAt: generated, ...coachOptions });
@@ -75,7 +77,7 @@ async function harness(t) {
       if (control.unavailableGh) throw new Error('network error ghp_SyntheticSecretMustNotEscape /Users/synthetic/private.log');
       let defaultBranchRef = null;
       try { await execute('git', ['--git-dir', bare, 'rev-parse', '--verify', 'HEAD'], { env }); defaultBranchRef = { name: 'main' }; } catch { /* Empty remote. */ }
-      return JSON.stringify({ nameWithOwner: REPOSITORY, visibility: control.visibilityChecks >= control.publicAtCheck ? 'PUBLIC' : control.visibility, url: `https://github.com/${REPOSITORY}`, defaultBranchRef });
+      return JSON.stringify({ id: control.repositoryId ?? 'R_fixture', nameWithOwner: REPOSITORY, visibility: control.visibilityChecks >= control.publicAtCheck ? 'PUBLIC' : control.visibility, url: `https://github.com/${REPOSITORY}`, defaultBranchRef });
     }
     assert.equal(file, 'git');
     const networkCommand = args.find(value => value === 'fetch' || value === 'push' || value === 'ls-remote');
@@ -114,8 +116,8 @@ async function harness(t) {
 
 function catalogReplay(id, minute) {
   return { schema_version: '2.0', perspective: { hidden_information: 'omitted' },
-    match: { id, started_at: `2026-10-01T12:${String(minute).padStart(2, '0')}:00.000Z`, event: 'Jump In', is_jump_in: true, result: 'Win' },
-    deck: [], warnings: [], games: [{ game_number: 1, states: {},
+    match: { id, completion_evidence: { match_completed: true, expected_games: 1 }, started_at: `2026-10-01T12:${String(minute).padStart(2, '0')}:00.000Z`, event: 'Jump In', is_jump_in: true, result: 'Win' },
+    deck: [], warnings: [], games: [{ game_number: 1, evidence: { terminal_state_observed: true }, states: {},
       steps: [{ anchor: 'T1-A1', turn: 1, event: { type: 'life', life: { me: 20, opponent: 0 } } }],
       turns: [{ turn_number: 1, events: [{ type: 'life', life: { me: 20, opponent: 0 } }] }],
       starting_hand: [], result: { outcome: 'Win', life: { me: 20, opponent: 0 } }, warnings: [] }] };
@@ -945,4 +947,414 @@ test('warm catalog with no candidates refuses newly fetched unsafe history befor
   assert.equal(h.control.calls.slice(calls).some(call=>call.args.includes('push')||call.args.includes('commit')),false);
   assert.equal(await h.commits(),remoteCount);
   assert.equal((await getCoachSyncStatus({...h.options,verify:false})).pending,0);
+});
+
+const autoBinding = { repository: REPOSITORY, repository_id: 'R_fixture', branch: 'main' };
+const autoSettings = h => ({ ...h.options, expectedBinding: autoBinding });
+
+test('automatic match queue uses real validated publisher, excludes backlog, and shares manual receipts', async t => {
+  const h = await harness(t); await configureCoachSync(REPOSITORY, h.options);
+  let now = Date.parse('2026-10-01T12:00:00Z');
+  await archiveReplays([catalogReplay('old-archive', 0)], h.options);
+  const queue = createReplayAutoUpload({ dataDir: h.dataDir, enabled: true, binding: autoBinding,
+    now: () => now, retryBaseMs: 10, pollIntervalMs: 60000,
+    transportOptions: { ...h.options, cardDb: '/synthetic-unavailable-card-db', fetchFn: async () => { throw Error('No external metadata in tests'); } } });
+  t.after(() => queue.close());
+  await queue.check(); assert.equal(await h.commits(), 0);
+  now += 60000; await archiveReplays([catalogReplay('new-auto-match', 1)], h.options);
+  await queue.check(); assert.equal(queue.snapshot().succeeded, 1);
+  assert.deepEqual(JSON.parse(await h.published('index.json')).matches.map(item => item.match_id), ['new-auto-match']);
+  await queue.check(); assert.equal(await h.commits(), 1);
+  const manual = await syncReplayHistory({ ...h.options, workerCount: 0 });
+  assert.equal(manual.status, 'succeeded'); assert.equal(manual.published, 1);
+  assert.equal(JSON.parse(await h.published('index.json')).matches.length, 2);
+});
+
+test('automatic publication blocks unrelated pending bundles and immutable repository ID changes', async t => {
+  const h = await harness(t); await configureCoachSync(REPOSITORY, h.options);
+  const old = await bundle({ id: 'manual-pending' }); await enqueueCoachBundle(old, h.options);
+  await assert.rejects(getPublishedCoachIndex({ ...autoSettings(h), onlyMatchIds: ['new-auto-match'] }), { code: 'SYNC_SCOPE' });
+  await assert.rejects(syncCoachBundles({ ...autoSettings(h), onlyMatchIds: ['new-auto-match'] }), { code: 'SYNC_SCOPE' });
+  assert.equal(await h.commits(), 0);
+  h.control.repositoryId = 'R_recreated';
+  await assert.rejects(getPublishedCoachIndex(autoSettings(h)), { code: 'SYNC_BINDING' });
+  assert.equal(h.control.calls.filter(call => call.args.includes('push')).length, 0);
+});
+
+test('automatic receipt independently reads exact bytes after remote HEAD advances', async t => {
+  const h = await harness(t); await configureCoachSync(REPOSITORY, h.options);
+  const first = await multipartBundle({ id: 'receipt-first' });
+  await enqueueCoachBundle(first, h.options); await syncCoachBundles(h.options);
+  const receipt = { match_id: first.summary.match_id, started_at: first.summary.started_at, history_key: first.historyKey, content_hash: first.contentHash };
+  const old = await verifyCoachReplayReceipt(receipt, autoSettings(h)); assert.equal(old.verified, true);
+  const second = await bundle({ id: 'receipt-later', started: '2026-10-01T13:00:00.000Z' });
+  await enqueueCoachBundle(second, h.options); await syncCoachBundles(h.options);
+  const current = await verifyCoachReplayReceipt(receipt, autoSettings(h));
+  assert.equal(current.verified, true); assert.notEqual(current.commit, old.commit);
+  const path = `matches/${first.historyKey}/summary.json`;
+  await writeFile(join(h.checkout, path), serializeCoachJson(first.summary) + '\n');
+  await execute('git', ['add', '--', path], { cwd: h.checkout, env });
+  await execute('git', ['-c', 'user.name=mtga-replay-coach', '-c', 'user.email=mtga-replay-coach@users.noreply.github.com', 'commit', '-m', 'Synthetic altered bytes'], { cwd: h.checkout, env });
+  await h.options.runCommand('git', ['push', 'origin', 'main'], { cwd: h.checkout });
+  await assert.rejects(verifyCoachReplayReceipt(receipt, autoSettings(h)), { code: 'SYNC_REMOTE_VERIFY' });
+});
+
+test('automatic unknown push response reconciles remote bytes without another push', async t => {
+  const h = await harness(t); await configureCoachSync(REPOSITORY, h.options);
+  let now = Date.parse('2026-10-01T12:00:00Z');
+  const queue = createReplayAutoUpload({ dataDir: h.dataDir, enabled: true, binding: autoBinding,
+    now: () => now, retryBaseMs: 10, pollIntervalMs: 60000, transportOptions: h.options });
+  t.after(() => queue.close()); await queue.check();
+  now += 60000; await archiveReplays([catalogReplay('lost-response', 1)], h.options);
+  h.control.losePushResponse = true;
+  h.control.beforeGit = ({ networkCommand }) => { if (networkCommand === 'ls-remote') throw Error('Synthetic confirmation outage'); };
+  await queue.check(); assert.equal(queue.snapshot().needs_recovery, 1);
+  assert.equal(await h.commits(), 1);
+  h.control.beforeGit = null; h.control.losePushResponse = false; now += 60000;
+  await queue.check(); assert.equal(queue.snapshot().succeeded, 1);
+  assert.equal(h.control.calls.filter(call => call.args.includes('push')).length, 1);
+  assert.equal((await getCoachSyncStatus({ ...h.options, verify: false })).pending, 0);
+});
+
+test('automatic rejected uncertain push never retries or carries its commit into a later job', async t => {
+  const h = await harness(t); await configureCoachSync(REPOSITORY, h.options);
+  let now = Date.parse('2026-10-01T12:00:00Z');
+  const queue = createReplayAutoUpload({ dataDir: h.dataDir, enabled: true, binding: autoBinding,
+    now: () => now, retryBaseMs: 10, pollIntervalMs: 60000, transportOptions: h.options });
+  t.after(() => queue.close()); await queue.check();
+  now += 60000; await archiveReplays([catalogReplay('unknown-write', 1)], h.options);
+  h.control.pushFailure = 'timeout-before'; await queue.check();
+  assert.equal(queue.snapshot().needs_recovery, 1); assert.equal(await h.commits(), 0);
+  h.control.pushFailure = null; now += 60000; await archiveReplays([catalogReplay('later-write', 2)], h.options);
+  await queue.check(); assert.equal(queue.snapshot().needs_recovery, 1); assert.equal(queue.snapshot().queued, 1);
+  assert.equal(h.control.calls.filter(call => call.args.includes('push')).length, 1);
+});
+
+test('manual same-match fallback satisfies an observed automatic completion without another upload', async t => {
+  const h = await harness(t); await configureCoachSync(REPOSITORY, h.options);
+  let now = Date.parse('2026-10-01T12:00:00Z'), busy = false;
+  const queue = createReplayAutoUpload({ dataDir: h.dataDir, enabled: true, binding: autoBinding, isBusy: () => busy,
+    now: () => now, retryBaseMs: 10, pollIntervalMs: 60000, transportOptions: h.options });
+  t.after(() => queue.close()); await queue.check();
+  now += 60000; await archiveReplays([catalogReplay('manual-wins-race', 1)], h.options);
+  busy = true; await queue.check();
+  const manual = await syncReplayHistory({ ...h.options, workerCount: 0 }); assert.equal(manual.status, 'succeeded');
+  busy = false; await queue.check(); assert.equal(queue.snapshot().succeeded, 1);
+  assert.equal(h.control.calls.filter(call => call.args.includes('push')).length, 1);
+});
+
+
+test('prepared offline match owns its retry lane instead of deadlocking later completions', async t => {
+  const h = await harness(t); await configureCoachSync(REPOSITORY, h.options);
+  let now = Date.parse('2026-10-01T12:00:00Z'), failOnce = true;
+  const transport = createReplayUploadTransport({ ...h.options, binding: autoBinding });
+  const originalPublish = transport.publish;
+  transport.publish = async (...args) => {
+    if (failOnce) { failOnce = false; throw Object.assign(Error('Synthetic definitely pre-write offline'), { code: 'GITHUB_UNAVAILABLE' }); }
+    return originalPublish(...args);
+  };
+  const queue = createReplayAutoUpload({ dataDir: h.dataDir, enabled: true, binding: autoBinding,
+    now: () => now, retryBaseMs: 1000, pollIntervalMs: 60000, transport });
+  t.after(() => queue.close()); await queue.check();
+  now += 120000; await archiveReplays([catalogReplay('first-offline', 1), catalogReplay('second-waiting', 2)], h.options);
+  await queue.check(); assert.equal(queue.snapshot().queued, 2); assert.equal(queue.snapshot().blocked, 0);
+  await queue.check(); assert.equal(queue.snapshot().queued, 2); assert.equal(queue.snapshot().blocked, 0);
+  now += 1000; await queue.check();
+  assert.equal(queue.snapshot().succeeded, 2); assert.equal(queue.snapshot().blocked, 0);
+  assert.equal(JSON.parse(await h.published('index.json')).matches.length, 2);
+});
+
+test('publisher lock rejects replacement of the exact prepared receipt before any upload', async t => {
+  const h = await harness(t); await configureCoachSync(REPOSITORY, h.options);
+  const first = await bundle({ id: 'same-match-replacement' }), second = await bundle({ id: 'same-match-replacement', richer: true });
+  await enqueueCoachBundle(first, h.options);
+  const receipt = { match_id: first.summary.match_id, started_at: first.summary.started_at, history_key: first.historyKey, content_hash: first.contentHash };
+  await enqueueCoachBundle(second, h.options);
+  await assert.rejects(syncCoachBundles({ ...autoSettings(h), onlyMatchIds: [receipt.match_id], expectedReceipt: receipt }), { code: 'SYNC_RECEIPT_CHANGED' });
+  assert.equal(await h.commits(), 0); assert.equal(h.control.calls.filter(call => call.args.includes('push')).length, 0);
+  assert.equal((await getPublishedCoachIndex({ ...h.options, refresh: false })).pending[0].content_hash, second.contentHash);
+});
+
+
+test('automatic upload waits for trailing terminal GRE and publishes only the finalized canonical replay', async t => {
+  const h = await harness(t); await configureCoachSync(REPOSITORY, h.options);
+  let now = Date.parse('2026-10-01T12:00:00Z');
+  const queue = createReplayAutoUpload({ dataDir: h.dataDir, enabled: true, binding: autoBinding,
+    now: () => now, retryBaseMs: 10, pollIntervalMs: 60000, transportOptions: h.options });
+  t.after(() => queue.close()); await queue.check(); now += 60000;
+  const [room, first, last, complete] = syntheticMatchRecords('terminal-ordering', 1);
+  const partial = (await buildReplays([room, first, complete])).replays[0];
+  await archiveReplays([partial], h.options); await queue.check();
+  assert.equal(queue.snapshot().waiting_source, 1); assert.equal(await h.commits(), 0);
+  const finalized = (await buildReplays([room, first, complete, last])).replays[0];
+  assert.equal((await archiveReplays([finalized], h.options)).archived, 1);
+  await queue.check(); assert.equal(queue.snapshot().succeeded, 1); assert.equal(await h.commits(), 1);
+  const summary = JSON.parse(await h.published('latest/summary.json'));
+  assert.equal(summary.actions, 2); assert.deepEqual(summary.final_life, { me: 6, opponent: 0 });
+});
+
+test('automatic preparation preserves and refuses an unowned incomplete same-match pending bundle', async t => {
+  const h = await harness(t); await configureCoachSync(REPOSITORY, h.options);
+  let now = Date.parse('2026-10-01T12:00:00Z');
+  const queue = createReplayAutoUpload({ dataDir: h.dataDir, enabled: true, binding: autoBinding,
+    now: () => now, retryBaseMs: 10, pollIntervalMs: 60000, transportOptions: h.options });
+  t.after(() => queue.close()); await queue.check(); now += 60000;
+  const [room, first, last, complete] = syntheticMatchRecords('unowned-partial', 1);
+  const partial = (await buildReplays([room, first, complete])).replays[0];
+  await archiveReplays([partial], h.options); await queue.check();
+  const pending = await buildCoachBundle(partial, { multipart: true }); await enqueueCoachBundle(pending, h.options);
+  await archiveReplays((await buildReplays([room, first, complete, last])).replays, h.options);
+  await queue.check(); assert.equal(queue.snapshot().blocked, 1); assert.equal(await h.commits(), 0);
+  assert.equal((await getPublishedCoachIndex({ ...h.options, refresh: false })).pending[0].content_hash, pending.contentHash);
+});
+
+test('automatic enqueue lock preserves any same-match bundle that appeared after its snapshot', async t => {
+  const h = await harness(t); await configureCoachSync(REPOSITORY, h.options);
+  const first = await bundle({ id: 'late-pending' }), second = await bundle({ id: 'late-pending', richer: true });
+  await enqueueCoachBundle(first, h.options);
+  await assert.rejects(enqueueCoachBundle(second, { ...h.options, requireEmptyPending: true }), { code: 'SYNC_PENDING_UNOWNED' });
+  assert.equal((await getPublishedCoachIndex({ ...h.options, refresh: false })).pending[0].content_hash, first.contentHash);
+});
+
+
+test('prepared retry owns the lane when an older waiting-source match finalizes later', async t => {
+  const h = await harness(t); await configureCoachSync(REPOSITORY, h.options);
+  let now = Date.parse('2026-10-01T12:00:00Z'), failOnce = true;
+  const transport = createReplayUploadTransport({ ...h.options, binding: autoBinding }), publish = transport.publish;
+  transport.publish = async (...args) => {
+    if (failOnce) { failOnce = false; throw Object.assign(Error('Synthetic pre-write offline'), { code: 'GITHUB_UNAVAILABLE' }); }
+    return publish(...args);
+  };
+  const queue = createReplayAutoUpload({ dataDir: h.dataDir, enabled: true, binding: autoBinding,
+    now: () => now, retryBaseMs: 1000, pollIntervalMs: 60000, transport });
+  t.after(() => queue.close()); await queue.check(); now += 60000;
+  const [room, first, last, complete] = syntheticMatchRecords('older-waiting', 1);
+  await archiveReplays((await buildReplays([room, first, complete])).replays, h.options); await queue.check();
+  assert.equal(queue.snapshot().waiting_source, 1);
+  now += 60000; await archiveReplays([catalogReplay('newer-prepared', 2)], h.options); await queue.check();
+  assert.equal(queue.snapshot().queued, 1);
+  await archiveReplays((await buildReplays([room, first, complete, last])).replays, h.options);
+  await queue.check(); assert.equal(queue.snapshot().queued, 2); assert.equal(queue.snapshot().blocked, 0);
+  now += 1000; await queue.check(); assert.equal(queue.snapshot().succeeded, 2); assert.equal(queue.snapshot().blocked, 0);
+  assert.equal(await h.commits(), 2);
+});
+
+
+test('automatic preparation returns its generated receipt even if pending is replaced during cache save', async t => {
+  const h = await harness(t); await configureCoachSync(REPOSITORY, h.options);
+  let now = Date.parse('2026-10-01T12:00:00Z');
+  const queue = createReplayAutoUpload({ dataDir: h.dataDir, enabled: true, binding: autoBinding,
+    now: () => now, retryBaseMs: 10, pollIntervalMs: 60000, transportOptions: h.options });
+  t.after(() => queue.close()); await queue.check(); now += 60000;
+  const [room, first, last, complete] = syntheticMatchRecords('post-enqueue-race', 1);
+  const partial = (await buildReplays([room, first, complete])).replays[0];
+  await archiveReplays((await buildReplays([room, first, complete, last])).replays, h.options);
+  const replacement = await buildCoachBundle(partial, { multipart: true });
+  const { default: fsPromises } = await import('node:fs/promises');
+  const { syncBuiltinESMExports } = await import('node:module');
+  const originalRename = fsPromises.rename; let replaced = false;
+  fsPromises.rename = async (from, to) => {
+    await originalRename(from, to);
+    if (!replaced && String(to) === join(h.dataDir, 'replay-coach-generation-cache.json')) {
+      replaced = true; await enqueueCoachBundle(replacement, h.options);
+    }
+  };
+  syncBuiltinESMExports();
+  try { await queue.check(); } finally { fsPromises.rename = originalRename; syncBuiltinESMExports(); }
+  assert.equal(replaced, true); assert.equal(queue.snapshot().blocked, 1); assert.equal(queue.snapshot().succeeded, 0);
+  assert.equal(await h.commits(), 0); assert.equal(h.control.calls.filter(call => call.args.includes('push')).length, 0);
+  assert.equal((await getPublishedCoachIndex({ ...h.options, refresh: false })).pending[0].content_hash, replacement.contentHash);
+});
+
+// Seed a pre-policy pending bundle without invoking the new enqueue guard.
+async function legacyPending(h, value) {
+  const directory = queuedDirectory(h, value); await mkdir(directory, { recursive: true });
+  for (const name of FILES) await writeFile(join(directory, name), serializeCoachJson(value[name.slice(0, -5)]));
+  const path = join(h.dataDir, 'coach-sync', 'state.json'), state = JSON.parse(await readFile(path, 'utf8'));
+  const receipt = { match_id: value.summary.match_id, started_at: value.summary.started_at, history_key: value.historyKey, content_hash: value.contentHash };
+  state.pending.push(receipt); await writeFile(path, JSON.stringify(state)); return receipt;
+}
+
+test('tutorial enqueue and queue metadata conflicts are rejected without pending mutation', async t => {
+  const h = await harness(t); await configureCoachSync(REPOSITORY, h.options);
+  await assert.rejects(enqueueCoachBundle(await bundle({ event: 'NPE_Tutorial_PlayFamiliar5' }), h.options), { code: 'SYNC_TUTORIAL_EXCLUDED' });
+  const conflict = await bundle({ queue_id: 'NPE_Tutorial_PlayFamiliar5' });
+  assert.equal(conflict.coach.match.queue_id, 'NPE_Tutorial_PlayFamiliar5');
+  await assert.rejects(enqueueCoachBundle(conflict, h.options), { code: 'SYNC_TUTORIAL_HOLD' });
+  assert.equal((await getCoachSyncStatus(h.options)).pending, 0); assert.equal(await h.commits(), 0);
+});
+
+test('legacy batch publishes ordinary peers and retains tutorial and unknown pending without acknowledgement', async t => {
+  const h = await harness(t); await configureCoachSync(REPOSITORY, h.options);
+  const tutorial = await bundle({ id: 'tutorial', event: 'NPE_Tutorial_PlayFamiliar5' });
+  await legacyPending(h, tutorial); await legacyPending(h, await bundle({ id: 'unknown', event: 'UnreviewedEvent' }));
+  await enqueueCoachBundle(await bundle({ id: 'ordinary' }), h.options);
+  const result = await syncCoachBundles(h.options);
+  assert.equal(result.pending, 2); assert.deepEqual(result.excluded.map(x => x.eligibility).sort(), ['hold_unknown', 'skip_tutorial']);
+  const state = JSON.parse(await readFile(join(h.dataDir, 'coach-sync', 'state.json')));
+  assert.deepEqual(Object.keys(state.synced), ['ordinary']); assert.equal(state.pending.length, 2);
+  assert.deepEqual(JSON.parse(await h.published('index.json')).matches.map(x => x.match_id), ['ordinary']);
+  const pushes = h.control.calls.filter(c => c.args.includes('push')).length;
+  const retry = await syncCoachBundles(h.options); assert.equal(retry.synced, false);
+  assert.equal(h.control.calls.filter(c => c.args.includes('push')).length, pushes);
+  assert.equal(await readFile(join(queuedDirectory(h, tutorial), 'coach.json'), 'utf8'), serializeCoachJson(tutorial.coach));
+});
+
+test('automatic prepared legacy tutorial blocks before commit and push', async t => {
+  const h = await harness(t); await configureCoachSync(REPOSITORY, h.options);
+  const receipt = await legacyPending(h, await bundle({ event: 'NPE_Tutorial_PlayFamiliar5' }));
+  await assert.rejects(syncCoachBundles({ ...h.options, onlyMatchIds: [receipt.match_id], expectedReceipt: receipt }), { code: 'SYNC_TUTORIAL_EXCLUDED' });
+  assert.equal(await h.commits(), 0); assert.equal((await getCoachSyncStatus(h.options)).pending, 1);
+  assert.equal(h.control.calls.some(c => c.args.includes('push')), false);
+});
+
+test('catalog and direct preparation exclude tutorial before generation and preserve archive', async t => {
+  const h = await harness(t); await configureCoachSync(REPOSITORY, h.options);
+  const replay = catalogReplay('tutorial-archive', 0); replay.match.event = 'NPE_Tutorial_PlayFamiliar5';
+  await archiveReplays([replay], { dataDir: h.dataDir });
+  await assert.rejects(prepareCoachReplayUpload(replay.match.id, h.options), { code: 'SYNC_TUTORIAL_EXCLUDED' });
+  const report = await syncCoachCatalog({ ...h.options, cardDb: '/not-needed' });
+  assert.equal(report.skipped.length, 1); assert.equal(report.published, 0); assert.equal(report.failed.length, 0);
+  assert.equal((await getReplay(replay.match.id, { dataDir: h.dataDir })).match.event, replay.match.event);
+});
+
+async function writeLegacyCommit(h, value, { remote = false, remove = false } = {}) {
+  const directory = join(h.checkout, 'matches', value.historyKey);
+  if (remove) await rm(directory, { recursive: true });
+  else {
+    await mkdir(directory, { recursive: true });
+    for (const name of FILES) await writeFile(join(directory, name), serializeCoachJson(value[name.slice(0, -5)]));
+    if (remote) {
+      const index = JSON.parse(await readFile(join(h.checkout, 'index.json'), 'utf8'));
+      index.matches.push({ match_id: value.summary.match_id, started_at: value.summary.started_at, mode: value.summary.mode, result: value.summary.result,
+        history_key: value.historyKey, path: `matches/${value.historyKey}`, content_hash: value.contentHash });
+      await writeFile(join(h.checkout, 'index.json'), serializeCoachJson(index));
+    }
+  }
+  await execute('git', ['add', '--all'], { cwd: h.checkout, env });
+  await execute('git', ['-c', 'user.name=mtga-replay-coach', '-c', 'user.email=mtga-replay-coach@users.noreply.github.com', 'commit', '-m', 'Synthetic legacy replay'], { cwd: h.checkout, env });
+  if (remote) await h.options.runCommand('git', ['push', 'origin', 'HEAD:refs/heads/main'], { cwd: h.checkout });
+}
+
+test('already remote tutorial receipt recovers exact fact without another push and leaves unrelated pending', async t => {
+  const h = await harness(t); await configureCoachSync(REPOSITORY, h.options);
+  await enqueueCoachBundle(await bundle({ id: 'initial' }), h.options); await syncCoachBundles(h.options);
+  const tutorial = await bundle({ id: 'historical-tutorial', event: 'NPE_Tutorial_PlayFamiliar5' });
+  const receipt = await legacyPending(h, tutorial); await writeLegacyCommit(h, tutorial, { remote: true });
+  await enqueueCoachBundle(await bundle({ id: 'next-ordinary' }), h.options);
+  const pushes = h.control.calls.filter(c => c.args.includes('push')).length;
+  const result = await verifyCoachReplayReceipt(receipt, h.options);
+  assert.equal(result.verified, true); assert.equal(result.eligibility, 'skip_tutorial'); assert.equal(result.publication_kind, 'existing_remote');
+  assert.equal(h.control.calls.filter(c => c.args.includes('push')).length, pushes);
+  const state = JSON.parse(await readFile(join(h.dataDir, 'coach-sync', 'state.json')));
+  assert.equal(state.synced[receipt.match_id].content_hash, receipt.content_hash);
+  assert.deepEqual(state.pending.map(x => x.match_id), ['next-ordinary']);
+  await syncCoachBundles(h.options); // Historical remote tutorial must not block new ordinary data.
+  assert.equal((await getCoachSyncStatus(h.options)).pending, 0);
+  assert.equal(JSON.parse(await h.published('index.json')).matches.some(x => x.match_id === receipt.match_id), true);
+});
+
+test('unpublished tutorial add-then-delete history blocks new peer before push without deleting evidence', async t => {
+  const h = await harness(t); await configureCoachSync(REPOSITORY, h.options);
+  await enqueueCoachBundle(await bundle({ id: 'initial' }), h.options); await syncCoachBundles(h.options);
+  const tutorial = await bundle({ id: 'outgoing-tutorial', event: 'NPE_Tutorial_PlayFamiliar5' });
+  await writeLegacyCommit(h, tutorial); await writeLegacyCommit(h, tutorial, { remove: true });
+  await enqueueCoachBundle(await bundle({ id: 'new-peer' }), h.options);
+  const pushes = h.control.calls.filter(c => c.args.includes('push')).length;
+  await assert.rejects(syncCoachBundles(h.options), { code: 'SYNC_TUTORIAL_EXCLUDED' });
+  assert.equal(h.control.calls.filter(c => c.args.includes('push')).length, pushes);
+  assert.equal((await getCoachSyncStatus(h.options)).pending, 1);
+  assert.equal(await h.commits(), 1);
+});
+
+test('retained legacy tutorial does not stall a narrow ordinary automatic upload', async t => {
+  const h = await harness(t); await configureCoachSync(REPOSITORY, h.options);
+  const tutorial = await legacyPending(h, await bundle({ id: 'skipped-tutorial', event: 'NPE_Tutorial_PlayFamiliar5' }));
+  await assert.rejects(syncCoachBundles({ ...h.options, onlyMatchIds: [tutorial.match_id], expectedReceipt: tutorial }), { code: 'SYNC_TUTORIAL_EXCLUDED' });
+  const ordinary = await bundle({ id: 'ordinary-peer' }); await enqueueCoachBundle(ordinary, h.options);
+  const receipt = { match_id: ordinary.summary.match_id, started_at: ordinary.summary.started_at, history_key: ordinary.historyKey, content_hash: ordinary.contentHash };
+  await getPublishedCoachIndex({ ...h.options, onlyMatchIds: [receipt.match_id] });
+  const result = await syncCoachBundles({ ...h.options, onlyMatchIds: [receipt.match_id], expectedReceipt: receipt });
+  assert.equal(result.synced, true); assert.equal(result.pending, 1);
+  const state = JSON.parse(await readFile(join(h.dataDir, 'coach-sync', 'state.json')));
+  assert.deepEqual(state.pending.map(item => item.match_id), [tutorial.match_id]);
+  assert.deepEqual(Object.keys(state.synced), [receipt.match_id]);
+});
+
+test('outgoing orphan replay payload cannot bypass tutorial gate by later deletion', async t => {
+  const h = await harness(t); await configureCoachSync(REPOSITORY, h.options);
+  await enqueueCoachBundle(await bundle({ id: 'initial' }), h.options); await syncCoachBundles(h.options);
+  const value = await bundle({ id: 'orphan' });
+  const directory = join(h.checkout, 'matches', value.historyKey); await mkdir(directory, { recursive: true });
+  await writeFile(join(directory, 'summary.json'), serializeCoachJson(value.summary));
+  for (const remove of [false, true]) {
+    if (remove) await rm(directory, { recursive: true });
+    await execute('git', ['add', '--all'], { cwd: h.checkout, env });
+    await execute('git', ['-c', 'user.name=mtga-replay-coach', '-c', 'user.email=mtga-replay-coach@users.noreply.github.com', 'commit', '-m', 'Synthetic orphan revision'], { cwd: h.checkout, env });
+  }
+  await enqueueCoachBundle(await bundle({ id: 'next' }), h.options);
+  const pushes = h.control.calls.filter(c => c.args.includes('push')).length;
+  await assert.rejects(syncCoachBundles(h.options), { code: 'SYNC_TUTORIAL_HOLD' });
+  assert.equal(h.control.calls.filter(c => c.args.includes('push')).length, pushes);
+});
+
+test('unknown retained pending classification is visible in catalog report', async t => {
+  const h = await harness(t); await configureCoachSync(REPOSITORY, h.options);
+  await legacyPending(h, await bundle({ id: 'old-unknown', event: 'UnreviewedQueue' }));
+  const report = await syncCoachCatalog(h.options);
+  assert.equal(report.published, 0); assert.equal(report.pending, 1);
+  assert.equal(report.failed.find(item => item.match_id === 'old-unknown').code, 'SYNC_TUTORIAL_HOLD');
+});
+
+test('outgoing index-only orphan cannot bypass tutorial classification', async t => {
+  const h = await harness(t); await configureCoachSync(REPOSITORY, h.options);
+  await enqueueCoachBundle(await bundle({ id: 'initial' }), h.options); await syncCoachBundles(h.options);
+  const file = join(h.checkout, 'index.json'), original = await readFile(file, 'utf8');
+  const index = JSON.parse(original), value = await bundle({ id: 'orphan-index' });
+  index.matches.push({ match_id: value.summary.match_id, started_at: value.summary.started_at, mode: value.summary.mode, result: value.summary.result,
+    history_key: value.historyKey, path: `matches/${value.historyKey}`, content_hash: value.contentHash });
+  for (const text of [serializeCoachJson(index), original]) {
+    await writeFile(file, text); await execute('git', ['add', '--all'], { cwd: h.checkout, env });
+    await execute('git', ['-c', 'user.name=mtga-replay-coach', '-c', 'user.email=mtga-replay-coach@users.noreply.github.com', 'commit', '-m', 'Synthetic index revision'], { cwd: h.checkout, env });
+  }
+  await enqueueCoachBundle(await bundle({ id: 'next' }), h.options);
+  const pushes = h.control.calls.filter(c => c.args.includes('push')).length;
+  await assert.rejects(syncCoachBundles(h.options), { code: 'SYNC_TUTORIAL_HOLD' });
+  assert.equal(h.control.calls.filter(c => c.args.includes('push')).length, pushes);
+});
+
+test('tutorial exclusion precedes an otherwise positive generation cache hit', async t => {
+  const { coachInputFingerprint, writeSyncCache } = await import('../src/sync-cache.mjs');
+  const h = await harness(t); await configureCoachSync(REPOSITORY, h.options);
+  const replay = catalogReplay('cached-tutorial', 0); replay.match.event = 'NPE_Tutorial_PlayFamiliar5';
+  await archiveReplays([replay], { dataDir: h.dataDir });
+  const stored = await getReplay(replay.match.id, { dataDir: h.dataDir });
+  const value = await buildCoachBundle(stored, { cards: [], multipart: false });
+  const receipt = await legacyPending(h, value);
+  const cardDb = join(h.dataDir, 'synthetic-cache.mtga'), { DatabaseSync } = await import('node:sqlite');
+  const db = new DatabaseSync(cardDb);
+  db.exec('CREATE TABLE Cards (GrpId INTEGER, TitleId INTEGER, TypeTextId INTEGER, SubtypeTextId INTEGER, OldSchoolManaText TEXT, Power TEXT, Toughness TEXT, AbilityIds TEXT, LinkedFaceGrpIds TEXT); CREATE TABLE Localizations_enUS (LocId INTEGER, Formatted INTEGER, Loc TEXT);'); db.close();
+  const options = { ...h.options, cardDb, displayNamesZh: new Map() };
+  const fingerprint = await coachInputFingerprint(stored, options); assert.ok(fingerprint?.hash);
+  await writeSyncCache(h.dataDir, 'replay-coach-generation-cache.json', { matches: { [receipt.match_id]: {
+    fingerprint: fingerprint.hash, content_hash: receipt.content_hash, history_key: receipt.history_key, valid_until: null,
+  } } });
+  const snapshot = await getPublishedCoachIndex(h.options);
+  assert.equal(snapshot.pending[0].content_hash, receipt.content_hash);
+  await assert.rejects(prepareCoachReplayUpload(receipt.match_id, { ...options, snapshot }), { code: 'SYNC_TUTORIAL_EXCLUDED' });
+  assert.equal((await getCoachSyncStatus(h.options)).pending, 1);
+  assert.equal(h.control.calls.some(c => c.args.includes('push')), false);
+});
+
+test('canonical log construction retains tutorial queue conflict through bundle generation', async t => {
+  const records = syntheticMatchRecords('queue-conflict');
+  records[0].matchGameRoomStateChangedEvent.gameRoomInfo.gameRoomConfig.queueId = 'NPE_Tutorial_PlayFamiliar5';
+  const result = await buildReplays(records);
+  assert.equal(result.replays[0].match.queue_id, 'NPE_Tutorial_PlayFamiliar5');
+  const h = await harness(t); await configureCoachSync(REPOSITORY, h.options);
+  await archiveReplays(result.replays, { dataDir: h.dataDir });
+  const restored = await getReplay(result.replays[0].match.id, { dataDir: h.dataDir });
+  assert.equal(restored.match.queue_id, 'NPE_Tutorial_PlayFamiliar5');
+  const value = await buildCoachBundle(restored, { cards: [] });
+  await assert.rejects(enqueueCoachBundle(value, h.options), { code: 'SYNC_TUTORIAL_HOLD' });
 });

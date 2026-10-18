@@ -442,7 +442,7 @@ export async function buildCoachBundle(replay, { cards = [], generatedAt = new D
   const names = new Map(list(metadata).filter(card => !hidden(card)).map(card => [Number(card.arena_id), card]));
   const safeGames = list(replay.games).map((game, i) => buildGame(game, names, names, i + 1));
   const deck = list(replay.deck).filter(card => !hidden(card)).map(card => sanitizedCard(card, names));
-  const safeMatch = copyKeys(replay.match, ['id', 'started_at', 'ended_at', 'event_id', 'event', 'format', 'is_jump_in', 'result', 'on_play', 'player', 'opponent', 'first_player', 'end_reason']);
+  const safeMatch = copyKeys(replay.match, ['id', 'started_at', 'ended_at', 'event_id', 'queue_id', 'event', 'format', 'is_jump_in', 'result', 'on_play', 'player', 'opponent', 'first_player', 'end_reason']);
   const expanded = { schema: 'MTGA_FULL_COACH_V1', schema_version: replay.schema_version ?? '1.0',
     perspective: { ...copyKeys(replay.perspective, ['policy', 'hidden_information', 'post_game_reveals']),
       static_card_dictionary: 'May contain cards revealed later; it is not evidence those identities were known at earlier anchors.',

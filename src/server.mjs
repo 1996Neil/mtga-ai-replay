@@ -1,5 +1,6 @@
 import { listDraftRuns, withDraftRunLandColors } from './draft-runs.mjs';
 import { discoverCardDatabase, loadCardLandColors } from './cards.mjs';
+import { createReplayAutoUpload, hasUnverifiedReplayAutoUpload } from './replay-auto-upload.mjs';
 import { createTaskJournal } from './task-journal.mjs';
 import { createServer } from 'node:http';
 import { readFile, stat, realpath, mkdir, writeFile, rm } from 'node:fs/promises';
@@ -21,7 +22,7 @@ const defaultViewer = fileURLToPath(new URL('../viewer/dist/', import.meta.url))
 const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.ico': 'image/x-icon', '.woff2': 'font/woff2' };
 
-export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir = defaultViewer, port = 0, cardNames = new Map(), cardMetadata = new Map(), displayNamesZh, cardIdentityResolver, fetchFn = fetch, writeInfo = true, syncWorkflow, collectionUpdate, collectionSync, notifyTask = notifyViewerTask, requestExtension, closeExtension, extraCapabilities = [], replayProvider, enableReplaySync = !replayProvider, enableCollection = enableReplaySync && !replayProvider, includeLocalHistory = enableReplaySync || !replayProvider, observeLocalLogs = includeLocalHistory, localHistoryOptions = {}, reviewReader, sourceIdentity = null } = {}) {
+export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir = defaultViewer, port = 0, cardNames = new Map(), cardMetadata = new Map(), displayNamesZh, cardIdentityResolver, fetchFn = fetch, writeInfo = true, syncWorkflow, collectionUpdate, collectionSync, notifyTask = notifyViewerTask, requestExtension, closeExtension, extraCapabilities = [], replayProvider, enableReplaySync = !replayProvider, enableCollection = enableReplaySync && !replayProvider, includeLocalHistory = enableReplaySync || !replayProvider, observeLocalLogs = includeLocalHistory, localHistoryOptions = {}, reviewReader, sourceIdentity = null, autoUploadOptions = {} } = {}) {
   const root = await realpath(resolve(viewerDir)).catch(() => resolve(viewerDir));
   const identityResolver = cardIdentityResolver ?? createCardIdentityResolver();
   const chineseNames = displayNamesZh ?? await loadInstalledChineseDisplayNames();
@@ -30,6 +31,10 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
   const sync = createViewerSync({ dataDir, workflow: syncWorkflow, notify: notifyTask, journal });
   const collection = createViewerCollection({ dataDir, update: collectionUpdate, sync: collectionSync, notify: notifyTask, journal });
   const localHistory = includeLocalHistory && observeLocalLogs ? createLocalReplayHistory({ ...localHistoryOptions, dataDir }) : null;
+  if (autoUploadOptions.enabled && (!enableReplaySync || !localHistory)) throw new Error('Automatic replay upload requires the local history observer and explicit sync capability.');
+  const autoUpload = createReplayAutoUpload({ ...autoUploadOptions, dataDir, isBusy: () =>
+    [sync.snapshot(), collection.snapshot()].some(job => ['running', 'needs_recovery'].includes(job.status)) });
+  const autoUploadBlocksWrites = () => autoUpload.snapshot().busy || hasUnverifiedReplayAutoUpload(dataDir);
   const reviews = reviewReader ?? createCloudReviewReader({ loadReplay: replayById, dataDir });
   let landColorCatalog;
   const draftDeckCache = new Map();
@@ -105,6 +110,7 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
         if (request.headers.origin !== `http://${request.headers.host}` || request.headers['x-mtga-replay-action'] !== `collection-${operation}`) return send(response, 403, { error: 'Same-origin collection action required.' });
         if (url.search || request.headers['transfer-encoding'] || Number(request.headers['content-length'] ?? 0) !== 0) return send(response, 400, { error: 'Collection update does not accept parameters.' });
         if(operation==='update'&&request.headers['x-mtga-replay-account-confirmation']!=='unknown-account-reviewed')return send(response,409,{error:'无法自动识别账户；请确认当前 Arena 账户后再更新。'});
+        if (autoUploadBlocksWrites()) return send(response, 409, { error: 'Automatic replay upload is running or needs receipt recovery.' });
         if (sync.snapshot().status === 'running') return send(response, 409, { error: 'Replay upload is running; retry after completion.' });
         if(collection.snapshot().status==='needs_recovery'||sync.snapshot().status==='needs_recovery')return send(response,409,{error:'服务中断后的任务需要人工核对，请勿重复上传。'});
         return send(response, 202, collection.start(operation));
@@ -112,6 +118,7 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
       if(path==='/api/sync/reconcile'&&request.method==='POST') {
         if(request.headers.origin!==`http://${request.headers.host}`||request.headers['x-mtga-replay-action']!=='sync-reconcile')return send(response,403,{error:'Same-origin reconciliation required.'});
         if(url.search||request.headers['transfer-encoding']||Number(request.headers['content-length']??0)!==0)return send(response,400,{error:'No parameters accepted.'});
+        if(autoUpload.snapshot().busy)return send(response,409,{error:'Automatic replay upload is running.'});
         if(collection.snapshot().status==='running')return send(response,409,{error:'Collection task is running.'});
         return send(response,202,sync.reconcile());
       }
@@ -121,12 +128,14 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
         // exact same origin to block forged same-site/cross-origin POSTs.
         if (request.headers.origin !== `http://${request.headers.host}` || request.headers['x-mtga-replay-action'] !== 'sync') return send(response, 403, { error: 'Same-origin replay action required.' });
         if (url.search || request.headers['transfer-encoding'] || Number(request.headers['content-length'] ?? 0) !== 0) return send(response, 400, { error: 'Replay sync does not accept parameters.' });
+        if (autoUploadBlocksWrites()) return send(response, 409, { error: 'Automatic replay upload is running or needs receipt recovery.' });
         if (collection.snapshot().status === 'running') return send(response, 409, { error: 'Collection update is running; retry after completion.' });
         if(collection.snapshot().status==='needs_recovery'||sync.snapshot().status==='needs_recovery')return send(response,409,{error:'服务中断后的任务需要人工核对，请勿重复上传。'});
         return send(response, 202, sync.start());
       }
       if (request.method !== 'GET' && request.method !== 'HEAD') return send(response, 405, { error: 'Unsupported replay action.' });
       if (path === '/api/source') return send(response, 200, sourceIdentity);
+      if (path === '/api/auto-upload') return send(response, 200, request.method === 'HEAD' ? '' : autoUpload.snapshot());
       if (path === '/api/local-history') return send(response, 200, request.method === 'HEAD' ? '' : localHistory?.snapshot() ?? { status: 'disabled' });
       if (path === '/api/collection') return send(response, 200, request.method === 'HEAD' ? '' : collection.snapshot());
       if (path === '/api/sync') return send(response, 200, request.method === 'HEAD' ? '' : sync.snapshot());
@@ -224,6 +233,13 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
     await mkdir(dataDir, { recursive: true, mode: 0o700 });
     await writeFile(join(dataDir, 'server.json'), JSON.stringify({ pid: process.pid, url, port: assignedPort, viewerDir: root }), { mode: 0o600 });
   }
+  if (autoUploadOptions.enabled) {
+    // Initial import establishes the baseline. Historical logs discovered at
+    // activation must never become an automatic backfill.
+    const imported = await localHistory.check({ immediate: true });
+    if (imported.status !== 'succeeded') { await autoUpload.close(); journal?.close(); server.close(); throw new Error('Automatic upload requires a successful initial local import.'); }
+    await autoUpload.check(); autoUpload.start();
+  }
   localHistory?.start();
   const close = () => {
     if (closePromise) return closePromise;
@@ -231,6 +247,7 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
     closePromise = (async () => {
       await reviews.close();
       await localHistory?.close();
+      await autoUpload.close();
       // Finish a publication before shutting down; don't strand a Git write.
       await closeExtension?.();
       await Promise.all([sync.wait(), collection.wait()]);
@@ -243,7 +260,7 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
     })();
     return closePromise;
   };
-  return { server, url, port: assignedPort, close, localHistory };
+  return { server, url, port: assignedPort, close, localHistory, autoUpload };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
