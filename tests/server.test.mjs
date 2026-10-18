@@ -6,6 +6,7 @@ import { mkdtemp, mkdir, writeFile, rm, symlink, readFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { archiveReplays } from '../src/history.mjs';
+import { createReplayAutoUpload } from '../src/replay-auto-upload.mjs';
 import { startReplayServer } from '../src/server.mjs';
 
 async function setup(t, options = {}) {
@@ -304,4 +305,53 @@ test('shutdown rejects a coach POST whose body finishes after the coach was stop
   assert.equal(await response, 503);
   assert.equal(starts, 0);
   releaseSync(); await closing;
+});
+
+
+test('automatic status is read-only and default OFF; HTTP cannot enable it', async t => {
+  let uploads = 0;
+  const { url } = await setup(t, { syncWorkflow: async () => { uploads++; return { status: 'succeeded' }; } });
+  assert.deepEqual(await fetch(url + 'api/auto-upload').then(r => r.json()), { status: 'disabled', enabled: false });
+  assert.equal((await fetch(url + 'api/auto-upload', { method: 'POST', headers: { Origin: new URL(url).origin, 'X-MTGA-Replay-Action': 'auto-upload' } })).status, 405);
+  assert.equal(uploads, 0);
+});
+
+test('opt-in automatic lane excludes initial import and blocks manual writes only while owned', async t => {
+  let now = Date.parse('2026-10-02T00:00:00Z'), manualCalls = 0, release, entered;
+  const gate = new Promise(resolve => { release = resolve; }), publishing = new Promise(resolve => { entered = resolve; });
+  const catalog = [], published = new Set(), receipt = id => ({ match_id: id, started_at: catalog.find(m => m.id === id).started_at, history_key: id, content_hash: 'b'.repeat(64) });
+  const transport = {
+    list: async () => catalog,
+    inspect: async () => ({ source: 'remote', pending: [], index: { matches: [] } }),
+    prepare: async id => receipt(id),
+    verify: async ref => published.has(ref.match_id) ? { verified: true, content_hash: ref.content_hash, commit: 'c'.repeat(40) } : { verified: false },
+    publish: async (ref, progress) => { progress({ checkpoint: { commit: 'c'.repeat(40), destination_hash: 'd'.repeat(64) } }); entered(); await gate; published.add(ref.match_id); },
+  };
+  const { url, autoUpload } = await setup(t, { observeLocalLogs: true,
+    localHistoryOptions: { probe: async () => ({ input: 'synthetic', archive: 'synthetic' }), workflow: async () => ({ cached: false, archive: { archived: 0 } }), pollIntervalMs: 60000 },
+    autoUploadOptions: { enabled: true, binding: { repository: 'fixture-owner/private', repository_id: 'R_fixture', branch: 'main' }, transport, now: () => now, pollIntervalMs: 60000 },
+    syncWorkflow: async () => { manualCalls++; return { status: 'succeeded' }; } });
+  t.after(() => release());
+  now += 60000; catalog.push({ id: 'new-game', started_at: new Date(now).toISOString(), result: 'Win', step_count: 2, auto_upload_ready: true });
+  const pending = autoUpload.check(); await publishing;
+  assert.equal((await syncPost(url)).status, 409);
+  assert.equal((await fetch(url + 'api/auto-upload').then(r => r.json())).busy, true);
+  release(); await pending;
+  assert.equal((await syncPost(url)).status, 202); assert.equal((await finishedJob(url)).status, 'succeeded');
+  assert.equal(manualCalls, 1);
+});
+
+test('disabled automatic mode still blocks a manual POST when a durable write is unverified', async t => {
+  let manualCalls = 0, now = Date.parse('2026-10-02T00:00:00Z'); const catalog = [];
+  const { url, dataDir } = await setup(t, { syncWorkflow: async () => { manualCalls++; return { status: 'succeeded' }; } });
+  const queue = createReplayAutoUpload({ dataDir, enabled: true,
+    binding: { repository: 'fixture-owner/private', repository_id: 'R_fixture', branch: 'main' }, now: () => now,
+    transport: { list: async () => catalog, inspect: async () => ({ source: 'remote', pending: [], index: { matches: [] } }),
+      prepare: async id => ({ match_id: id, started_at: catalog[0].started_at, history_key: id, content_hash: 'a'.repeat(64) }),
+      verify: async () => ({ verified: false }), publish: async (_ref, onProgress) => {
+        onProgress({ checkpoint: { commit: 'a'.repeat(40), destination_hash: 'a'.repeat(64) } }); throw Object.assign(Error('Synthetic outage'), { code: 'SYNC_PUSH_TIMEOUT' });
+      } } });
+  await queue.check(); now += 60000; catalog.push({ id: 'unknown', started_at: new Date(now).toISOString(), result: 'Win', step_count: 1, auto_upload_ready: true });
+  await queue.check(); assert.equal(queue.snapshot().needs_recovery, 1); await queue.close();
+  assert.equal((await syncPost(url)).status, 409); assert.equal(manualCalls, 0);
 });

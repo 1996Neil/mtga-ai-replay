@@ -1,3 +1,5 @@
+import { assertTutorialUploadEligible } from './tutorial-eligibility.mjs';
+import { isReplayAutoUploadReady } from './replay-finalization.mjs';
 import { createComputePool } from './compute-pool.mjs';
 import { defaultDataDir, listReplays, getReplay } from './history.mjs';
 import { buildCoachCards } from './coach-cards.mjs';
@@ -19,6 +21,7 @@ function generationReason(error) {
 async function queueReplay(replay, options, published, receipts, pendingBundle) {
   if (!replay?.match?.id || !Number.isFinite(Date.parse(replay.match.started_at))) throw new CoachSyncError('SYNC_REPLAY', 'Archived match has no valid identity or start time.');
   if (!replay.games?.some(game => (game.steps ?? game.replay_steps)?.length)) throw new CoachSyncError('SYNC_REPLAY', 'Archived match has no detailed game steps.');
+  assertTutorialUploadEligible(replay.match);
   const fingerprint = await coachInputFingerprint(replay, options), previous = receipts[replay.match.id];
   const expectedBundle = pendingBundle ?? published;
   const remoteConfirmsPending = Boolean(pendingBundle && published?.content_hash === pendingBundle.content_hash &&
@@ -26,7 +29,10 @@ async function queueReplay(replay, options, published, receipts, pendingBundle) 
   if (fingerprint && previous?.fingerprint === fingerprint.hash && previous.content_hash === expectedBundle?.content_hash &&
       previous.history_key === expectedBundle?.history_key && (remoteConfirmsPending || previous.valid_until === null ||
         (Number.isFinite(previous.valid_until) && previous.valid_until > Date.now()))) {
-    return { queued: false, generation_cached: true };
+    return { queued: false, generation_cached: true, receipt: expectedBundle ? {
+      match_id: expectedBundle.match_id, started_at: expectedBundle.started_at,
+      history_key: expectedBundle.history_key, content_hash: expectedBundle.content_hash,
+    } : null };
   }
   options.onProgress?.({ phase: 'cards' });
   const observed = new Map(); let validUntil = null, databaseReadComplete = false;
@@ -51,7 +57,35 @@ async function queueReplay(replay, options, published, receipts, pendingBundle) 
   }
   if (stable) receipts[replay.match.id] = { fingerprint: after.hash, content_hash: bundle.contentHash, history_key: bundle.historyKey, valid_until: validUntil };
   else delete receipts[replay.match.id];
-  return { ...queued, summary: bundle.summary };
+  return { ...queued, summary: bundle.summary, receipt: {
+    match_id: bundle.summary.match_id, started_at: bundle.summary.started_at,
+    history_key: bundle.historyKey, content_hash: bundle.contentHash,
+  } };
+}
+
+/** Generate exactly one archived match through the canonical sanitizer. This
+ * only writes local pending data; publication is a separate durable boundary. */
+export async function prepareCoachReplayUpload(matchId, options = {}) {
+  const settings = { ...options, dataDir: options.dataDir ?? defaultDataDir() };
+  const snapshot = options.snapshot ?? await getPublishedCoachIndex(settings);
+  if (snapshot.source !== 'remote') throw new CoachSyncError('SYNC_REMOTE_VERIFY', 'A verified remote snapshot is required.');
+  const published = snapshot.index.matches.find(item => item.match_id === matchId);
+  const pending = snapshot.pending.find(item => item.match_id === matchId);
+  if (options.requireFinalized) {
+    if (pending) throw new CoachSyncError('SYNC_PENDING_UNOWNED', 'Existing pending data has no automatic preparation receipt; manual review is required.');
+    settings.requireEmptyPending = true; // Recheck under enqueue's publisher lock.
+  }
+  const replay = await getReplay(matchId, settings);
+  if (options.requireFinalized && !isReplayAutoUploadReady(replay)) throw new CoachSyncError('SYNC_SOURCE_PENDING', 'Terminal replay evidence is not complete; automatic upload is waiting.');
+  const cache = await readSyncCache(settings.dataDir, 'replay-coach-generation-cache.json');
+  const receipts = Object.assign(Object.create(null), cache?.matches ?? {});
+  settings.cardDb = options.cardDb ?? await discoverCardDatabase();
+  const prepared = await queueReplay(replay, settings, published, receipts, pending);
+  await writeSyncCache(settings.dataDir, 'replay-coach-generation-cache.json', { matches: receipts });
+  // Return the reference owned by this generation (or its pinned remote cache
+  // proof). Mutable pending state may have been replaced after enqueue unlocked.
+  if (!prepared.receipt) throw new CoachSyncError('SYNC_STATE', 'Prepared replay receipt is unavailable.');
+  return prepared.receipt;
 }
 
 /** Backfill every match in Viewer's canonical catalog, regardless of the match
@@ -103,7 +137,8 @@ async function runCatalog(options) {
       attempted.push({ ...identity, queued: result.queued });
     } catch (error) {
       const failure = { ...identity, reason: generationReason(error) };
-      report.failed.push(failure); options.onFailure?.(failure);
+      if (error.code === 'SYNC_TUTORIAL_EXCLUDED') report.skipped.push({ ...failure, code: error.code });
+      else { report.failed.push({ ...failure, ...(error.eligibility ? { code: error.code, eligibility: error.eligibility } : {}) }); options.onFailure?.(failure); }
     }
     options.onQueued?.({ completed: ++completed, total: candidates.length });
   }
@@ -111,6 +146,13 @@ async function runCatalog(options) {
   try {
     options.onPublishing?.();
     const result = await syncCoachBundles(settings);
+    for (const exclusion of result.excluded ?? []) {
+      const skipped = exclusion.eligibility === 'skip_tutorial';
+      const target = skipped ? report.skipped : report.failed;
+      if (!target.some(item => item.match_id === exclusion.match_id)) target.push({ ...exclusion,
+        code: skipped ? 'SYNC_TUTORIAL_EXCLUDED' : 'SYNC_TUTORIAL_HOLD',
+        reason: skipped ? 'Tutorial replay excluded; retained locally.' : 'Unknown or conflicting event metadata; upload held.' });
+    }
     Object.assign(report, { repository: result.repository, committed: result.committed ?? 0, pending: result.pending });
     if (result.disabled || (report.scan_error && !result.index)) {
       report.sync_error = report.scan_error ?? 'Private replay sync is disabled.';

@@ -1,3 +1,4 @@
+import { TERMINAL_GRE_WARNING } from './replay-finalization.mjs';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -21,7 +22,7 @@ function initialGame(number) {
 }
 
 export async function buildReplays(records, names = new Map(), { counterNames = new Map() } = {}) {
-  const meta = indexMatchMetadata(records), states = new Map(), games = new Map(), sanitized = [];
+  const meta = indexMatchMetadata(records), states = new Map(), games = new Map(), sanitized = [], completions = new Map();
   const actionEvents = new Map(), seenStates = new Set(), seenAnnotations = new Set(), seenCombat = new Set(); let currentId;
   const sequences = new Map();
   function gameFor(id, number) {
@@ -47,6 +48,13 @@ export async function buildReplays(records, names = new Map(), { counterNames = 
     const info = obj.matchGameRoomStateChangedEvent?.gameRoomInfo;
     if (info?.gameRoomConfig?.matchId) currentId = info.gameRoomConfig.matchId;
     if (info) {
+      const final = info.finalMatchResult;
+      if (typeof final?.matchId === 'string' && Array.isArray(final.resultList)) {
+        const count = final.resultList.filter(result => result.scope === 'MatchScope_Game').length;
+        const previous = completions.get(final.matchId);
+        // Contradictory completion records do not prove complete game coverage.
+        completions.set(final.matchId, previous === undefined || previous === count ? count : null);
+      }
       const roomType = obj.matchGameRoomStateChangedEvent.stateType ?? info.stateType;
       if (roomType === 'MatchGameRoomStateType_MatchCompleted' || info.finalMatchResult) {
         const completedId = info.finalMatchResult?.matchId ?? info.gameRoomConfig?.matchId ?? currentId;
@@ -316,11 +324,11 @@ export async function buildReplays(records, names = new Map(), { counterNames = 
         }
       }
       const expectedDraws = parsed.turnDrawRecords.filter(d => d.matchId === match.id && d.gameNumber === game.game_number).reduce((n, d) => n + d.drawnGrpIds.length, 0);
-      game.evidence = { parser: 'mtga-log-parser@4.1.0', own_draws_parsed: expectedDraws,
+      game.evidence = { parser: 'mtga-log-parser@4.1.0', terminal_state_observed: states.get(`${match.id}:${game.game_number}`)?.ended === true, own_draws_parsed: expectedDraws,
         actions_parsed: parsed.gameActions.filter(a => a.matchId === match.id && a.gameNumber === game.game_number).length,
         board_snapshots_parsed: parsed.boardSnapshots.filter(s => s.matchId === match.id && s.gameNumber === game.game_number).length };
       if (!game.starting_hand.length) game.warnings.push('Kept starting hand unavailable in this log.');
-      if (!states.get(`${match.id}:${game.game_number}`)?.ended) game.warnings.push('Terminal GRE state unavailable; final life and trailing operations may be incomplete.');
+      if (!states.get(`${match.id}:${game.game_number}`)?.ended) game.warnings.push(TERMINAL_GRE_WARNING);
     }
     const config = meta.get(match.id)?.config;
     const mode = describeMatchMode({ event_id: player?.eventId ?? match.eventId,
@@ -328,7 +336,7 @@ export async function buildReplays(records, names = new Map(), { counterNames = 
     const deckCounts = new Map();
     for (const card of parsed.myDeckListMap.get(match.id)?.main ?? []) deckCounts.set(card.cardId, (deckCounts.get(card.cardId) ?? 0) + card.quantity);
     replays.push({ schema_version: '2.0', perspective: { policy: 'Only identities legally visible to the local player at that event; no future backfill.', hidden_information: 'omitted', post_game_reveals: 'omitted' },
-      match: { id: match.id, started_at: new Date(match.timestamp).toISOString(), ...mode, result: match.matchResult, on_play: match.onPlay, player: player?.playerName ?? 'Me', opponent: opponent?.playerName ?? 'Opponent' },
+      match: { id: match.id, completion_evidence: { match_completed: completions.has(match.id), expected_games: completions.get(match.id) ?? null }, started_at: new Date(match.timestamp).toISOString(), ...mode, ...(config?.queueId != null ? { queue_id: config.queueId } : {}), result: match.matchResult, on_play: match.onPlay, player: player?.playerName ?? 'Me', opponent: opponent?.playerName ?? 'Opponent' },
       deck: [...deckCounts].map(([id, quantity]) => ({ name: names.get(id) ?? `Arena card ${id}`, arena_id: id, quantity })),
       games: matchGames, warnings: ['Turns use global Arena numbering (each player turn increments it).', 'Legal alternatives/priority windows are not reconstructed; ability text and counter names may be incomplete.'] });
   }
