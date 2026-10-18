@@ -1,3 +1,4 @@
+import { isReplayAutoUploadReady, TERMINAL_GRE_WARNING } from './replay-finalization.mjs';
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdir, stat, chmod } from 'node:fs/promises';
@@ -42,7 +43,7 @@ function safeArchive(value) {
 
 function summary(replay) {
   const games = replay.games ?? [];
-  return { ...replay.match, game_count: games.length,
+  return { ...replay.match, game_count: games.length, auto_upload_ready: isReplayAutoUploadReady(replay),
     turn_count: games.reduce((n, game) => n + (game.turns?.length ?? 0), 0),
     step_count: games.reduce((n, game) => n + (game.replay_steps?.length ?? game.steps?.length ?? game.turns?.reduce((m, turn) => m + (turn.events?.length ?? 0), 0) ?? 0), 0),
   };
@@ -106,8 +107,26 @@ function extendsTimeline(candidate = [], previous = [], key) {
   if (new Set(defined).size !== defined.length) return false;
   return previous.every((value, index) => keys[index] === value[key] && extendsKnown(candidate[index], value));
 }
+function terminalEvidenceExtends(candidate, previous) {
+  if (previous.evidence?.terminal_state_observed !== false || candidate.evidence?.terminal_state_observed !== true) return false;
+  if (previous.evidence.parser !== 'mtga-log-parser@4.1.0' || candidate.evidence.parser !== previous.evidence.parser ||
+      !previous.warnings?.includes(TERMINAL_GRE_WARNING)) return false;
+  const normalized = { ...candidate.evidence, terminal_state_observed: false };
+  for (const key of ['own_draws_parsed', 'actions_parsed', 'board_snapshots_parsed']) {
+    if (!Number.isSafeInteger(previous.evidence[key]) || previous.evidence[key] < 0 ||
+        !Number.isSafeInteger(candidate.evidence[key]) || candidate.evidence[key] < previous.evidence[key]) return false;
+    normalized[key] = previous.evidence[key];
+  }
+  return extendsKnown(normalized, previous.evidence) &&
+    extendsKnown(candidate.warnings, previous.warnings.filter(warning => warning !== TERMINAL_GRE_WARNING));
+}
 function gameExtends(candidate, previous) {
-  const { states: oldStates, steps: oldSteps, replay_steps: oldReplaySteps, turns: oldTurns, result: oldResult, ...oldFacts } = previous;
+  const { states: oldStates, steps: oldSteps, replay_steps: oldReplaySteps, turns: oldTurns, result: oldResult,
+    evidence: oldEvidence, warnings: oldWarnings, ...oldFacts } = previous;
+  // Only an explicit false -> true terminal GRE transition may update derived
+  // counters and remove its one exact warning. All observed facts stay guarded.
+  if (!terminalEvidenceExtends(candidate, previous) &&
+      (!extendsKnown(candidate.evidence, oldEvidence) || !extendsKnown(candidate.warnings, oldWarnings))) return false;
   if (!extendsKnown(candidate, oldFacts) || !extendsKnown(candidate.states, oldStates) || !extendsKnown(candidate.result, oldResult)) return false;
   if (!extendsTimeline(candidate.steps, oldSteps, 'anchor') || !extendsTimeline(candidate.replay_steps, oldReplaySteps, 'anchor')) return false;
   if (!Array.isArray(candidate.turns ?? []) || (candidate.turns ?? []).length < (oldTurns ?? []).length) return false;
@@ -131,7 +150,7 @@ function canReplace(candidate, existing) {
     const before = replayCoverage({ games: [previous] }), after = replayCoverage({ games: [next] });
     if (after.some((count, index) => count < before[index])) return false;
     richer ||= after.some((count, index) => count > before[index]) ||
-      (!previous.result?.outcome && Boolean(next.result?.outcome));
+      (!previous.result?.outcome && Boolean(next.result?.outcome)) || terminalEvidenceExtends(next, previous);
   }
   return richer;
 }
