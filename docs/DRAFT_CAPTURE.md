@@ -23,6 +23,11 @@ deletions, or modification of the 17Lands installation.
 - `npm run draft:install`: install the dedicated macOS LaunchAgent
   `local.mtga.draft-capture`, including collection and Git backup. It reads the
   user's configured private repository through the existing GitHub CLI login.
+  If direct GitHub transport is unavailable, `npm run draft:install --
+  --https-proxy http://127.0.0.1:PORT` can reuse an already running local HTTP
+  proxy for this service only. It does not change system or game network rules;
+  credentials and non-loopback proxy addresses are rejected. Existing differing
+  service configurations are preserved for explicit maintenance.
 
 Requires Python 3.9+ with its standard library and the existing Node 24 runtime.
 CLI options: `--log-dir`, `--data-dir`, `--python`. `--from-start` explicitly opts

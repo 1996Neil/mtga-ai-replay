@@ -1,12 +1,21 @@
 import { mkdir, writeFile, readFile, chmod, access, realpath } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { promisify, parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { join, dirname, isAbsolute } from 'node:path';
 import { defaultDataDir } from '../../src/history.mjs';
 const run = promisify(execFile);
+const { values } = parseArgs({ options: { 'https-proxy': { type: 'string' } } });
+const proxy = values['https-proxy'];
+if (proxy) {
+  const url = new URL(proxy);
+  if (url.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) ||
+      !url.port || url.username || url.password || url.pathname !== '/' || url.search || url.hash) {
+    throw new Error('The optional upload proxy must be a loopback HTTP address without credentials.');
+  }
+}
 if (process.platform !== 'darwin') throw new Error('This installer requires macOS.');
 if (Number(process.versions.node.split('.')[0]) < 24) throw new Error('Node 24 or newer is required.');
 // LaunchAgents do not inherit a terminal's PATH. Both the GitHub executable and
@@ -33,7 +42,7 @@ const text = `<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0"><dict>
 <key>Label</key><string>${label}</string>
 <key>ProgramArguments</key><array>${args.map(s => `<string>${escape(s)}</string>`).join('')}</array>
-<key>EnvironmentVariables</key><dict><key>PATH</key><string>${escape(toolPath)}</string></dict>
+<key>EnvironmentVariables</key><dict><key>PATH</key><string>${escape(toolPath)}</string>${proxy ? `<key>HTTPS_PROXY</key><string>${escape(proxy)}</string>` : ''}</dict>
 <key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
 <key>ProcessType</key><string>Background</string>
 <key>ThrottleInterval</key><integer>30</integer>
