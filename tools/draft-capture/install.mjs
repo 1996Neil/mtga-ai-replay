@@ -1,16 +1,25 @@
-import { mkdir, writeFile, readFile, chmod } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, chmod, access, realpath } from 'node:fs/promises';
+import { constants } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { join, dirname, isAbsolute } from 'node:path';
 import { defaultDataDir } from '../../src/history.mjs';
 const run = promisify(execFile);
 if (process.platform !== 'darwin') throw new Error('This installer requires macOS.');
 if (Number(process.versions.node.split('.')[0]) < 24) throw new Error('Node 24 or newer is required.');
 // LaunchAgents do not inherit a terminal's PATH. Both the GitHub executable and
 // Git's credential helper need the same explicit installed-tool search path.
-const toolPath = [...new Set([dirname(process.execPath), '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin'])].join(':');
+async function installedTool(name) {
+  for (const dir of (process.env.PATH ?? '').split(':').filter(isAbsolute)) {
+    const candidate = join(dir, name);
+    try { await access(candidate, constants.X_OK); return await realpath(candidate); } catch {}
+  }
+  throw new Error(`Required executable is unavailable: ${name}`);
+}
+const [gh, git] = await Promise.all(['gh', 'git'].map(installedTool));
+const toolPath = [...new Set([dirname(process.execPath), dirname(gh), dirname(git), '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin'])].join(':');
 const toolEnv = { ...process.env, PATH: toolPath };
 await run('gh', ['--version'], { env: toolEnv });
 await run('git', ['--version'], { env: toolEnv });
