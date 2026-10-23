@@ -19,6 +19,9 @@ const COLOR_LABELS: Record<string, string> = { W: '白', U: '蓝', B: '黑', R: 
 export function App() {
   const [history, setHistory] = useState<HistoryMatch[]>([]), [loading, setLoading] = useState(true), [error, setError] = useState('');
   const [draftRuns, setDraftRuns] = useState<DraftRun[]>([]);
+  const [account, setAccount] = useState('unassigned');
+  const [accounts, setAccounts] = useState<{ account_key: string; label: string }[]>([]);
+  const accountChosen = useRef(false);
   const [draftError, setDraftError] = useState('');
   const [anchorInput, setAnchorInput] = useState(''), [anchorError, setAnchorError] = useState('');
   const [showWarnings, setShowWarnings] = useState(false);
@@ -47,7 +50,7 @@ export function App() {
     setLoading(true); setError(''); setAnchorError('');
     useReplayStore.getState().pause();
     try {
-      const response = await fetch(`/api/matches/${encodeURIComponent(id)}`, { signal: controller.signal, cache: 'no-store' });
+      const response = await fetch(`/api/matches/${encodeURIComponent(id)}?account=${encodeURIComponent(account)}`, { signal: controller.signal, cache: 'no-store' });
       if (!response.ok) throw new Error(`无法加载回放（${response.status}），请稍后重新选择比赛。`);
       const games = normalizeReplay(await response.json());
       if (controller.signal.aborted || request.current !== controller) return;
@@ -59,7 +62,12 @@ export function App() {
       const url = new URL(location.href); url.searchParams.set('match', games[0].matchId); historyReplace(url);
     } catch (err) { if (!controller.signal.aborted) setError(err instanceof Error ? err.message : String(err)); }
     finally { if (request.current === controller) { navigating.current = false; if (!controller.signal.aborted) setLoading(false); } }
-  }, []);
+  }, [account]);
+
+  useEffect(() => {
+    request.current?.abort(); loadedRevision.current = null; historyEntries.current = [];
+    useReplayStore.getState().setMatches([]); setHistory([]); setDraftRuns([]); setLoading(true); setError('');
+  }, [account]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -70,7 +78,7 @@ export function App() {
       if (draftRefreshRunning || controller.signal.aborted) return;
       draftRefreshRunning = true;
       try {
-        const response = await fetch('/api/draft-runs', { cache: 'no-store', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]) });
+        const response = await fetch(`/api/draft-runs?account=${encodeURIComponent(account)}`, { cache: 'no-store', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]) });
         if (!response.ok) throw new Error('轮抽记录暂时无法读取，将自动重试。');
         const runs = normalizeDraftRuns(await response.json());
         if (!controller.signal.aborted) { setDraftRuns(runs); setDraftError(''); }
@@ -81,9 +89,19 @@ export function App() {
     async function refresh() {
       try {
         if (!initial && document.visibilityState === 'hidden') return;
-        const response = await fetch('/api/matches', { cache: 'no-store', signal: controller.signal });
+        const response = await fetch(`/api/matches?account=${encodeURIComponent(account)}`, { cache: 'no-store', signal: controller.signal });
         if (!response.ok) throw new Error(`无法读取比赛记录（${response.status}）。会自动重试。`);
         const entries = normalizeHistory(await response.json());
+        const accountResponse = await fetch('/api/accounts', { cache: 'no-store', signal: controller.signal });
+        if (accountResponse.ok) {
+          const catalog = await accountResponse.json();
+          if (!controller.signal.aborted && Array.isArray(catalog.accounts)) {
+            setAccounts(catalog.accounts.filter((a: { account_key?: string; label?: string }) => typeof a.account_key === 'string' && /^[a-f0-9]{64}$/.test(a.account_key) && typeof a.label === 'string'));
+            if (!accountChosen.current && /^[a-f0-9]{64}$/.test(catalog.active_account ?? '')) {
+              accountChosen.current = true; setAccount(catalog.active_account); return;
+            }
+          }
+        }
         void refreshDraftRuns(); // A draft-sidecar failure must never block ordinary replay history.
         if (controller.signal.aborted) return;
         if (JSON.stringify(historyEntries.current) !== JSON.stringify(entries)) {
@@ -102,7 +120,7 @@ export function App() {
         const entry = entries.find(value => value.id === current.matchId);
         if (!entry || loadedRevision.current?.id !== current.matchId || entry.revision === loadedRevision.current.revision) return;
         const navigation = request.current;
-        const replay = await fetch(`/api/matches/${encodeURIComponent(current.matchId)}`, { cache: 'no-store', signal: controller.signal });
+        const replay = await fetch(`/api/matches/${encodeURIComponent(current.matchId)}?account=${encodeURIComponent(account)}`, { cache: 'no-store', signal: controller.signal });
         if (!replay.ok) return; // Keep a readable current replay during retries.
         const games = normalizeReplay(await replay.json());
         if (controller.signal.aborted || navigating.current || request.current !== navigation || useReplayStore.getState().currentMatch()?.matchId !== current.matchId) return;
@@ -115,7 +133,7 @@ export function App() {
     }
     void refresh();
     return () => { controller.abort(); clearTimeout(timer); request.current?.abort(); };
-  }, [loadMatch]);
+  }, [loadMatch, account]);
 
   useEffect(() => {
     function dismissHistory(event: MouseEvent) {
@@ -160,17 +178,21 @@ export function App() {
     <header className="app-header">
       <h1>MTGA <span>Replay Coach</span></h1>
       {publishedSource && <span role="status" className="published-source" title={`来源哈希 ${publishedSource.content_hash}`}>历史发布源 · {publishedSource.revision.slice(0, 7)} · 只读（独立于本地归档）</span>}
+      {!publishedSource && <label className="account-picker">游戏账号 <select aria-label="游戏账号" value={account} onChange={event => { accountChosen.current = true; setAccount(event.target.value); }}>
+        <option value="unassigned">未分类旧记录 / 待识别</option>
+        {accounts.map(item => <option key={item.account_key} value={item.account_key}>{item.label} · {item.account_key.slice(0, 6)}</option>)}
+      </select></label>}
       <details className="history-picker" ref={historyPicker}><summary>比赛记录 <span>⌄</span></summary><div className="history-menu">
         {draftError && <p role="status" className="draft-run-warning">{draftError}</p>}
         {draftRuns.length > 0 && <section className="draft-runs"><h2>轮抽记录</h2>{draftRuns.map(run => <details className="draft-run" key={run.run_id}>
           <summary><span className="history-row-top"><span className="history-date">{when(run.started_at ?? '')}</span><span className="history-event" title={run.event}>{formatEventName(run.event)}</span></span>
-            <span className="history-row-bottom"><span className={'draft-run-status ' + run.status} title={draftRunScoreMessage(run)}>{draftRunStatusLabel(run)}</span>
+            <span className="history-row-bottom"><span className={'draft-run-status ' + run.status} title={draftRunScoreMessage(run)}>{run.capture_source ? '选牌已保存' : draftRunStatusLabel(run)}</span>
               <span className="history-row-result"><span className="draft-run-colors" title="按最后一场归档主牌组的地牌颜色归类">{run.colors_complete ? (run.colors.map(color => COLOR_LABELS[color] ?? color).join('') || '无色') : '颜色未知'}</span>
-                <strong>{run.replay_wins}胜{run.replay_losses}负</strong></span>
+                <strong>{run.capture_source ? '尚未关联比赛' : <>{run.replay_wins}胜{run.replay_losses}负</>}</strong></span>
             </span>
           </summary>
-          {draftRunScoreMessage(run) && <p className="draft-run-warning">{draftRunScoreMessage(run)}</p>}
-          {run.picks.length > 0 && <details className="draft-picks"><summary>逐手记录 · {run.picks.length} 手 · {run.picks.filter(pick => pick.complete).length} 手完整</summary>
+          {run.capture_source ? <p className="draft-run-warning">来自 17Lands 本地记录；分段与比赛归属待核验。时间为工具记录时间，牌池仅累计实际观察到的选择。</p> : draftRunScoreMessage(run) && <p className="draft-run-warning">{draftRunScoreMessage(run)}</p>}
+          {run.picks.length > 0 && <details className="draft-picks"><summary>逐手记录 · {run.picks.length} 手 · {run.picks.filter(pick => pick.complete).length} 手连续有据</summary>
             <ol>{run.picks.map(pick => <li key={pick.pack_number + '-' + pick.pick_number} className={pick.complete ? 'complete' : 'incomplete'}>
               <strong>Pack {pick.pack_number} · Pick {pick.pick_number}</strong><time>{when(pick.picked_at ?? '')}</time>
               <p>选择：{pick.selected?.name ?? '缺少选择记录'}</p>
@@ -182,7 +204,7 @@ export function App() {
               </details>
             </li>)}</ol>
           </details>}
-          {run.card_pool.length > 0 && <details className="draft-pool"><summary>最终牌池 · {run.card_pool.length} 张（无逐选记录）</summary>
+          {run.card_pool.length > 0 && <details className="draft-pool"><summary>赛事牌池快照 · {run.card_pool.length} 张</summary>
             <ol>{run.card_pool.map((card, index) => <li key={card.arena_id + '-' + index}>{card.name}</li>)}</ol>
           </details>}
           <div className="draft-run-matches">{run.matches.map(item => <button type="button" className="history-item" key={item.id}

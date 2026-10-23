@@ -1,3 +1,4 @@
+import { isDraftSyncPath } from './draft-backup.mjs';
 import {CoachSyncError} from './coach-sync-error.mjs';
 import {bundleFiles} from './coach-bundle-files.mjs';
 import { execFile } from 'node:child_process';
@@ -324,14 +325,16 @@ export async function assertOutgoingSyncOwnership(git, branch, namespace, hasRem
   const hasHead = String(await git(['for-each-ref', '--format=%(refname)', `refs/heads/${branch}`])).trim();
   if (!hasHead) return;
   const revisions = String(await git(['rev-list', hasRemoteBranch ? `origin/${branch}..HEAD` : 'HEAD'])).trim().split('\n').filter(Boolean);
-  const allowed = namespace === 'collection' ? isCollectionSyncPath : isCoachSyncPath;
+  const allowed = namespace === 'draft' ? isDraftSyncPath : namespace === 'collection' ? isCollectionSyncPath : namespace === 'coach' ? isCoachSyncPath : null;
+  if (!allowed) fail('SYNC_NAMESPACE', 'Unknown upload namespace.');
   for (const revision of revisions) {
     const paths = String(await git(['diff-tree', '--root', '-m', '--no-commit-id', '--name-only', '--no-renames', '-r', '-z', revision])).split('\0').filter(Boolean);
     if (paths.some(path => !allowed(path))) fail('SYNC_FOREIGN_COMMIT', 'Sync checkout contains an unpublished commit belonging to another namespace; finish that sync first.');
   }
 }
 export async function assertStagedSyncOwnership(git, namespace) {
-  const allowed = namespace === 'collection' ? isCollectionSyncPath : isCoachSyncPath;
+  const allowed = namespace === 'draft' ? isDraftSyncPath : namespace === 'collection' ? isCollectionSyncPath : namespace === 'coach' ? isCoachSyncPath : null;
+  if (!allowed) fail('SYNC_NAMESPACE', 'Unknown upload namespace.');
   const paths = String(await git(['diff', '--cached', '--name-only', '-z', '--no-ext-diff', '--no-renames'])).split('\0').filter(Boolean);
   if (paths.some(path => !allowed(path))) fail('SYNC_FOREIGN_STAGE', 'Another namespace has staged changes; no commit was created.');
 }
