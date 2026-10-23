@@ -221,6 +221,8 @@ export function normalizeDraftRuns(raw: unknown): DraftRun[] {
   const data = Array.isArray(raw) ? raw : [];
   return arr(data).filter(item => typeof item.run_id === 'string' && typeof item.event === 'string').map(item => ({
     run_id: String(item.run_id), event_id: String(item.event_id ?? ''), event: String(item.event),
+    capture_source: item.capture_source === '17lands-local-log' ? item.capture_source : undefined,
+    binding: item.binding === 'unresolved' ? item.binding : undefined,
     current_module: typeof item.current_module === 'string' ? item.current_module : null,
     started_at: typeof item.started_at === 'string' ? item.started_at : null,
     status: ['in_progress', 'completed'].includes(item.status) ? item.status : 'incomplete',

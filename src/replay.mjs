@@ -1,3 +1,4 @@
+import { arenaAccountKey } from './account-scope.mjs';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -328,7 +329,7 @@ export async function buildReplays(records, names = new Map(), { counterNames = 
     const deckCounts = new Map();
     for (const card of parsed.myDeckListMap.get(match.id)?.main ?? []) deckCounts.set(card.cardId, (deckCounts.get(card.cardId) ?? 0) + card.quantity);
     replays.push({ schema_version: '2.0', perspective: { policy: 'Only identities legally visible to the local player at that event; no future backfill.', hidden_information: 'omitted', post_game_reveals: 'omitted' },
-      match: { id: match.id, started_at: new Date(match.timestamp).toISOString(), ...mode, result: match.matchResult, on_play: match.onPlay, player: player?.playerName ?? 'Me', opponent: opponent?.playerName ?? 'Opponent' },
+      match: { id: match.id, account_key: arenaAccountKey(player?.userId), started_at: new Date(match.timestamp).toISOString(), ...mode, result: match.matchResult, on_play: match.onPlay, player: player?.playerName ?? 'Me', opponent: opponent?.playerName ?? 'Opponent' },
       deck: [...deckCounts].map(([id, quantity]) => ({ name: names.get(id) ?? `Arena card ${id}`, arena_id: id, quantity })),
       games: matchGames, warnings: ['Turns use global Arena numbering (each player turn increments it).', 'Legal alternatives/priority windows are not reconstructed; ability text and counter names may be incomplete.'] });
   }

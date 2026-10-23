@@ -158,6 +158,8 @@ export interface DraftPick {
   missing: string[];
 }
 export interface DraftRun {
+  capture_source?: string;
+  binding?: string;
   run_id: string;
   event_id: string;
   event: string;

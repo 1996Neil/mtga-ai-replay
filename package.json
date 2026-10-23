@@ -24,7 +24,11 @@
     "check:release": "node scripts/check-release.mjs",
     "viewer:materialize": "node scripts/materialize-viewer.mjs",
     "replay:serve": "node bin/mtga-replay-serve.mjs",
-    "replay:launch": "node tools/replay2-launcher/replay-launch.mjs start"
+    "replay:launch": "node tools/replay2-launcher/replay-launch.mjs start",
+    "draft:capture": "node bin/mtga-draft-capture.mjs",
+    "draft:watch": "node bin/mtga-draft-capture.mjs --watch",
+    "draft:sync": "node bin/mtga-draft-sync.mjs",
+    "draft:install": "node tools/draft-capture/install.mjs"
   },
   "engines": {
     "node": ">=24"

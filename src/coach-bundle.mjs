@@ -442,7 +442,7 @@ export async function buildCoachBundle(replay, { cards = [], generatedAt = new D
   const names = new Map(list(metadata).filter(card => !hidden(card)).map(card => [Number(card.arena_id), card]));
   const safeGames = list(replay.games).map((game, i) => buildGame(game, names, names, i + 1));
   const deck = list(replay.deck).filter(card => !hidden(card)).map(card => sanitizedCard(card, names));
-  const safeMatch = copyKeys(replay.match, ['id', 'started_at', 'ended_at', 'event_id', 'event', 'format', 'is_jump_in', 'result', 'on_play', 'player', 'opponent', 'first_player', 'end_reason']);
+  const safeMatch = copyKeys(replay.match, ['id', 'account_key', 'started_at', 'ended_at', 'event_id', 'event', 'format', 'is_jump_in', 'result', 'on_play', 'player', 'opponent', 'first_player', 'end_reason']);
   const expanded = { schema: 'MTGA_FULL_COACH_V1', schema_version: replay.schema_version ?? '1.0',
     perspective: { ...copyKeys(replay.perspective, ['policy', 'hidden_information', 'post_game_reveals']),
       static_card_dictionary: 'May contain cards revealed later; it is not evidence those identities were known at earlier anchors.',
@@ -473,7 +473,7 @@ export async function buildCoachBundle(replay, { cards = [], generatedAt = new D
     final_life: finalGame?.result?.life ?? { me: null, opponent: null }, end_reason: safeMatch.end_reason ?? finalGame?.result?.reason ?? 'unknown',
     reconstruction_quality: { state_source: 'chronological_GRE_frames', action_source: 'canonical_reconstruction',
       intra_GRE_intermediate_states: 'not_observed', hidden_hand_identity: 'omitted', legality: 'not_evaluated' }, source_coverage: sourceCoverage });
-  const summary = { schema: 'MTGA_COACH_SUMMARY_V1', match_id: safeMatch.id, started_at: safeMatch.started_at,
+  const summary = { schema: 'MTGA_COACH_SUMMARY_V1', match_id: safeMatch.id, ...(safeMatch.account_key ? { account_key: safeMatch.account_key } : {}), started_at: safeMatch.started_at,
     mode: safeMatch.event ?? safeMatch.event_id ?? null, result: safeMatch.result ?? finalGame?.result?.outcome ?? null,
     on_the_play: safeMatch.on_play ?? finalGame?.on_play ?? null,
     turns: safeGames.reduce((n, game) => n + unique([...game.turns.map(turn => turn.turn_number), ...Object.values(game.states).map(state => state.turn)]).filter(turn => Number.isInteger(turn) && turn > 0).length, 0),
