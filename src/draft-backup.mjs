@@ -14,8 +14,8 @@ const accountRoot = key => `drafts/accounts/${key}`;
 
 export function validateDraftObservation(item) {
   if (!exact(item, ['observation_id', 'adapter', 'kind', 'event_id', 'pack_number', 'pick_number', 'card_ids', 'logged_at', 'account_key']) ||
-    !SHA.test(item.observation_id) || !SHA.test(item.account_key) || item.adapter !== '17lands-bot-log-v1' || !['pack', 'pick'].includes(item.kind) ||
-    !/^QuickDraft_[A-Za-z0-9_]{1,100}$/.test(item.event_id) || !integer(item.pack_number, 1, 3) || !integer(item.pick_number, 1, 30) ||
+    !SHA.test(item.observation_id) || !SHA.test(item.account_key) || item.adapter !== '17lands-log-v2' || !['pack', 'pick'].includes(item.kind) ||
+    !/^[A-Za-z][A-Za-z0-9_-]{1,120}$/.test(item.event_id) || !integer(item.pack_number, 1, 3) || !integer(item.pick_number, 1, 30) ||
     !Array.isArray(item.card_ids) || !integer(item.card_ids.length, 1, 100) || item.card_ids.some(id => !integer(id, 1, 2147483647)) ||
     typeof item.logged_at !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2}$/.test(item.logged_at) ||
     !Number.isFinite(Date.parse(item.logged_at))) fail();
@@ -36,7 +36,7 @@ export function parseDraftBackup(path, text) {
   } else if (INDEX.test(path)) {
     const key = INDEX.exec(path)[1];
     if (!exact(value, ['schema', 'adapter', 'account_key', 'observations', 'gaps', 'chunks']) || value.schema !== 'MTGA_DRAFT_INDEX_V1' ||
-      value.account_key !== key || value.adapter !== '17lands-bot-log-v1' || !integer(value.observations, 1, 10000000) || !integer(value.gaps, 0, 10000000) ||
+      value.account_key !== key || value.adapter !== '17lands-log-v2' || !integer(value.observations, 1, 10000000) || !integer(value.gaps, 0, 10000000) ||
       !Array.isArray(value.chunks) || value.chunks.length > 100000) fail();
     const seen = new Set(); let count = 0;
     for (const chunk of value.chunks) {
@@ -74,7 +74,7 @@ export function buildDraftBackup({ observations, gaps }) {
       parseDraftBackup(path, text); files.set(path, text);
       chunks.push({ path, sha256, bytes: Buffer.byteLength(text), count: Math.min(100, items.length - i) });
     }
-    const index = { schema: 'MTGA_DRAFT_INDEX_V1', adapter: '17lands-bot-log-v1', account_key, observations: items.length, gaps, chunks };
+    const index = { schema: 'MTGA_DRAFT_INDEX_V1', adapter: '17lands-log-v2', account_key, observations: items.length, gaps, chunks };
     const text = serializeDraft(index), path = `${root}/index.json`;
     parseDraftBackup(path, text); files.set(path, text);
     accounts.push({ account_key, path, sha256: draftDigest(text), bytes: Buffer.byteLength(text), observations: items.length });

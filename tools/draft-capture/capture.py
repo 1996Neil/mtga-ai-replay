@@ -12,10 +12,10 @@ import sqlite3
 import uuid
 
 ACCOUNT = re.compile(r'^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[a-z0-9]{26})$', re.IGNORECASE)
-VERSION = '17lands-bot-log-v1'
+VERSION = '17lands-log-v2'
 MAX_LINE = 1024 * 1024
 PREFIX = re.compile(r'^(\d{8} \d{6}\.\d{3}),INFO,[^,]+,Draft (pack|pick): (.*)$')
-EVENT = re.compile(r'QuickDraft_[A-Za-z0-9_]{1,100}\Z')
+EVENT = re.compile(r'[A-Za-z][A-Za-z0-9_-]{1,120}\Z')
 
 
 def digest(value):
@@ -28,19 +28,26 @@ def normalize(line):
         return None
     stamp, kind, literal = match.groups()
     value = ast.literal_eval(literal)
-    if not isinstance(value, dict) or not EVENT.fullmatch(str(value.get('event_name', ''))):
+    if not isinstance(value, dict):
         raise ValueError('unsupported event')
-    pack, pick = value.get('pack_number'), value.get('pick_number')
+    event = value.get('event_name') or value.get('EventId') or ('HumanDraft_' + str(value.get('draftId') or value.get('DraftId', 'unknown')))
+    pack = value.get('pack_number', value.get('PackNumber', value.get('SelfPack', value.get('Pack'))))
+    pick = value.get('pick_number', value.get('PickNumber', value.get('SelfPick', value.get('Pick'))))
+    if not EVENT.fullmatch(str(event)):
+        raise ValueError('unsupported event')
     if type(pack) is not int or type(pick) is not int or not 0 <= pack <= 2 or not 0 <= pick < 30:
         raise ValueError('invalid draft coordinate')
     cards = value.get('card_ids')
+    if cards is None and kind == 'pack':
+        cards = value.get('CardsInPack', value.get('PackCards'))
+        if isinstance(cards, str): cards = [int(x) for x in cards.split(',') if x.strip()]
     if kind == 'pick' and cards is None:
-        cards = [value.get('card_id')]
+        cards = value.get('card_ids', value.get('GrpIds')) or [value.get('card_id', value.get('PickGrpId'))]
     if not isinstance(cards, list) or not 1 <= len(cards) <= 100 or any(type(c) is not int or not 0 < c < 2147483648 for c in cards):
         raise ValueError('invalid card IDs')
     # This is the tracker log's LOCAL receipt time, not Arena's action timestamp.
     logged_at = dt.datetime.strptime(stamp, '%Y%m%d %H%M%S.%f').astimezone().isoformat(timespec='milliseconds')
-    return dict(adapter=VERSION, kind=kind, event_id=value['event_name'], pack_number=pack + 1,
+    return dict(adapter=VERSION, kind=kind, event_id=str(event), pack_number=pack + 1,
                 pick_number=pick + 1, card_ids=cards, logged_at=logged_at)
 
 
@@ -120,6 +127,8 @@ def capture(log_dir, data_dir, before_commit=None, start_now=False):
                         break
                     parts = raw.split(b',', 3)
                     message = parts[3] if len(parts) == 4 and parts[1] == b'INFO' else b''
+                    message = re.sub(b'Human draft [^:]*pack[^:]*: ', b'Draft pack: ', message)
+                    message = re.sub(b'Human draft [^:]*pick[^:]*: ', b'Draft pick: ', message)
                     # Tracker logs account transitions before emitting draft observations.
                     if message.startswith(b'Updating user info: '):
                         try:
@@ -147,10 +156,10 @@ def capture(log_dir, data_dir, before_commit=None, start_now=False):
                         continue
                     if bootstrap:
                         continue
-                    if b',Draft pack: ' not in raw and b',Draft pick: ' not in raw:
-                        if b',Human draft ' in raw:
-                            db.execute('INSERT OR IGNORE INTO gaps VALUES (?,?)', (digest((incarnation + str(start)).encode()), 'unsupported_human_draft'))
+                    if b',Draft pack: ' not in raw and b',Draft pick: ' not in raw and b',Human draft ' not in raw:
                         continue
+                    raw = re.sub(b'Human draft [^:]*pack[^:]*: ', b'Draft pack: ', raw)
+                    raw = re.sub(b'Human draft [^:]*pick[^:]*: ', b'Draft pick: ', raw)
                     identity = digest((incarnation + ':' + str(start) + ':' + digest(raw)).encode())
                     try:
                         normalized = normalize(raw.decode('utf-8').rstrip('\r\n'))
