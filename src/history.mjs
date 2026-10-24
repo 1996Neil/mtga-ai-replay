@@ -3,6 +3,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdir, stat, chmod } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { isTutorialMatch } from './replay-policy.mjs';
 
 export const defaultDataDir = (home = homedir()) => join(home, '.local', 'share', 'mtga-gpt-replay');
 const dbPath = (dataDir) => join(dataDir, 'replays.sqlite3');
@@ -23,6 +24,7 @@ async function openDatabase(dataDir, write = false) {
       CREATE INDEX IF NOT EXISTS replay_chronology ON replays(started_at DESC);
       CREATE TABLE IF NOT EXISTS coach_notes (match_id TEXT PRIMARY KEY, notes_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS cards (arena_id INTEGER PRIMARY KEY, name TEXT NOT NULL, metadata_json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS excluded_replays (match_id TEXT PRIMARY KEY, reason TEXT NOT NULL, excluded_at TEXT NOT NULL);
     `);
     // Reapplying identical permissions still changes ctime on macOS. Two
     // observers sharing this archive would keep invalidating each other.
@@ -148,9 +150,11 @@ export async function archiveReplays(replays, { dataDir = defaultDataDir() } = {
     const cardUpsert = database.prepare(`INSERT INTO cards VALUES (?, ?, ?)
       ON CONFLICT(arena_id) DO UPDATE SET name=excluded.name, metadata_json=excluded.metadata_json`);
     const previousReplay = database.prepare('SELECT replay_json FROM replays WHERE match_id = ?');
+    const excluded = database.prepare('SELECT 1 FROM excluded_replays WHERE match_id = ?');
     database.exec('BEGIN IMMEDIATE');
     for (const input of replays) {
       if (!input?.match?.id || typeof input.match.id !== 'string' || !input.match.started_at) throw new Error('Replay needs a stable match.id and started_at.');
+      if (isTutorialMatch(input.match) || excluded.get(input.match.id)) { preserved++; continue; }
       const replay = safeArchive(input), now = new Date().toISOString();
       const replayJson = JSON.stringify(replay);
       const previous = previousReplay.get(replay.match.id);
@@ -165,6 +169,37 @@ export async function archiveReplays(replays, { dataDir = defaultDataDir() } = {
   } catch (error) {
     try { database.exec('ROLLBACK'); } catch { /* No transaction was started. */ }
     throw error;
+  } finally { database.close(); }
+}
+
+/** Explicit local deletion persists an ID tombstone so retained logs cannot restore it. */
+export async function excludeArchivedReplays(matchIds, { dataDir = defaultDataDir(), reason = 'user_deleted' } = {}) {
+  if (!Array.isArray(matchIds) || matchIds.some(id => typeof id !== 'string' || !id)) throw new Error('Expected explicit match IDs.');
+  if (!['user_deleted', 'tutorial'].includes(reason)) throw new Error('Invalid replay exclusion reason.');
+  const database = await openDatabase(dataDir, true);
+  try {
+    database.exec('BEGIN IMMEDIATE');
+    const mark = database.prepare('INSERT INTO excluded_replays VALUES (?, ?, ?) ON CONFLICT(match_id) DO NOTHING');
+    const remove = database.prepare('DELETE FROM replays WHERE match_id = ?');
+    const notes = database.prepare('DELETE FROM coach_notes WHERE match_id = ?');
+    let deleted = 0;
+    for (const id of new Set(matchIds)) {
+      mark.run(id, reason, new Date().toISOString());
+      deleted += Number(remove.run(id).changes); notes.run(id);
+    }
+    database.exec('COMMIT');
+    return { deleted };
+  } catch (error) { database.exec('ROLLBACK'); throw error; }
+  finally { database.close(); }
+}
+
+export async function isReplayExcluded(matchId, { dataDir = defaultDataDir() } = {}) {
+  if (typeof matchId !== 'string' || !matchId) return false;
+  const database = await openDatabase(dataDir);
+  if (!database) return false;
+  try {
+    if (!database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='excluded_replays'").get()) return false;
+    return Boolean(database.prepare('SELECT 1 FROM excluded_replays WHERE match_id=?').get(matchId));
   } finally { database.close(); }
 }
 

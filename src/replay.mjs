@@ -1,4 +1,5 @@
 import { arenaAccountKey } from './account-scope.mjs';
+import { isTutorialMatch } from './replay-policy.mjs';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -269,6 +270,8 @@ export async function buildReplays(records, names = new Map(), { counterNames = 
     const metadata = meta.get(match.id), seat = metadata.localSeat;
     const player = metadata.config.reservedPlayers.find(p => p.systemSeatId === seat);
     const opponent = metadata.config.reservedPlayers.find(p => p.systemSeatId !== seat);
+    if (isTutorialMatch({ event_id: player?.eventId ?? match.eventId,
+      event: metadata.config.eventId, queue_id: metadata.config.queueId })) continue;
     const matchGames = [...games.entries()].filter(([k]) => k.startsWith(`${match.id}:`)).map(([, g]) => g);
     for (const game of matchGames) {
       const snapshot = parsed.gameSnapshots.find(s => s.matchId === match.id && s.gameNumber === game.game_number);

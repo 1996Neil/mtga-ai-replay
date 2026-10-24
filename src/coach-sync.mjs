@@ -6,7 +6,8 @@ import { createGitBatch } from './git-batch.mjs';
 import { mkdir, readFile, writeFile, rename, open, rm, lstat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import { defaultDataDir } from './history.mjs';
+import { defaultDataDir, isReplayExcluded } from './history.mjs';
+import { isTutorialMatch } from './replay-policy.mjs';
 import { serializeCoachJson } from './coach-bundle.mjs';
 import { validateBundleFiles, validateStagedRepository, validateSyncHistoryApproval, isCollectionSyncPath, isCoachSyncPath, createSyncValidationSession } from './sync-security.mjs';
 
@@ -233,6 +234,7 @@ export async function getCoachHistoryKey(matchId, options = {}) {
 }
 
 export async function enqueueCoachBundle(bundle, options = {}) {
+  if (isTutorialMatch(bundle?.summary) || await isReplayExcluded(bundle?.summary?.match_id, options)) fail('SYNC_EXCLUDED', 'This replay is excluded from upload.');
   const dataDir = options.dataDir ?? defaultDataDir(), files = options.computePool ? await options.computePool.run('bundleFiles',{bundle}) : bundleFiles(bundle);
   return locked(dataDir, async () => {
     const state = await readState(dataDir), id = bundle.summary.match_id;
@@ -355,6 +357,8 @@ async function queuedFiles(item, dataDir, computePool) {
     files.set(name, await readFile(file, 'utf8'));
   }
   const values = Object.fromEntries([...files].map(([name, text]) => [name.slice(0, -5), JSON.parse(text)]));
+  if (isTutorialMatch(values.summary) || isTutorialMatch(values.coach?.match) ||
+      await isReplayExcluded(item.match_id, { dataDir })) fail('SYNC_EXCLUDED', 'This replay is excluded from upload.');
   // Publish exactly the bytes whose parsed structure was scanned. Canonical equality
   // also rejects duplicate JSON keys that JSON.parse would silently discard.
   for (const name of NAMES) {
