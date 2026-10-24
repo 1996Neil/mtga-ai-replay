@@ -18,12 +18,13 @@ import { notifyViewerTask } from './task-notification.mjs';
 import { createLocalReplayHistory } from './viewer-local-history.mjs';
 import { createCloudReviewReader } from './review/review-sync.mjs';
 import { findReviewGame } from './review/review-model.mjs';
+import { importReplayLogs, syncReplayHistory } from './replay-workflow.mjs';
 
 const defaultViewer = fileURLToPath(new URL('../viewer/dist/', import.meta.url));
 const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.ico': 'image/x-icon', '.woff2': 'font/woff2' };
 
-export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir = defaultViewer, port = 0, cardNames = new Map(), cardMetadata = new Map(), displayNamesZh, cardIdentityResolver, fetchFn = fetch, writeInfo = true, syncWorkflow, collectionUpdate, collectionSync, notifyTask = notifyViewerTask, requestExtension, closeExtension, extraCapabilities = [], replayProvider, enableReplaySync = !replayProvider, enableCollection = enableReplaySync && !replayProvider, includeLocalHistory = enableReplaySync || !replayProvider, observeLocalLogs = includeLocalHistory, localHistoryOptions = {}, reviewReader, sourceIdentity = null } = {}) {
+export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir = defaultViewer, port = 0, cardNames = new Map(), cardMetadata = new Map(), displayNamesZh, cardIdentityResolver, fetchFn = fetch, writeInfo = true, syncWorkflow, collectionUpdate, collectionSync, notifyTask = notifyViewerTask, requestExtension, closeExtension, extraCapabilities = [], replayProvider, enableReplaySync = !replayProvider, enableCollection = enableReplaySync && !replayProvider, includeLocalHistory = enableReplaySync || !replayProvider, observeLocalLogs = includeLocalHistory, autoSyncReplays = false, localHistoryOptions = {}, reviewReader, sourceIdentity = null } = {}) {
   const root = await realpath(resolve(viewerDir)).catch(() => resolve(viewerDir));
   const identityResolver = cardIdentityResolver ?? createCardIdentityResolver();
   const chineseNames = displayNamesZh ?? await loadInstalledChineseDisplayNames();
@@ -31,7 +32,14 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
   const journal = enableReplaySync || enableCollection ? createTaskJournal(dataDir) : null;
   const sync = createViewerSync({ dataDir, workflow: syncWorkflow, notify: notifyTask, journal });
   const collection = createViewerCollection({ dataDir, update: collectionUpdate, sync: collectionSync, notify: notifyTask, journal });
-  const localHistory = includeLocalHistory && observeLocalLogs ? createLocalReplayHistory({ ...localHistoryOptions, dataDir }) : null;
+  const localHistory = includeLocalHistory && observeLocalLogs ? createLocalReplayHistory({ ...localHistoryOptions, dataDir,
+    workflow: async options => {
+      const imported = await (localHistoryOptions.workflow ?? importReplayLogs)(options);
+      if (autoSyncReplays && enableReplaySync) {
+        try { await syncReplayHistory({ dataDir, cardDb: imported.database }); } catch { /* archive remains durable; next poll retries */ }
+      }
+      return imported;
+    } }) : null;
   const reviews = reviewReader ?? createCloudReviewReader({ loadReplay: replayById, dataDir });
   let landColorCatalog, draftNameCatalog;
   const draftDeckCache = new Map();

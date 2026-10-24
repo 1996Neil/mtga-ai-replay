@@ -13,7 +13,7 @@ const execute = promisify(execFile);
 const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' };
 const repository = 'synthetic-owner/private-drafts', remote = `https://github.com/${repository}.git`;
 const A = 'a'.repeat(64), B = 'b'.repeat(64);
-const item = (n, account_key = A) => ({ observation_id: n.toString(16).padStart(64, '0'), adapter: '17lands-bot-log-v1',
+const item = (n, account_key = A) => ({ observation_id: n.toString(16).padStart(64, '0'), adapter: '17lands-log-v2',
   kind: n % 2 ? 'pack' : 'pick', event_id: 'QuickDraft_SYNTHETIC', pack_number: 1, pick_number: 1,
   card_ids: [10], logged_at: '2026-10-24T01:02:03.123+08:00', account_key });
 

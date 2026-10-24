@@ -1,7 +1,7 @@
 # New draft capture, account isolation and private Git backup
 
 Implementation contract: starting when the service is enabled, retain actual new
-Quick Draft pack/selection observations independently of matches, display them in
+17Lands bot or human draft pack/selection observations independently of matches, display them in
 Replay under the correct Arena account, and back them up to the existing
 configured private data repository. Historical picks are deliberately skipped.
 Preserve old replay databases and unrelated local edits. No model calls, raw log
@@ -62,10 +62,13 @@ not multi-user authentication; the existing loopback access boundary remains.
 Observation insertion and complete-line cursor advancement commit together under
 SQLite FULL durability. Device/inode and checkpoint identity handle ordinary
 renames and truncation. Unfinished UTF-8 lines are reread after restart. Invalid
-or oversized draft records and unsupported human-draft formats leave gaps. No
+or oversized draft records leave gaps. No
 old archive is changed or cleared.
 
-This adapter supports the installed tracker's bot QuickDraft log messages.
+This adapter supports the installed tracker's bot and human draft log messages,
+including Quick Draft, Premier Draft, Traditional Draft, and future event IDs
+that follow Arena's event naming rules. Unsupported or malformed lines remain
+local gaps and are never guessed into a draft.
 Coordinates convert from zero-based to one-based. Duplicate card quantities and
 multi-card selections are retained; contradictions remain explicit. Receipt time
 is the tracker log time, not Arena action time.
