@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import packageInfo from '../package.json' with { type: 'json' };
 import { validateBundleFiles, validateExpandedCoach } from './sync-security.mjs';
+import { isTutorialMatch } from './replay-policy.mjs';
 
 const SHARED_FRAME_WARNING = 'Exact intermediate board state was not observed; actions can share a GRE frame.';
 const PRIORITY_WARNING = 'Priority is the last observed GRE value; unrecorded priority windows are unknown.';
@@ -435,6 +436,7 @@ function allowedCardIds(value, output = new Set()) {
 export async function buildCoachBundle(replay, { cards = [], generatedAt = new Date().toISOString(), historyKey: requestedHistoryKey,
   partitionBytes = 700 * 1024, multipart = 'auto' } = {}) {
   if (!replay?.match?.id || !replay.match.started_at) throw new Error('Coach Bundle requires match.id and match.started_at.');
+  if (isTutorialMatch(replay.match)) throw new Error('Tutorial replays are excluded from upload.');
   const stamp = new Date(replay.match.started_at).toISOString().replace(/[:.]/g, '-');
   const historyKey = requestedHistoryKey ?? `${stamp}_${encodeURIComponent(replay.match.id)}`;
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(historyKey)) throw new Error('Invalid Coach history key.');
