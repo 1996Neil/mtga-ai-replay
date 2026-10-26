@@ -19,14 +19,19 @@ function generationReason(error) {
 async function queueReplay(replay, options, published, receipts, pendingBundle) {
   if (!replay?.match?.id || !Number.isFinite(Date.parse(replay.match.started_at))) throw new CoachSyncError('SYNC_REPLAY', 'Archived match has no valid identity or start time.');
   if (!replay.games?.some(game => (game.steps ?? game.replay_steps)?.length)) throw new CoachSyncError('SYNC_REPLAY', 'Archived match has no detailed game steps.');
-  const fingerprint = await coachInputFingerprint(replay, options), previous = receipts[replay.match.id];
+  const fastSnapshot = options.fastSync ? syncDigest(replay) : null;
+  const fingerprint = options.fastSync ? null : await coachInputFingerprint(replay, options), previous = receipts[replay.match.id];
   const expectedBundle = pendingBundle ?? published;
   const remoteConfirmsPending = Boolean(pendingBundle && published?.content_hash === pendingBundle.content_hash &&
     published.history_key === pendingBundle.history_key);
+  if (fastSnapshot && previous?.fast_snapshot === fastSnapshot && previous.content_hash === expectedBundle?.content_hash &&
+      previous.history_key === expectedBundle?.history_key) {
+    return { queued: false, generation_cached: true, content_hash: expectedBundle.content_hash, history_key: expectedBundle.history_key };
+  }
   if (fingerprint && previous?.fingerprint === fingerprint.hash && previous.content_hash === expectedBundle?.content_hash &&
       previous.history_key === expectedBundle?.history_key && (remoteConfirmsPending || previous.valid_until === null ||
         (Number.isFinite(previous.valid_until) && previous.valid_until > Date.now()))) {
-    return { queued: false, generation_cached: true };
+    return { queued: false, generation_cached: true, content_hash: expectedBundle.content_hash, history_key: expectedBundle.history_key };
   }
   options.onProgress?.({ phase: 'cards' });
   const observed = new Map(); let validUntil = null, databaseReadComplete = false;
@@ -41,6 +46,10 @@ async function queueReplay(replay, options, published, receipts, pendingBundle) 
   const bundleOptions = { cards, multipart: true, ...(options.generatedAt ? {generatedAt:options.generatedAt} : {}), ...(historyKey ? { historyKey } : {}) };
   const bundle = options.computePool ? await options.computePool.run('bundle', {replay,options:bundleOptions}) : await buildCoachBundle(replay,bundleOptions);
   const queued = await enqueueCoachBundle(bundle, options);
+  if (fastSnapshot) {
+    receipts[replay.match.id] = { fast_snapshot: fastSnapshot, content_hash: bundle.contentHash, history_key: bundle.historyKey };
+    return { ...queued, summary: bundle.summary, content_hash: bundle.contentHash, history_key: bundle.historyKey };
+  }
   const after = await coachInputFingerprint(replay, options);
   let stable = databaseReadComplete && fingerprint && after && fingerprint.core === after.core;
   const dependencies = new Set(after?.metadataIds ?? []);
@@ -51,7 +60,7 @@ async function queueReplay(replay, options, published, receipts, pendingBundle) 
   }
   if (stable) receipts[replay.match.id] = { fingerprint: after.hash, content_hash: bundle.contentHash, history_key: bundle.historyKey, valid_until: validUntil };
   else delete receipts[replay.match.id];
-  return { ...queued, summary: bundle.summary };
+  return { ...queued, summary: bundle.summary, content_hash: bundle.contentHash, history_key: bundle.historyKey };
 }
 
 /** Backfill every match in Viewer's canonical catalog, regardless of the match
@@ -66,7 +75,11 @@ async function runCatalog(options) {
   // Only per-bundle publication defers repeated scans to its final pinned SHA.
   const settings = { ...options, dataDir: options.dataDir ?? defaultDataDir(), validationSession: createSyncValidationSession(),
     deferFullHistoryValidation: true };
-  const local = await listReplays({ dataDir: settings.dataDir, limit: null });
+  const archived = await listReplays({ dataDir: settings.dataDir, limit: null });
+  const staged = options.archiveDataDir ? (await listReplays({ dataDir: options.archiveDataDir, limit: null }))
+    .filter(match => !options.stagedReplays || options.stagedReplays.has(match.id)) : [];
+  const stagedIds = new Set(staged.map(match => match.id));
+  const local = [...archived.filter(match => !stagedIds.has(match.id)), ...staged];
   const report = { local: local.length, already_published: 0, github_before: 0, missing: 0,
     published: 0, updated: 0, failed: [], skipped: [], successes: [], github_total: null, latest: null, committed: 0 };
   let snapshot;
@@ -85,12 +98,12 @@ async function runCatalog(options) {
   report.missing = local.length - report.already_published;
   // Pending matches also need regeneration against a remotely established key
   // after recovery or publication from another machine. Never rename parts.
-  const refresh = new Set([...(options.refreshMatchIds ?? []), ...snapshot.pending.map(item => item.match_id)]), attempted = [];
+  const refresh = new Set([...(options.refreshMatchIds ?? []), ...stagedIds, ...snapshot.pending.map(item => item.match_id)]), attempted = [];
   const pendingBundles = new Map(snapshot.pending.map(item => [item.match_id, item]));
   const candidates = local.filter(match => !published.has(match.id) || refresh.has(match.id));
   report.candidates = candidates.length;
   options.onScan?.(report);
-  settings.cardDb = options.cardDb ?? await discoverCardDatabase();
+  if (candidates.length) settings.cardDb = options.cardDb ?? await discoverCardDatabase();
   const cache = await readSyncCache(settings.dataDir, 'replay-coach-generation-cache.json');
   const receipts = Object.assign(Object.create(null), cache?.matches && typeof cache.matches === 'object' && !Array.isArray(cache.matches) ? cache.matches : {});
   let completed = 0;
@@ -98,9 +111,10 @@ async function runCatalog(options) {
     if (published.has(match.id) && !refresh.has(match.id)) continue;
     const identity = { match_id: match.id, started_at: match.started_at, result: match.result };
     try {
-      const replay = await getReplay(match.id, { dataDir: settings.dataDir });
+      const replay = options.stagedReplays?.get(match.id) ??
+        await getReplay(match.id, { dataDir: stagedIds.has(match.id) ? options.archiveDataDir : settings.dataDir });
       const result = await queueReplay(replay, settings, published.get(match.id), receipts, pendingBundles.get(match.id));
-      attempted.push({ ...identity, queued: result.queued });
+      attempted.push({ ...identity, queued: result.queued, content_hash: result.content_hash, history_key: result.history_key });
     } catch (error) {
       const failure = { ...identity, reason: generationReason(error) };
       report.failed.push(failure); options.onFailure?.(failure);
@@ -117,6 +131,8 @@ async function runCatalog(options) {
     } else {
       const finalIndex = result.index ?? snapshot.index;
       const final = new Map(finalIndex.matches.map(match => [match.match_id, match]));
+      report.confirmed = attempted.filter(item => final.get(item.match_id)?.content_hash === item.content_hash &&
+        final.get(item.match_id)?.history_key === item.history_key).map(item => ({ ...item }));
       report.github_total = final.size;
       report.latest = [...final.values()].sort((a, b) => String(b.started_at).localeCompare(String(a.started_at)) || a.match_id.localeCompare(b.match_id))[0] ?? null;
       for (const match of attempted) {

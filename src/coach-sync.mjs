@@ -1,4 +1,5 @@
 import { isDraftSyncPath } from './draft-backup.mjs';
+import { validateSyncChanges } from './sync-changes.mjs';
 import {CoachSyncError} from './coach-sync-error.mjs';
 import {bundleFiles} from './coach-bundle-files.mjs';
 import { execFile } from 'node:child_process';
@@ -238,6 +239,7 @@ export async function enqueueCoachBundle(bundle, options = {}) {
   const dataDir = options.dataDir ?? defaultDataDir(), files = options.computePool ? await options.computePool.run('bundleFiles',{bundle}) : bundleFiles(bundle);
   return locked(dataDir, async () => {
     const state = await readState(dataDir), id = bundle.summary.match_id;
+    if (await isReplayExcluded(id, { dataDir })) fail('SYNC_EXCLUDED', 'This replay is excluded from upload.');
     const stableKey = state.synced[id]?.history_key ?? state.pending.find(item => item.match_id === id)?.history_key;
     if (stableKey && stableKey !== bundle.historyKey) fail('SYNC_BUNDLE', 'The match history key changed; regenerate with its existing stable history key.');
     if (state.synced[id]?.content_hash === bundle.contentHash && !state.pending.some(item => item.match_id === id)) return { queued: false, duplicate: true };
@@ -292,6 +294,10 @@ async function prepareCheckout(state, meta, run, repoDir, options = {}) {
     historyApproval: validateSyncHistoryApproval(state.history_approval, { repository: meta.nameWithOwner, branch }) };
   const validationSession = options.validationSession ?? createSyncValidationSession();
   const validate = async historyRevision => {
+    if (options.fastSync) {
+      options.onProgress?.({ phase: 'comparing' });
+      return validateSyncChanges(git, { branch, onValidation: options.onValidation });
+    }
     options.onProgress?.({ phase: 'security' });
     return validateStagedRepository(repoDir, { ...historyOptions, validationSession,
       ...(historyRevision ? { historyRevision } : {}), computePool:options.computePool,
@@ -305,11 +311,11 @@ async function prepareCheckout(state, meta, run, repoDir, options = {}) {
   if (String(await git(['branch', '--show-current'])).trim() !== branch) fail('SYNC_BRANCH', 'Sync checkout is on an unexpected branch.');
   // Check before fetching or merging: even a fast-forward must not overwrite
   // another writer's staged, ignored or otherwise uncommitted files.
-  if (!options.deferFullHistoryValidation) await validate();
+  if (!options.deferFullHistoryValidation && !options.fastSync) await validate();
   if (String(await git(['status', '--porcelain', '--untracked-files=all', '--ignored=matching'])).trim()) fail('SYNC_DIRTY', 'Sync checkout contains uncommitted files; no files were overwritten.');
   options.onProgress?.({ phase: 'remote' });
   await git(['fetch', '--prune', 'origin']);
-  if (!options.deferFullHistoryValidation) await validate();
+  if (!options.deferFullHistoryValidation && !options.fastSync) await validate();
   if (meta.defaultBranchRef?.name) {
     const localRefs = String(await git(['show-ref']));
     if (localRefs.includes(`refs/heads/${branch}`)) await git(['merge', '--ff-only', `origin/${branch}`]);

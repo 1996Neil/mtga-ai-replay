@@ -14,6 +14,7 @@ import { validateBundleFiles, validateStagedRepository } from '../src/sync-secur
 import { syncReplayHistory } from '../src/replay-workflow.mjs';
 import { startReplayServer } from '../src/server.mjs';
 import { syntheticLog } from './helpers/synthetic-log.mjs';
+import { syncGitFirstReplays } from '../src/git-first-replay.mjs';
 
 const execute = promisify(execFile);
 const REPOSITORY = 'fixture-owner/private-coaching';
@@ -68,6 +69,37 @@ test('a previously queued replay cannot publish after explicit local deletion', 
   await assert.rejects(syncCoachBundles(h.options), { code: 'SYNC_EXCLUDED' });
   assert.equal(h.control.calls.some(call => call.file === 'git' && call.args.includes('push')), false);
   assert.equal((await getCoachSyncStatus({ ...h.options, verify: false })).pending, 1);
+});
+
+test('Git-first publishes before local promotion; unchanged retry reads no Git objects and makes no network request', async t => {
+  const h = await harness(t);
+  await configureCoachSync(REPOSITORY, h.options);
+  const replay = catalogReplay('synthetic-git-first-e2e', 0);
+  replay.match.account_key = 'a'.repeat(64);
+  const outbox = join(h.dataDir, 'replay-outbox');
+  await archiveReplays([replay], { dataDir: outbox });
+  const metrics = [];
+  let uploading = false;
+  h.control.beforeGit = async ({ networkCommand }) => {
+    if (networkCommand !== 'push') return;
+    uploading = true;
+    assert.deepEqual(await listReplays({ dataDir: h.dataDir }), []);
+  };
+  const options = { ...h.options, workerCount: 0, importWorkflow: async () => ({ archive: { archived: 0 } }),
+    onValidation: value => metrics.push(value) };
+  const result = await syncGitFirstReplays(options);
+  assert.equal(result.status, 'succeeded');
+  assert.equal(uploading, true);
+  assert.equal((await listReplays({ dataDir: h.dataDir })).length, 1);
+  assert.deepEqual(await listReplays({ dataDir: outbox }), []);
+  assert.equal(JSON.parse(await h.published('index.json')).matches[0].match_id, replay.match.id);
+  metrics.length = 0;
+  h.control.calls.length = 0;
+  const again = await syncGitFirstReplays(options);
+  assert.equal(again.published, 0);
+  assert.equal(metrics.length, 0);
+  assert.equal(h.control.calls.length, 0);
+  assert.equal(again.remote_checked, false);
 });
 
 async function harness(t) {

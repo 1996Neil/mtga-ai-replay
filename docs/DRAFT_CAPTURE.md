@@ -57,6 +57,10 @@ identified local seat. Old matches lacking evidence stay in the separate
 contracts are not retroactively partitioned. This is local viewing organization,
 not multi-user authentication; the existing loopback access boundary remains.
 
+New observations are displayed only after Git upload and exact readback succeed.
+Before confirmation they remain in the local transmission queue; upload failures
+do not expose an unconfirmed draft tail. See `GIT_FIRST_SYNC.md`.
+
 ## Persistence and interpretation
 
 Observation insertion and complete-line cursor advancement commit together under

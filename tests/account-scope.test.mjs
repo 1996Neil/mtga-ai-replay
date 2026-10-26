@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { readDraftCapture } from '../src/draft-capture.mjs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
@@ -37,6 +38,12 @@ test('HTTP account isolation includes captures, matches, current account and dir
   const get = path => fetch(server.url + path);
   const accounts = await get('api/accounts').then(r => r.json());
   assert.equal(accounts.active_account, B); assert.equal(accounts.accounts.length, 2);
+  assert.deepEqual(await get(`api/draft-runs?account=${A}`).then(r => r.json()), []);
+  await mkdir(join(dataDir, 'draft-sync'));
+  const observations = (await readDraftCapture({ dataDir })).observations;
+  await writeFile(join(dataDir, 'draft-sync/published.json'), JSON.stringify({
+    verified: true, revision: 'a'.repeat(40), observation_ids: observations.map(item => item.observation_id),
+  }));
   for (const [key, id] of [[A, 'a'], [B, 'b']]) {
     const drafts = await get(`api/draft-runs?account=${key}`).then(r => r.json());
     assert.equal(drafts.length, 1); assert.equal(drafts[0].account_key, key); assert.equal(drafts[0].picks.length, 1);

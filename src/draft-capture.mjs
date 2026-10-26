@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
-import { lstat } from 'node:fs/promises';
+import { lstat, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 /** Tracker sessions are provisional capture segments, NEVER Course/match bindings.
@@ -84,5 +84,13 @@ export async function readDraftCapture({ dataDir }) {
 
 export async function listCapturedDraftRuns(options) {
   const { observations, gaps } = await readDraftCapture(options);
-  return projectDraftCaptures(observations, { ...options, gaps });
+  let confirmed = [];
+  try {
+    const receipt = JSON.parse(await readFile(join(options.dataDir, 'draft-sync/published.json'), 'utf8'));
+    if (receipt.verified && /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(receipt.revision)) {
+      const ids = new Set(receipt.observation_ids);
+      confirmed = observations.filter(item => ids.has(item.observation_id));
+    }
+  } catch { /* Unpublished observations remain only in the transmission queue. */ }
+  return projectDraftCaptures(confirmed, { ...options, gaps });
 }
