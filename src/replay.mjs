@@ -1,3 +1,5 @@
+import { arenaAccountKey } from './account-scope.mjs';
+import { isTutorialMatch } from './replay-policy.mjs';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -268,6 +270,8 @@ export async function buildReplays(records, names = new Map(), { counterNames = 
     const metadata = meta.get(match.id), seat = metadata.localSeat;
     const player = metadata.config.reservedPlayers.find(p => p.systemSeatId === seat);
     const opponent = metadata.config.reservedPlayers.find(p => p.systemSeatId !== seat);
+    if (isTutorialMatch({ event_id: player?.eventId ?? match.eventId,
+      event: metadata.config.eventId, queue_id: metadata.config.queueId })) continue;
     const matchGames = [...games.entries()].filter(([k]) => k.startsWith(`${match.id}:`)).map(([, g]) => g);
     for (const game of matchGames) {
       const snapshot = parsed.gameSnapshots.find(s => s.matchId === match.id && s.gameNumber === game.game_number);
@@ -328,7 +332,7 @@ export async function buildReplays(records, names = new Map(), { counterNames = 
     const deckCounts = new Map();
     for (const card of parsed.myDeckListMap.get(match.id)?.main ?? []) deckCounts.set(card.cardId, (deckCounts.get(card.cardId) ?? 0) + card.quantity);
     replays.push({ schema_version: '2.0', perspective: { policy: 'Only identities legally visible to the local player at that event; no future backfill.', hidden_information: 'omitted', post_game_reveals: 'omitted' },
-      match: { id: match.id, started_at: new Date(match.timestamp).toISOString(), ...mode, result: match.matchResult, on_play: match.onPlay, player: player?.playerName ?? 'Me', opponent: opponent?.playerName ?? 'Opponent' },
+      match: { id: match.id, account_key: arenaAccountKey(player?.userId), started_at: new Date(match.timestamp).toISOString(), ...mode, result: match.matchResult, on_play: match.onPlay, player: player?.playerName ?? 'Me', opponent: opponent?.playerName ?? 'Opponent' },
       deck: [...deckCounts].map(([id, quantity]) => ({ name: names.get(id) ?? `Arena card ${id}`, arena_id: id, quantity })),
       games: matchGames, warnings: ['Turns use global Arena numbering (each player turn increments it).', 'Legal alternatives/priority windows are not reconstructed; ability text and counter names may be incomplete.'] });
   }

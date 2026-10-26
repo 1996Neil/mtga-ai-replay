@@ -33,6 +33,13 @@ function start(id = 'synthetic-match', event = 'Jump_In_2024', timestamp = '1790
     ] },
   } } };
 }
+
+test('explicit tutorial game logs do not produce replay records', async () => {
+  const { replays } = await buildReplays([
+    start('synthetic-tutorial', 'NPE_Tutorial_PlayFamiliar1'), initial(), turnOne(), ...finish('synthetic-tutorial'),
+  ]);
+  assert.deepEqual(replays, []);
+});
 function gre(id, fields, queued = false) {
   return { greToClientEvent: { greToClientMessages: [{
     type: queued ? 'GREMessageType_QueuedGameStateMessage' : 'GREMessageType_GameStateMessage',

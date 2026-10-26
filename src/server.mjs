@@ -1,5 +1,7 @@
+import { filterAccount, validAccountKey } from './account-scope.mjs';
+import { listCapturedDraftRuns, readDraftCapture } from './draft-capture.mjs';
 import { listDraftRuns, withDraftRunLandColors } from './draft-runs.mjs';
-import { discoverCardDatabase, loadCardLandColors } from './cards.mjs';
+import { discoverCardDatabase, loadCardLandColors, loadCardNames } from './cards.mjs';
 import { createTaskJournal } from './task-journal.mjs';
 import { createServer } from 'node:http';
 import { readFile, stat, realpath, mkdir, writeFile, rm } from 'node:fs/promises';
@@ -16,31 +18,46 @@ import { notifyViewerTask } from './task-notification.mjs';
 import { createLocalReplayHistory } from './viewer-local-history.mjs';
 import { createCloudReviewReader } from './review/review-sync.mjs';
 import { findReviewGame } from './review/review-model.mjs';
+import { importReplayLogs } from './replay-workflow.mjs';
+import { syncGitFirstReplays } from './git-first-replay.mjs';
 
 const defaultViewer = fileURLToPath(new URL('../viewer/dist/', import.meta.url));
 const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.ico': 'image/x-icon', '.woff2': 'font/woff2' };
 
-export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir = defaultViewer, port = 0, cardNames = new Map(), cardMetadata = new Map(), displayNamesZh, cardIdentityResolver, fetchFn = fetch, writeInfo = true, syncWorkflow, collectionUpdate, collectionSync, notifyTask = notifyViewerTask, requestExtension, closeExtension, extraCapabilities = [], replayProvider, enableReplaySync = !replayProvider, enableCollection = enableReplaySync && !replayProvider, includeLocalHistory = enableReplaySync || !replayProvider, observeLocalLogs = includeLocalHistory, localHistoryOptions = {}, reviewReader, sourceIdentity = null } = {}) {
+export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir = defaultViewer, port = 0, cardNames = new Map(), cardMetadata = new Map(), displayNamesZh, cardIdentityResolver, fetchFn = fetch, writeInfo = true, syncWorkflow, collectionUpdate, collectionSync, notifyTask = notifyViewerTask, requestExtension, closeExtension, extraCapabilities = [], replayProvider, enableReplaySync = !replayProvider, enableCollection = enableReplaySync && !replayProvider, includeLocalHistory = enableReplaySync || !replayProvider, observeLocalLogs = includeLocalHistory, autoSyncReplays = false, localHistoryOptions = {}, reviewReader, sourceIdentity = null } = {}) {
   const root = await realpath(resolve(viewerDir)).catch(() => resolve(viewerDir));
   const identityResolver = cardIdentityResolver ?? createCardIdentityResolver();
   const chineseNames = displayNamesZh ?? await loadInstalledChineseDisplayNames();
   let assignedPort, closePromise, closing = false;
   const journal = enableReplaySync || enableCollection ? createTaskJournal(dataDir) : null;
-  const sync = createViewerSync({ dataDir, workflow: syncWorkflow, notify: notifyTask, journal });
+  const sync = createViewerSync({ dataDir, workflow: syncWorkflow ?? (autoSyncReplays ? syncGitFirstReplays : undefined), notify: notifyTask, journal });
   const collection = createViewerCollection({ dataDir, update: collectionUpdate, sync: collectionSync, notify: notifyTask, journal });
-  const localHistory = includeLocalHistory && observeLocalLogs ? createLocalReplayHistory({ ...localHistoryOptions, dataDir }) : null;
+  const localHistory = includeLocalHistory && observeLocalLogs ? createLocalReplayHistory({ ...localHistoryOptions, dataDir,
+    workflow: async options => {
+      const imported = autoSyncReplays && enableReplaySync
+        ? await (localHistoryOptions.workflow ?? syncGitFirstReplays)(options)
+        : await (localHistoryOptions.workflow ?? importReplayLogs)(options);
+      if (imported.status === 'failed') throw Error('Replay publication pending');
+      return imported;
+    } }) : null;
   const reviews = reviewReader ?? createCloudReviewReader({ loadReplay: replayById, dataDir });
-  let landColorCatalog;
+  let landColorCatalog, draftNameCatalog;
   const draftDeckCache = new Map();
   async function draftRunsForDisplay() {
     if (!includeLocalHistory || sourceIdentity?.kind === 'published-history') return [];
-    const runs = await listDraftRuns({ dataDir });
+    draftNameCatalog ??= cardNames.size ? Promise.resolve(cardNames) : discoverCardDatabase().then(loadCardNames).catch(() => new Map());
+    const runs = [...await listDraftRuns({ dataDir }), ...await listCapturedDraftRuns({ dataDir, cardNames: await draftNameCatalog })];
     if (!runs.length) return runs;
     landColorCatalog ??= discoverCardDatabase().then(loadCardLandColors).catch(() => new Map());
     const latestIds = runs.flatMap(run => [...run.matches].sort((a, b) => String(b.started_at).localeCompare(String(a.started_at)) || b.id.localeCompare(a.id)).slice(0, 1).map(match => match.id));
     const decks = await listReplayDecks(latestIds, { dataDir, cache: draftDeckCache });
-    return withDraftRunLandColors(runs, decks, await landColorCatalog);
+    const ownership = new Map((await listReplays({ dataDir, limit: null })).map(item => [item.id, item.account_key]));
+    return withDraftRunLandColors(runs, decks, await landColorCatalog).map(run => {
+      if (run.capture_source) return run;
+      const keys = new Set(run.matches.map(m => ownership.get(m.id)));
+      return { ...run, account_key: keys.size === 1 && validAccountKey([...keys][0]) ? [...keys][0] : null };
+    });
   }
   function send(response, status, value, contentType = 'application/json; charset=utf-8', extraHeaders = {}) {
     response.writeHead(status, { 'Content-Type': contentType, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
@@ -82,6 +99,8 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
     try {
       const url = new URL(request.url, `http://127.0.0.1:${assignedPort}`);
       const path = decodeURIComponent(url.pathname);
+      const account = sourceIdentity?.kind === 'published-history' ? null : url.searchParams.get('account');
+      if (account !== null && account !== 'unassigned' && !validAccountKey(account)) return send(response, 400, { error: 'Invalid account scope.' });
       if (path.includes('\0') || path.includes('\\') || path.split('/').includes('..')) return send(response, 400, { error: 'Invalid path.' });
       if (closing && !['GET', 'HEAD'].includes(request.method)) return send(response, 503, { error: 'Replay server is closing.' });
       if (requestExtension && await requestExtension(request, response, url)) return;
@@ -131,7 +150,13 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
       if (path === '/api/collection') return send(response, 200, request.method === 'HEAD' ? '' : collection.snapshot());
       if (path === '/api/sync') return send(response, 200, request.method === 'HEAD' ? '' : sync.snapshot());
       if (path === '/api/health') return send(response, 200, { service: 'mtga-gpt-replay', pid: process.pid, port: assignedPort, capabilities: [...(enableReplaySync ? ['replay-sync'] : []), ...(enableCollection ? ['collection-update'] : []), ...extraCapabilities, 'cloud-review-read', 'cloud-review-sync', 'replay-review-read', ...(!requestExtension ? ['replay-only-v1'] : [])] });
-      if (path === '/api/matches') return send(response, 200, await replayCatalog());
+      if (path === '/api/accounts') {
+        const captured = includeLocalHistory && sourceIdentity?.kind !== 'published-history' ? await readDraftCapture({ dataDir }) : { accounts: [], active_account: null };
+        const accounts = new Map(captured.accounts.map(a => [a.account_key, a]));
+        for (const entry of await replayCatalog()) if (validAccountKey(entry.account_key) && !accounts.has(entry.account_key)) accounts.set(entry.account_key, { account_key: entry.account_key, label: '账号 ' + entry.account_key.slice(0, 8) });
+        return send(response, 200, { accounts: [...accounts.values()], active_account: captured.active_account });
+      }
+      if (path === '/api/matches') return send(response, 200, filterAccount(await replayCatalog(), account));
       const reviewRoute = path.match(/^\/api\/matches\/([^/]+)\/review$/);
       if (reviewRoute) {
         const gameNumber = Number(url.searchParams.get('game') ?? 1);
@@ -139,13 +164,13 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
         const value = await reviews.read(reviewRoute[1], gameNumber);
         return send(response, value.code ?? 200, request.method === 'HEAD' ? '' : value);
       }
-      if (path === '/api/draft-runs') return send(response, 200, request.method === 'HEAD' ? '' : await draftRunsForDisplay());
+      if (path === '/api/draft-runs') return send(response, 200, request.method === 'HEAD' ? '' : filterAccount(await draftRunsForDisplay(), account));
       if (path === '/api/matches/latest') {
         if (sourceIdentity?.kind === 'published-history' && replayProvider?.bytes) {
           const bytes = await replayProvider.bytes(sourceIdentity.match_id);
           return send(response, bytes ? 200 : 404, bytes ?? { error: 'No historical match.' });
         }
-        const entries = await replayCatalog();
+        const entries = filterAccount(await replayCatalog(), account);
         const replay = replayProvider && !includeLocalHistory ? await replayProvider.latest() : entries.length ? await replayById(entries[0].id) : null;
         return send(response, replay ? 200 : 404, replay ?? { error: 'No archived matches.' });
       }
@@ -166,6 +191,7 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
       }
       const matchRoute = path.match(/^\/api\/matches\/([^/]+)$/);
       if (matchRoute) {
+        if (account !== null && !filterAccount([{ account_key: (await replayById(matchRoute[1]))?.match?.account_key }], account).length) return send(response, 404, { error: 'Match is outside the selected account.' });
         if (sourceIdentity?.kind === 'published-history' && replayProvider?.bytes) {
           const bytes = await replayProvider.bytes(matchRoute[1]);
           return send(response, bytes ? 200 : 404, bytes ?? { error: 'Unknown historical match.' });
