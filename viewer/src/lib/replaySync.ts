@@ -23,7 +23,7 @@ export function syncButtonLabel(job: SyncJob) {
   if (job.status === 'partial') return '部分同步失败';
   if (job.status === 'failed') return '同步失败';
   if (job.status === 'succeeded') return job.result?.published ? `已同步 ${job.result.published} 场` : job.result?.updated ? `已更新 ${job.result.updated} 场` : '已是最新';
-  return '上传回放';
+  return '同步回放';
 }
 
 /** Structured API client; resume reads current server work without starting another upload. */

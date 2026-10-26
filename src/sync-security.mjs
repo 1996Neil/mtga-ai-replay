@@ -398,6 +398,7 @@ async function inspectObjects(git, hashes, kind, inspect, metrics) {
   }
 }
 
+export function validateOutgoingCommit(content) { return validateCommitMetadata(content); }
 function validateCommitMetadata(content, approvedExistingIdentity = false) {
   const path = '[commit metadata]', text = textContent(content, path);
   const boundary = text.indexOf('\n\n');

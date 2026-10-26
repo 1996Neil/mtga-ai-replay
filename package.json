@@ -9,6 +9,7 @@
     "mtga-gpt-collection": "bin/mtga-gpt-collection.mjs"
   },
   "scripts": {
+    "sync:audit": "node bin/mtga-sync-audit.mjs",
     "test": "node scripts/test.mjs",
     "replay": "node bin/mtga-gpt-replay.mjs latest",
     "launcher:install": "node tools/macos-launcher/install.mjs",

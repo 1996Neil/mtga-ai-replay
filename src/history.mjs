@@ -203,6 +203,23 @@ export async function isReplayExcluded(matchId, { dataDir = defaultDataDir() } =
   } finally { database.close(); }
 }
 
+/** Acknowledge the exact published snapshot; retain a newer queued version. */
+export async function acknowledgeReplayOutbox(replays, { dataDir }) {
+  const database = await openDatabase(dataDir, true);
+  try {
+    database.exec('BEGIN IMMEDIATE');
+    for (const replay of replays) {
+      const row = database.prepare('SELECT replay_json FROM replays WHERE match_id=?').get(replay.match.id);
+      if (!row) continue;
+      const { coachNotes: a, ...left } = JSON.parse(row.replay_json);
+      const { coachNotes: b, ...right } = replay;
+      if (JSON.stringify(left) === JSON.stringify(right)) database.prepare('DELETE FROM replays WHERE match_id=?').run(replay.match.id);
+    }
+    database.exec('COMMIT');
+  } catch (error) { database.exec('ROLLBACK'); throw error; }
+  finally { database.close(); }
+}
+
 function historyEntry(row) {
   // Notes are stored separately to survive reimport. Their bytes also change
   // the Viewer revision, so automatic refresh cannot leave visible notes stale.

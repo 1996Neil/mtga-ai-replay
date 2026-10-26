@@ -18,7 +18,8 @@ import { notifyViewerTask } from './task-notification.mjs';
 import { createLocalReplayHistory } from './viewer-local-history.mjs';
 import { createCloudReviewReader } from './review/review-sync.mjs';
 import { findReviewGame } from './review/review-model.mjs';
-import { importReplayLogs, syncReplayHistory } from './replay-workflow.mjs';
+import { importReplayLogs } from './replay-workflow.mjs';
+import { syncGitFirstReplays } from './git-first-replay.mjs';
 
 const defaultViewer = fileURLToPath(new URL('../viewer/dist/', import.meta.url));
 const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
@@ -30,14 +31,14 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
   const chineseNames = displayNamesZh ?? await loadInstalledChineseDisplayNames();
   let assignedPort, closePromise, closing = false;
   const journal = enableReplaySync || enableCollection ? createTaskJournal(dataDir) : null;
-  const sync = createViewerSync({ dataDir, workflow: syncWorkflow, notify: notifyTask, journal });
+  const sync = createViewerSync({ dataDir, workflow: syncWorkflow ?? (autoSyncReplays ? syncGitFirstReplays : undefined), notify: notifyTask, journal });
   const collection = createViewerCollection({ dataDir, update: collectionUpdate, sync: collectionSync, notify: notifyTask, journal });
   const localHistory = includeLocalHistory && observeLocalLogs ? createLocalReplayHistory({ ...localHistoryOptions, dataDir,
     workflow: async options => {
-      const imported = await (localHistoryOptions.workflow ?? importReplayLogs)(options);
-      if (autoSyncReplays && enableReplaySync) {
-        try { await syncReplayHistory({ dataDir, cardDb: imported.database }); } catch { /* archive remains durable; next poll retries */ }
-      }
+      const imported = autoSyncReplays && enableReplaySync
+        ? await (localHistoryOptions.workflow ?? syncGitFirstReplays)(options)
+        : await (localHistoryOptions.workflow ?? importReplayLogs)(options);
+      if (imported.status === 'failed') throw Error('Replay publication pending');
       return imported;
     } }) : null;
   const reviews = reviewReader ?? createCloudReviewReader({ loadReplay: replayById, dataDir });

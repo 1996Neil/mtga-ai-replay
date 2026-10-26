@@ -27,7 +27,7 @@ export async function syncDraftCapture(options = {}) {
     const stable = await identity();
     const meta = await verifyPrivateSyncRepository(repository, run);
     const repoDir = coachSyncLocations(dataDir).repo;
-    const { git, branch, validate } = await prepareSyncCheckout(configured, meta, run, repoDir);
+    const { git, branch, validate } = await prepareSyncCheckout(configured, meta, run, repoDir, { ...options, fastSync: options.fastSync ?? true });
     if (branch !== stable.default_branch) fail('Draft destination branch changed.');
     await assertOutgoingSyncOwnership(git, branch, 'draft', Boolean(meta.defaultBranchRef?.name));
     // A second device or a reset local DB must not replace a different lineage.
@@ -90,6 +90,12 @@ export async function syncDraftCapture(options = {}) {
       observations: snapshot.observations, verified_at: new Date().toISOString(), verified: true };
     await safeSyncOutputParents(dataDir, 'draft-sync/receipt.json');
     await atomicSyncWrite(join(dataDir, 'draft-sync/receipt.json'), serializeDraft(receipt));
+    const observation_ids = [];
+    for (const account of snapshot.index.accounts) {
+      const index = parseDraftBackup(account.path, snapshot.files.get(account.path));
+      for (const chunk of index.chunks) for (const observation of parseDraftBackup(chunk.path, snapshot.files.get(chunk.path)).observations) observation_ids.push(observation.observation_id);
+    }
+    await atomicSyncWrite(join(dataDir, 'draft-sync/published.json'), serializeDraft({ ...receipt, observation_ids }));
     return { synced: true, ...receipt };
   });
 }
