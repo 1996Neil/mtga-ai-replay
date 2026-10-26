@@ -1,3 +1,4 @@
+import { isDraftSyncPath, parseDraftBackup } from './draft-backup.mjs';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
@@ -57,7 +58,7 @@ const RAW_KEYS = new Set([
 const IMAGE_KEYS = new Set(['image', 'images', 'imageuris', 'imageurls', 'imageurl', 'imagepath', 'imagecache',
   'cardimage', 'cardimages', 'cachedimages', 'binarydata', 'imagedata', 'imagebase64', 'rawbytes']);
 const normalizedKey = value => value.toLowerCase().replace(/[^a-z0-9]/g, '');
-export const allowedPath = path => typeof path === 'string' && (ALLOWED_ROOT.has(path) || BUNDLE_PATH.test(path) || PART_PATH.test(path) || COLLECTION_PATH.test(path) || isReviewSyncPath(path));
+export const allowedPath = path => typeof path === 'string' && (ALLOWED_ROOT.has(path) || BUNDLE_PATH.test(path) || PART_PATH.test(path) || COLLECTION_PATH.test(path) || isReviewSyncPath(path) || isDraftSyncPath(path));
 const RESEARCH_PATH = /^docs\/research\/live-coach\/[A-Za-z0-9_-]{1,128}\.md$/;
 const OBJECT_HASH = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/;
 
@@ -224,6 +225,9 @@ export function validateBundleFiles(filesMap) {
     // Match keys must not themselves carry a credential.
     scanText(path, path);
     const text = textContent(content, path);
+    if (isDraftSyncPath(path)) {
+      try { parseDraftBackup(path, text); } catch { reject(path, 'invalid-draft-backup'); }
+    }
     if (isReviewSyncPath(path)) {
       try { parseCloudReview(content, { path }); }
       catch { reject(path, 'invalid-cloud-review'); }
@@ -280,7 +284,7 @@ function validateFileEntry(path, mode, hash, approvedFiles) {
   const approved = approvedFiles.get(path);
   if (!allowedPath(path) && !approved) reject(path, 'unapproved-file-path');
   if (!MODES.has(mode)) reject(path, 'symlink-or-gitlink');
-  if (isReviewSyncPath(path) && mode !== '100644') reject(path, 'review-file-mode');
+  if ((isReviewSyncPath(path) || isDraftSyncPath(path)) && mode !== '100644') reject(path, 'review-file-mode');
   if (!OBJECT_HASH.test(hash ?? '')) reject(path, 'invalid-git-object');
   if (approved && (mode !== approved.mode || hash !== approved.blob)) reject(path, 'changed-approved-document');
   // A new path never inherits the permission of another path with the same bytes.
@@ -394,6 +398,7 @@ async function inspectObjects(git, hashes, kind, inspect, metrics) {
   }
 }
 
+export function validateOutgoingCommit(content) { return validateCommitMetadata(content); }
 function validateCommitMetadata(content, approvedExistingIdentity = false) {
   const path = '[commit metadata]', text = textContent(content, path);
   const boundary = text.indexOf('\n\n');
@@ -475,7 +480,7 @@ export async function validateStagedRepository(repoDir, { runGit, historyApprova
     if(++semanticEntries%512===0&&performance.now()-semanticYield>=5){await yieldLoop();semanticYield=performance.now();}
     // Identical bytes in JSON and README are validated under both file formats.
     const approved = approvedFiles.get(path);
-    const identity = `${approved ? `approved-document:${path}` : isReviewSyncPath(path) ? `review:${path}` : 'data'}:${hash}:${path.endsWith('.json') ? 'json' : 'text'}`;
+    const identity = `${approved ? `approved-document:${path}` : isReviewSyncPath(path) ? `review:${path}` : isDraftSyncPath(path) ? `draft:${path}` : 'data'}:${hash}:${path.endsWith('.json') ? 'json' : 'text'}`;
     if (inspected.has(identity)) continue;
     inspected.add(identity);
     if (!pending.has(hash)) pending.set(hash, []);

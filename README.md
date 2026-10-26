@@ -83,3 +83,10 @@ is included. Third-party notices and dependency locks are preserved.
 ## Replay 2.0 task and collection review
 
 The review branch adds server-owned task reconnection, completion notification attempts and an explicit collection update button. See [review evidence and limits](docs/REPLAY2_SYNC_REVIEW.md) and [Pro review prompt](docs/PRO_REVIEW_PROMPT.md). No real upload performance improvement is claimed. The included adapted Viewer sources remain hash-checked by the release scan; private inclusion does not claim upstream licensing or public redistribution rights.
+
+## New draft records by game account
+
+The local 17Lands bridge skips historical picks by default, captures new Quick Draft
+observations under the detected Arena account, and offers verified private Git
+backup. Replay includes an account selector; records with unknown ownership remain
+separate. See [operation, data contract and limits](docs/DRAFT_CAPTURE.md).

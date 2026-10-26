@@ -45,6 +45,7 @@ export function createLocalReplayHistory({ dataDir, logPath, logDir, cardDb,
     if (closed) return snapshot();
     try {
       const observed = await probe(options);
+      if (!immediate && now() < nextImportAt) return snapshot();
       if (applied && observed.input === applied.input && observed.archive === applied.archive) {
         pending = null;
         return snapshot();
@@ -67,6 +68,7 @@ export function createLocalReplayHistory({ dataDir, logPath, logDir, cardDb,
         cached: Boolean(imported.cached), archived: imported.archive?.archived ?? 0,
         preserved_conflicts: imported.archive?.conflicts ?? 0 };
     } catch {
+      nextImportAt = now() + minImportIntervalMs;
       // Paths and raw log/parser errors never enter the browser status API.
       status = { ...status, status: 'failed', error: '本地回放更新暂时失败；会自动重试。' };
     }

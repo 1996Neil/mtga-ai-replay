@@ -1,3 +1,5 @@
+import { isDraftSyncPath } from './draft-backup.mjs';
+import { validateSyncChanges } from './sync-changes.mjs';
 import {CoachSyncError} from './coach-sync-error.mjs';
 import {bundleFiles} from './coach-bundle-files.mjs';
 import { execFile } from 'node:child_process';
@@ -5,7 +7,8 @@ import { createGitBatch } from './git-batch.mjs';
 import { mkdir, readFile, writeFile, rename, open, rm, lstat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import { defaultDataDir } from './history.mjs';
+import { defaultDataDir, isReplayExcluded } from './history.mjs';
+import { isTutorialMatch } from './replay-policy.mjs';
 import { serializeCoachJson } from './coach-bundle.mjs';
 import { validateBundleFiles, validateStagedRepository, validateSyncHistoryApproval, isCollectionSyncPath, isCoachSyncPath, createSyncValidationSession } from './sync-security.mjs';
 
@@ -232,9 +235,11 @@ export async function getCoachHistoryKey(matchId, options = {}) {
 }
 
 export async function enqueueCoachBundle(bundle, options = {}) {
+  if (isTutorialMatch(bundle?.summary) || await isReplayExcluded(bundle?.summary?.match_id, options)) fail('SYNC_EXCLUDED', 'This replay is excluded from upload.');
   const dataDir = options.dataDir ?? defaultDataDir(), files = options.computePool ? await options.computePool.run('bundleFiles',{bundle}) : bundleFiles(bundle);
   return locked(dataDir, async () => {
     const state = await readState(dataDir), id = bundle.summary.match_id;
+    if (await isReplayExcluded(id, { dataDir })) fail('SYNC_EXCLUDED', 'This replay is excluded from upload.');
     const stableKey = state.synced[id]?.history_key ?? state.pending.find(item => item.match_id === id)?.history_key;
     if (stableKey && stableKey !== bundle.historyKey) fail('SYNC_BUNDLE', 'The match history key changed; regenerate with its existing stable history key.');
     if (state.synced[id]?.content_hash === bundle.contentHash && !state.pending.some(item => item.match_id === id)) return { queued: false, duplicate: true };
@@ -289,6 +294,10 @@ async function prepareCheckout(state, meta, run, repoDir, options = {}) {
     historyApproval: validateSyncHistoryApproval(state.history_approval, { repository: meta.nameWithOwner, branch }) };
   const validationSession = options.validationSession ?? createSyncValidationSession();
   const validate = async historyRevision => {
+    if (options.fastSync) {
+      options.onProgress?.({ phase: 'comparing' });
+      return validateSyncChanges(git, { branch, onValidation: options.onValidation });
+    }
     options.onProgress?.({ phase: 'security' });
     return validateStagedRepository(repoDir, { ...historyOptions, validationSession,
       ...(historyRevision ? { historyRevision } : {}), computePool:options.computePool,
@@ -302,11 +311,11 @@ async function prepareCheckout(state, meta, run, repoDir, options = {}) {
   if (String(await git(['branch', '--show-current'])).trim() !== branch) fail('SYNC_BRANCH', 'Sync checkout is on an unexpected branch.');
   // Check before fetching or merging: even a fast-forward must not overwrite
   // another writer's staged, ignored or otherwise uncommitted files.
-  if (!options.deferFullHistoryValidation) await validate();
+  if (!options.deferFullHistoryValidation && !options.fastSync) await validate();
   if (String(await git(['status', '--porcelain', '--untracked-files=all', '--ignored=matching'])).trim()) fail('SYNC_DIRTY', 'Sync checkout contains uncommitted files; no files were overwritten.');
   options.onProgress?.({ phase: 'remote' });
   await git(['fetch', '--prune', 'origin']);
-  if (!options.deferFullHistoryValidation) await validate();
+  if (!options.deferFullHistoryValidation && !options.fastSync) await validate();
   if (meta.defaultBranchRef?.name) {
     const localRefs = String(await git(['show-ref']));
     if (localRefs.includes(`refs/heads/${branch}`)) await git(['merge', '--ff-only', `origin/${branch}`]);
@@ -324,14 +333,16 @@ export async function assertOutgoingSyncOwnership(git, branch, namespace, hasRem
   const hasHead = String(await git(['for-each-ref', '--format=%(refname)', `refs/heads/${branch}`])).trim();
   if (!hasHead) return;
   const revisions = String(await git(['rev-list', hasRemoteBranch ? `origin/${branch}..HEAD` : 'HEAD'])).trim().split('\n').filter(Boolean);
-  const allowed = namespace === 'collection' ? isCollectionSyncPath : isCoachSyncPath;
+  const allowed = namespace === 'draft' ? isDraftSyncPath : namespace === 'collection' ? isCollectionSyncPath : namespace === 'coach' ? isCoachSyncPath : null;
+  if (!allowed) fail('SYNC_NAMESPACE', 'Unknown upload namespace.');
   for (const revision of revisions) {
     const paths = String(await git(['diff-tree', '--root', '-m', '--no-commit-id', '--name-only', '--no-renames', '-r', '-z', revision])).split('\0').filter(Boolean);
     if (paths.some(path => !allowed(path))) fail('SYNC_FOREIGN_COMMIT', 'Sync checkout contains an unpublished commit belonging to another namespace; finish that sync first.');
   }
 }
 export async function assertStagedSyncOwnership(git, namespace) {
-  const allowed = namespace === 'collection' ? isCollectionSyncPath : isCoachSyncPath;
+  const allowed = namespace === 'draft' ? isDraftSyncPath : namespace === 'collection' ? isCollectionSyncPath : namespace === 'coach' ? isCoachSyncPath : null;
+  if (!allowed) fail('SYNC_NAMESPACE', 'Unknown upload namespace.');
   const paths = String(await git(['diff', '--cached', '--name-only', '-z', '--no-ext-diff', '--no-renames'])).split('\0').filter(Boolean);
   if (paths.some(path => !allowed(path))) fail('SYNC_FOREIGN_STAGE', 'Another namespace has staged changes; no commit was created.');
 }
@@ -352,6 +363,8 @@ async function queuedFiles(item, dataDir, computePool) {
     files.set(name, await readFile(file, 'utf8'));
   }
   const values = Object.fromEntries([...files].map(([name, text]) => [name.slice(0, -5), JSON.parse(text)]));
+  if (isTutorialMatch(values.summary) || isTutorialMatch(values.coach?.match) ||
+      await isReplayExcluded(item.match_id, { dataDir })) fail('SYNC_EXCLUDED', 'This replay is excluded from upload.');
   // Publish exactly the bytes whose parsed structure was scanned. Canonical equality
   // also rejects duplicate JSON keys that JSON.parse would silently discard.
   for (const name of NAMES) {
