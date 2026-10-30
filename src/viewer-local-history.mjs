@@ -1,9 +1,9 @@
 import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { discoverLogs } from './discovery.mjs';
-import { discoverCardDatabase } from './cards.mjs';
-import { importReplayLogs } from './replay-workflow.mjs';
-import { syncDigest } from './sync-cache.mjs';
+import { replayWorker } from './replay-worker.mjs';
+import { createHash } from 'node:crypto';
+const syncDigest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
 async function identity(path, emptyWal = false) {
   try {
@@ -20,19 +20,17 @@ async function identity(path, emptyWal = false) {
  * content/rules/archive fingerprints before reusing parsed data. */
 export async function localReplaySignature({ dataDir, logPath, logDir, cardDb } = {}) {
   const paths = await discoverLogs({ logPath, logDir });
-  const database = await discoverCardDatabase({ cardDb });
-  const files = [...paths, ...(database ? [database, database + '-wal'] : [])].sort();
+  // Poll only log/settings metadata. Discovering the card DB performs SQL joins.
+  const files = [...paths, ...(cardDb ? [cardDb, cardDb + '-wal'] : []), join(dataDir, 'replay-settings.json')].sort();
   const input = syncDigest(await Promise.all(files.map(async path => [path, await identity(path, path.endsWith('-wal'))])));
-  const archive = syncDigest(await Promise.all(['replays.sqlite3', 'replays.sqlite3-wal'].map(async name =>
-    [name, await identity(join(dataDir, name), name.endsWith('-wal'))])));
-  return { input, archive };
+  return { input, archive: 'independent-of-archive' };
 }
 
 /** Local import has no publisher, authentication or model/TTS entry point.
  * Coalesce changes while a log is being written; one import at a time. */
 export function createLocalReplayHistory({ dataDir, logPath, logDir, cardDb,
   pollIntervalMs = 2000, settleMs = 2000, maxWaitMs = 30000, minImportIntervalMs = 30000,
-  probe = localReplaySignature, workflow = importReplayLogs, now = Date.now } = {}) {
+  probe = localReplaySignature, workflow = options => replayWorker('ingest', options), now = Date.now } = {}) {
   if (!Number.isSafeInteger(pollIntervalMs) || pollIntervalMs < 10 ||
       !Number.isSafeInteger(settleMs) || settleMs < 0 ||
       !Number.isSafeInteger(maxWaitMs) || maxWaitMs < settleMs ||

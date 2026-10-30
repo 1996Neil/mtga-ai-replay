@@ -32,8 +32,21 @@ export function CardImage({ grpId, card, className = '', style, isTapped = false
   const info = useCardImage(visibleId);
   const [viewport, size] = useElementSize<HTMLDivElement>();
   const [loaded, setLoaded] = useState(false);
+  const [slow, setSlow] = useState(false);
+  const [online, setOnline] = useState(() => typeof navigator === 'undefined' || navigator.onLine);
   const togglePinned = useHoverStore(s => s.togglePinned), selected = useHoverStore(s => s.card), pinned = useHoverStore(s => s.pinned);
   useEffect(() => { setLoaded(false); }, [visibleId, info.imageAttempt]);
+  useEffect(() => {
+    setSlow(false);
+    if (!visibleId || loaded) return;
+    const timer = setTimeout(() => setSlow(true), 3000);
+    return () => clearTimeout(timer);
+  }, [visibleId, info.imageAttempt, loaded]);
+  useEffect(() => {
+    const changed = () => setOnline(navigator.onLine);
+    window.addEventListener('online', changed); window.addEventListener('offline', changed);
+    return () => { window.removeEventListener('online', changed); window.removeEventListener('offline', changed); };
+  }, []);
   const englishName = hidden ? undefined : card?.name ?? info.name;
   const name = hidden ? '未知牌' : info.displayNameZh ?? englishName ?? fallbackLabel ?? '未知牌';
   const manaCost = hidden ? undefined : card?.manaCost ?? info.manaCost;
@@ -67,12 +80,27 @@ export function CardImage({ grpId, card, className = '', style, isTapped = false
   </>;
   const classes = `card-image ${isTapped ? 'is-tapped' : ''} ${isAttacking ? 'attacking' : ''} ${isSelected ? 'inspected' : ''} ${className}`;
   const title = [name, englishName && englishName !== name ? englishName : '', isTapped ? '已横置' : '', pt].filter(Boolean).join(' · ');
-  return showTooltip ? <button type="button" className={classes} style={style} data-card-instance={card?.instanceId} data-card-logical={card?.logicalId} title={title} aria-label={title} aria-haspopup="dialog" aria-expanded={isSelected}
+  const recovery = visibleId > 0 && !loaded && (slow || info.imagePhase === 'waiting' || info.imagePhase === 'failed');
+  const issueText = !online ? '设备报告离线' : ({
+    timeout: '图片请求超时', connection: '连接图片服务失败', rate_limited: '图片服务限流',
+    not_found: '未找到对应卡图', identity_mismatch: '版本暂未匹配',
+    invalid_image: '图片响应无法显示', http: '图片服务暂时异常',
+  } as Record<string, string>)[info.imageIssue?.kind ?? ''] ?? (info.imagePhase === 'failed' ? '图片尚未加载' : '加载较慢');
+  return <div className={classes} style={style} data-card-id={visibleId || undefined} data-card-instance={card?.instanceId} data-card-logical={card?.logicalId} title={title}
     onMouseEnter={event => useCombatFocusStore.getState().set(card && event.currentTarget.closest('.full-battlefield:not(.full-land-field)') ? card.instanceId : null)}
     onMouseLeave={() => useCombatFocusStore.getState().clear(card?.instanceId)}
-    onFocus={event => { if (event.currentTarget.matches(':focus-visible')) useCombatFocusStore.getState().set(card && event.currentTarget.closest('.full-battlefield:not(.full-land-field)') ? card.instanceId : null); }}
-    onBlur={() => useCombatFocusStore.getState().clear(card?.instanceId)} onClick={() => togglePinned(previewCard)}>{content}</button>
-    : <div className={classes} style={style}>{content}{!hidden && (info.imagePhase === 'waiting' || info.imagePhase === 'failed') && <button type="button" className="card-image-retry" disabled={info.imagePhase === 'waiting'} onClick={event => { event.stopPropagation(); info.retryImage(); }} aria-label={`重新加载 ${name} 的图片`}>{info.imagePhase === 'waiting' ? '图片暂不可用，稍后重试' : '重新加载图片'}</button>}</div>;
+    onBlur={() => useCombatFocusStore.getState().clear(card?.instanceId)}>
+    {content}
+    {showTooltip && <button type="button" className="card-image-open" aria-label={title} aria-haspopup="dialog" aria-expanded={isSelected}
+      onFocus={event => { if (event.currentTarget.matches(':focus-visible')) useCombatFocusStore.getState().set(card && event.currentTarget.closest('.full-battlefield:not(.full-land-field)') ? card.instanceId : null); }}
+      onClick={() => togglePinned(previewCard)} />}
+    {recovery && <div className="card-image-recovery">
+      <span className="card-image-issue" role="status" aria-live="polite">{issueText}</span>
+      <button type="button" className="card-image-retry" onClick={event => { event.stopPropagation(); info.retryImage(); }}
+        title={info.imageIssue?.retry_locked ? '重新检查状态；服务端限流期间会保留等待时间。' : '立即重试这张卡图，无需刷新页面。'}
+        aria-label={`重新加载 ${name} 的图片`}>重新加载</button>
+    </div>}
+  </div>;
 }
 
 /** One face-only modal. Background clicks and Escape close only this preview. */

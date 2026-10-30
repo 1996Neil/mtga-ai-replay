@@ -8,14 +8,10 @@ export function LocalTaskButton<Result>({ path, action, capability, label, descr
     label: (job: TaskJob<Result>) => string; describe: (job: TaskJob<Result>) => string; retryUpload?: boolean; hint: string; extra?: (job: TaskJob<Result>) => ReactNode }) {
   const [available, setAvailable] = useState(false), [job, setJob] = useState<TaskJob<Result>>({ id: null, status: 'idle' });
   const [details, setDetails] = useState(false), [lost, setLost] = useState(false), [starting, setStarting] = useState(true), [requestError, setRequestError] = useState('');
-  const observedKey = useRef('');
   const busy = useRef(false), controller = useRef<AbortController | null>(null);
   const client = useMemo(() => createTaskClient<Result>(path, action), [path, action]);
   function observe(value: TaskJob<Result>) {
     setJob(value); setStarting(false);
-    const key = `${value.id}:${value.status}`;
-    if (value.status !== 'idle' && observedKey.current !== key) setDetails(true);
-    observedKey.current = key;
   }
   useEffect(() => {
     const abort = new AbortController(); controller.current = abort;
@@ -54,13 +50,14 @@ export function LocalTaskButton<Result>({ path, action, capability, label, descr
     try{await client.reconcile(observe,abort.signal,setLost);}catch{setRequestError('任务尚不能确认，请人工核对。');}finally{busy.current=false;setStarting(false);}
   }
   const running = job.status === 'running', success = job.status === 'succeeded';
+  const buttonLabel = label(running || details || job.status === 'needs_recovery' ? job : { id: null, status: 'idle' });
   return <div className="replay-sync">
-    <button type="button" className="sync-button" disabled={starting || !available || lost} aria-busy={running || starting} aria-label={label(job)} data-status={job.status}
-      title={available ? hint : '当前服务不支持此功能，请更新或重启 Replay 2.0。'} onClick={() => { if (job.status !== 'idle') setDetails(true); else void start(); }}>
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">{success ? <path d="m5 12 4 4 10-10" /> : <><path d="M20 7v5h-5M4 17v-5h5" /><path d="M6 6a8 8 0 0 1 14 6M18 18a8 8 0 0 1-14-6" /></>}</svg>
-      <span role="status" aria-live="polite">{label(job)}</span>
+    <button type="button" className="sync-button" disabled={starting || !available || lost} aria-busy={running || starting} aria-label={buttonLabel} aria-expanded={details} data-status={job.status}
+      title={available ? hint : '当前服务不支持此功能，请更新或重启 Replay 2.0。'} onClick={() => { if (running || job.status === 'needs_recovery') setDetails(true); else void start(); }}>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">{success && details ? <path d="m5 12 4 4 10-10" /> : <><path d="M20 7v5h-5M4 17v-5h5" /><path d="M6 6a8 8 0 0 1 14 6M18 18a8 8 0 0 1-14-6" /></>}</svg>
+      <span role="status" aria-live="polite">{buttonLabel}</span>
     </button>
-    {(details || lost || requestError) && <div className="sync-details" role={job.status === 'failed' || job.status === 'partial' ? 'alert' : 'status'}>
+    {details && <div className="sync-details" role={job.status === 'failed' || job.status === 'partial' ? 'alert' : 'status'}>
       <button type="button" aria-label={`关闭${capability === 'replay-sync' ? '同步' : '收藏'}提示`} onClick={() => { setDetails(false); setRequestError(''); }}>×</button>
       {lost ? <p>页面连接中断，后台任务状态暂时未知。正在重新连接；关闭页面不会取消后台任务。</p> : <p>{running ? `${label(job)} 已用 ${Math.floor((job.elapsed_ms ?? 0) / 1000)} 秒。可以关闭页面，重开后查看结果。` : describe(job)}</p>}
       {requestError && <p>{requestError}</p>}
@@ -69,7 +66,7 @@ export function LocalTaskButton<Result>({ path, action, capability, label, descr
       {job.status==='needs_recovery'&&capability==='replay-sync'&&<button type="button" className="standard-button" disabled={starting||lost} onClick={()=>void reconcile()}>核对已发布回放</button>}
       {extra?.(job)}
       {job.notification?.attempted && <p className="task-note">{job.notification.accepted ? '已提交系统通知；是否显示由 macOS 通知设置决定。' : '系统通知未能提交；此处保留完成结果。'}</p>}
-      {!running && job.status !== 'idle' && job.status !== 'needs_recovery' && <button type="button" className="standard-button task-retry" disabled={starting || lost} onClick={() => void start(retryUpload && job.status === 'partial')}>{retryUpload && job.status === 'partial' ? '重试上传收藏' : capability === 'replay-sync' ? '再次上传回放' : '再次更新收藏'}</button>}
+      {!running && job.status !== 'idle' && job.status !== 'needs_recovery' && <button type="button" className="standard-button task-retry" disabled={starting || lost} onClick={() => void start(retryUpload && job.status === 'partial')}>{retryUpload && job.status === 'partial' ? '重试上传收藏' : capability === 'replay-sync' ? '再次同步回放' : '再次更新收藏'}</button>}
     </div>}
   </div>;
 }

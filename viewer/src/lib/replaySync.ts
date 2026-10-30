@@ -1,6 +1,7 @@
 import { createTaskClient } from './taskClient.ts';
 import type { TaskJob } from './taskClient.ts';
 export interface SyncResult {
+  downloaded?: number;
   status: 'succeeded' | 'partial' | 'failed'; new_matches: number; local_matches: number;
   already_published: number; missing: number | null; published: number; failed: number; skipped: number;
   github_matches: number | null; updated?: number; error: string | null;
@@ -12,6 +13,8 @@ export type SyncJob = TaskJob<SyncResult>;
 export function syncButtonLabel(job: SyncJob) {
   if(job.status==='needs_recovery')return '回放任务需要核对';
   if (job.status === 'running') {
+    if (job.progress?.phase === 'comparing') return '正在比较变化…';
+    if (job.progress?.phase === 'downloading') return '正在同步线上回放…';
     if (job.progress?.phase === 'publishing') return '正在准备发布…';
     if (job.progress?.phase === 'uploading') return '正在上传…';
     if (job.progress?.phase === 'remote') return '正在核对远端…';
@@ -22,7 +25,7 @@ export function syncButtonLabel(job: SyncJob) {
   }
   if (job.status === 'partial') return '部分同步失败';
   if (job.status === 'failed') return '同步失败';
-  if (job.status === 'succeeded') return job.result?.published ? `已同步 ${job.result.published} 场` : job.result?.updated ? `已更新 ${job.result.updated} 场` : '已是最新';
+  if (job.status === 'succeeded') return job.result?.published ? `已同步 ${job.result.published} 场` : job.result?.downloaded ? `已下载 ${job.result.downloaded} 场` : job.result?.updated ? `已更新 ${job.result.updated} 场` : '已是最新';
   return '同步回放';
 }
 

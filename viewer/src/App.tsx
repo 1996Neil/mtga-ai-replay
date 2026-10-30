@@ -9,6 +9,7 @@ import { GameBoard } from './components/GameBoard';
 import { GameLog } from './components/GameLog';
 import { ReplayControls } from './components/ReplayControls';
 import { ReplaySyncButton } from './components/ReplaySyncButton';
+import { ReplaySettings } from './components/ReplaySettings';
 import { CollectionUpdateButton } from './components/CollectionUpdateButton';
 import { integrityMessages } from './lib/integrity';
 import { ReplayReviewCoach } from './components/ReplayReviewCoach';
@@ -224,7 +225,7 @@ export function App() {
       </div></details>
       {match && <span className="match-caption">{when(match.startedAt)} · {formatEventName(match.eventName)}</span>}
       {s.matches.length>1 && <select aria-label="选择单局" value={s.currentMatchIndex} onChange={e=>s.selectMatch(Number(e.target.value))}>{s.matches.map((g,i)=><option key={g.gameNumber} value={i}>第 {g.gameNumber} 局</option>)}</select>}
-      <ReplaySyncButton /><CollectionUpdateButton />
+      <ReplaySyncButton /><CollectionUpdateButton />{!publishedSource && <ReplaySettings />}
       {match && step && !error && !loading && <ReplayReviewCoach match={match} currentStepIndex={s.currentStepIndex} viewBefore={actualBefore}
         onJump={(anchor, boundary) => { jump(anchor); s.setViewBefore(boundary === 'before'); }} />}
       <div className="mode-switch" aria-label="查看模式"><button type="button" aria-pressed={!analysis} onClick={()=>{setAnalysis(false);s.setViewBefore(false);}}>回放</button><button type="button" aria-pressed={analysis} onClick={()=>{s.pause();setAnalysis(true);}}>分析</button></div>

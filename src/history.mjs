@@ -4,6 +4,7 @@ import { mkdir, stat, chmod } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { isTutorialMatch } from './replay-policy.mjs';
+import { readReplaySettings, replayInRetention } from './replay-settings.mjs';
 
 export const defaultDataDir = (home = homedir()) => join(home, '.local', 'share', 'mtga-gpt-replay');
 const dbPath = (dataDir) => join(dataDir, 'replays.sqlite3');
@@ -139,33 +140,45 @@ function canReplace(candidate, existing) {
 }
 
 /** Persist safe replay snapshots by stable match ID, independent of any analytics tables. */
-export async function archiveReplays(replays, { dataDir = defaultDataDir() } = {}) {
+export async function archiveReplays(replays, { dataDir = defaultDataDir(), replaceRevision } = {}) {
+  const policyDir = dataDir.endsWith('/replay-outbox') ? join(dataDir, '..') : dataDir;
+  const settings = await readReplaySettings(policyDir);
   const database = await openDatabase(dataDir, true);
   let archived = 0;
   let preserved = 0, conflicts = 0;
+  const revisions = {};
   try {
     const upsert = database.prepare(`INSERT INTO replays VALUES (?, ?, ?, ?, ?, ?)
       ON CONFLICT(match_id) DO UPDATE SET started_at=excluded.started_at,
       summary_json=excluded.summary_json, replay_json=excluded.replay_json, updated_at=excluded.updated_at`);
     const cardUpsert = database.prepare(`INSERT INTO cards VALUES (?, ?, ?)
       ON CONFLICT(arena_id) DO UPDATE SET name=excluded.name, metadata_json=excluded.metadata_json`);
-    const previousReplay = database.prepare('SELECT replay_json FROM replays WHERE match_id = ?');
+    const previousReplay = database.prepare('SELECT replay_json, summary_json FROM replays WHERE match_id = ?');
     const excluded = database.prepare('SELECT 1 FROM excluded_replays WHERE match_id = ?');
     database.exec('BEGIN IMMEDIATE');
     for (const input of replays) {
       if (!input?.match?.id || typeof input.match.id !== 'string' || !input.match.started_at) throw new Error('Replay needs a stable match.id and started_at.');
-      if (isTutorialMatch(input.match) || excluded.get(input.match.id)) { preserved++; continue; }
+      if (isTutorialMatch(input.match) || excluded.get(input.match.id) || !replayInRetention(input.match, settings)) { preserved++; continue; }
       const replay = safeArchive(input), now = new Date().toISOString();
       const replayJson = JSON.stringify(replay);
       const previous = previousReplay.get(replay.match.id);
-      if (previous?.replay_json === replayJson) { preserved++; continue; }
-      if (previous && !canReplace(replay, JSON.parse(previous.replay_json))) { preserved++; conflicts++; continue; }
-      upsert.run(replay.match.id, replay.match.started_at, JSON.stringify({ ...summary(replay), replay_revision: createHash('sha256').update(replayJson).digest('hex') }), replayJson, now, now);
+      if (previous?.replay_json === replayJson) {
+        revisions[replay.match.id] = historyEntry({ ...previous,
+          notes_json: database.prepare('SELECT notes_json FROM coach_notes WHERE match_id=?').get(replay.match.id)?.notes_json }).replay_revision;
+        preserved++; continue;
+      }
+      const replaceRemoteCopy = replaceRevision && previous &&
+        historyEntry({ ...previous, notes_json: database.prepare('SELECT notes_json FROM coach_notes WHERE match_id=?').get(replay.match.id)?.notes_json }).replay_revision === replaceRevision;
+      if (previous && !replaceRemoteCopy && !canReplace(replay, JSON.parse(previous.replay_json))) { preserved++; conflicts++; continue; }
+      const summaryJson = JSON.stringify({ ...summary(replay), replay_revision: createHash('sha256').update(replayJson).digest('hex') });
+      upsert.run(replay.match.id, replay.match.started_at, summaryJson, replayJson, now, now);
+      revisions[replay.match.id] = historyEntry({ summary_json: summaryJson,
+        notes_json: database.prepare('SELECT notes_json FROM coach_notes WHERE match_id=?').get(replay.match.id)?.notes_json }).replay_revision;
       for (const [id, card] of collectCards(replay)) cardUpsert.run(id, card.name, JSON.stringify(card));
       archived++;
     }
     database.exec('COMMIT');
-    return { archived, preserved, conflicts, total: database.prepare('SELECT COUNT(*) AS total FROM replays').get().total, dbPath: dbPath(dataDir) };
+    return { archived, preserved, conflicts, revisions, total: database.prepare('SELECT COUNT(*) AS total FROM replays').get().total, dbPath: dbPath(dataDir) };
   } catch (error) {
     try { database.exec('ROLLBACK'); } catch { /* No transaction was started. */ }
     throw error;

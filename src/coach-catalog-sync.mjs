@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { createSyncValidationSession } from './sync-security.mjs';
 import { coachInputFingerprint, readSyncCache, writeSyncCache, syncDigest } from './sync-cache.mjs';
 import { CoachSyncError, getCoachHistoryKey, getPublishedCoachIndex, enqueueCoachBundle, syncCoachBundles, syncErrorMessage } from './coach-sync.mjs';
+import { readReplaySettings, replayInRetention } from './replay-settings.mjs';
 
 function generationReason(error) {
   if (error instanceof CoachSyncError || error?.code === 'MTGA_SYNC_SECURITY') return syncErrorMessage(error);
@@ -79,11 +80,12 @@ async function runCatalog(options) {
   const staged = options.archiveDataDir ? (await listReplays({ dataDir: options.archiveDataDir, limit: null }))
     .filter(match => !options.stagedReplays || options.stagedReplays.has(match.id)) : [];
   const stagedIds = new Set(staged.map(match => match.id));
-  const local = [...archived.filter(match => !stagedIds.has(match.id)), ...staged];
+  const policy = await readReplaySettings(settings.dataDir);
+  const local = [...archived.filter(match => !stagedIds.has(match.id)), ...staged].filter(match => replayInRetention(match, policy));
   const report = { local: local.length, already_published: 0, github_before: 0, missing: 0,
     published: 0, updated: 0, failed: [], skipped: [], successes: [], github_total: null, latest: null, committed: 0 };
   let snapshot;
-  try { snapshot = await getPublishedCoachIndex(settings); }
+  try { snapshot = options.publishedSnapshot ?? await getPublishedCoachIndex(settings); }
   catch (error) {
     if (!['GITHUB_UNAVAILABLE', 'GIT_FAILED'].includes(error.code)) throw error;
     // Offline runs still generate durable pending bundles as before. Do not use
@@ -134,6 +136,7 @@ async function runCatalog(options) {
       report.confirmed = attempted.filter(item => final.get(item.match_id)?.content_hash === item.content_hash &&
         final.get(item.match_id)?.history_key === item.history_key).map(item => ({ ...item }));
       report.github_total = final.size;
+      report.snapshot = { ...snapshot, index: finalIndex, commit: result.index ? result.last_synced?.commit : snapshot.commit };
       report.latest = [...final.values()].sort((a, b) => String(b.started_at).localeCompare(String(a.started_at)) || a.match_id.localeCompare(b.match_id))[0] ?? null;
       for (const match of attempted) {
         if (!final.has(match.match_id)) continue;
