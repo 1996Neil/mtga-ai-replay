@@ -45,9 +45,10 @@ export function createCardIdentityResolver({ discover = discoverCardDatabase } =
 
 const separateFaces = new Set(['transform', 'modal_dfc', 'double_faced_token', 'reversible_card']);
 const sharedFaces = new Set(['prepare', 'adventure', 'split', 'aftermath', 'flip']);
-export function selectPrintedFace(card, identity) {
+export function selectPrintedFace(card, identity, { allowMissingArenaId = false } = {}) {
   if (!identity) return null;
-  if (card.lang !== 'en' || card.arena_id !== identity.primaryId || card.set?.toLowerCase() !== identity.set
+  const arenaMatches = card.arena_id === identity.primaryId || allowMissingArenaId && card.arena_id == null;
+  if (card.lang !== 'en' || !arenaMatches || card.set?.toLowerCase() !== identity.set
     || card.collector_number !== identity.collector || !card.id || !card.name) return null;
   const face = identity.faceIndex ? card.card_faces?.[identity.faceIndex] : card.card_faces?.[0] ?? card;
   if (!face || (identity.faceIndex && !separateFaces.has(card.layout) && !sharedFaces.has(card.layout))) return null;

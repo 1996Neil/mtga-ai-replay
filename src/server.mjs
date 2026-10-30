@@ -9,7 +9,7 @@ import { resolve, join, extname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defaultDataDir, listReplays, listReplayDecks, getReplay, getArchivedCard } from './history.mjs';
 import { createCardIdentityResolver } from './card-image-identity.mjs';
-import { getCardMetadata, getCardImage, cardImageIsCached, cardImageRetryAfter } from './card-cache.mjs';
+import { getCardMetadata, getCardImage, cardImageIsCached, cardImageRetryAfter, cardImageFailure } from './card-cache.mjs';
 import { createCoachContext } from './coach-context.mjs';
 import { loadInstalledChineseDisplayNames } from './display-names.mjs';
 import { createViewerSync } from './viewer-sync.mjs';
@@ -18,8 +18,10 @@ import { notifyViewerTask } from './task-notification.mjs';
 import { createLocalReplayHistory } from './viewer-local-history.mjs';
 import { createCloudReviewReader } from './review/review-sync.mjs';
 import { findReviewGame } from './review/review-model.mjs';
-import { importReplayLogs } from './replay-workflow.mjs';
-import { syncGitFirstReplays } from './git-first-replay.mjs';
+import { syncReplays } from './replay-sync.mjs';
+import { replayWorker } from './replay-worker.mjs';
+import { readReplaySettings, saveReplaySettings, validateReplaySettings, withReplayOperation } from './replay-settings.mjs';
+import { retentionPreview } from './replay-retention.mjs';
 
 const defaultViewer = fileURLToPath(new URL('../viewer/dist/', import.meta.url));
 const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
@@ -31,13 +33,25 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
   const chineseNames = displayNamesZh ?? await loadInstalledChineseDisplayNames();
   let assignedPort, closePromise, closing = false;
   const journal = enableReplaySync || enableCollection ? createTaskJournal(dataDir) : null;
-  const sync = createViewerSync({ dataDir, workflow: syncWorkflow ?? (autoSyncReplays ? syncGitFirstReplays : undefined), notify: notifyTask, journal });
+  const sync = createViewerSync({ dataDir, workflow: syncWorkflow ?? syncReplays, notify: notifyTask, journal });
   const collection = createViewerCollection({ dataDir, update: collectionUpdate, sync: collectionSync, notify: notifyTask, journal });
+  let queuedAutoSync = null;
+  function requestAutoSync() {
+    if (queuedAutoSync || closing) return;
+    queuedAutoSync = (async () => {
+      // A match arriving during another sync must schedule one follow-up,
+      // rather than losing its only wake-up when the log stops changing.
+      while (sync.snapshot().status === 'running' || collection.snapshot().status === 'running')
+        await Promise.all([sync.wait(), collection.wait()]);
+      if (!closing && sync.snapshot().status !== 'needs_recovery' && collection.snapshot().status !== 'needs_recovery') sync.start();
+    })().finally(() => { queuedAutoSync = null; });
+    void queuedAutoSync.catch(() => {});
+  }
   const localHistory = includeLocalHistory && observeLocalLogs ? createLocalReplayHistory({ ...localHistoryOptions, dataDir,
     workflow: async options => {
-      const imported = autoSyncReplays && enableReplaySync
-        ? await (localHistoryOptions.workflow ?? syncGitFirstReplays)(options)
-        : await (localHistoryOptions.workflow ?? importReplayLogs)(options);
+      const imported = await withReplayOperation(dataDir, () =>
+        (localHistoryOptions.workflow ?? (options => replayWorker('ingest', options)))(options), { exclusive: false });
+      if (autoSyncReplays && enableReplaySync && imported.archive?.archived) requestAutoSync();
       if (imported.status === 'failed') throw Error('Replay publication pending');
       return imported;
     } }) : null;
@@ -99,6 +113,28 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
     try {
       const url = new URL(request.url, `http://127.0.0.1:${assignedPort}`);
       const path = decodeURIComponent(url.pathname);
+      if (path === '/api/replay-settings') {
+        if (!enableReplaySync) return send(response, 403, { error: 'Settings disabled for this viewer.' });
+        if (request.method === 'GET') {
+          const days = url.searchParams.get('days');
+          const settings = days === null ? await readReplaySettings(dataDir) :
+            validateReplaySettings({ retention_days: days === 'all' ? null : Number(days) });
+          return send(response, 200, await retentionPreview({ dataDir, settings }));
+        }
+        if (request.method !== 'POST') return send(response, 405, { error: 'Unsupported settings action.' });
+        if (request.headers.origin !== `http://${request.headers.host}` ||
+            request.headers['x-mtga-replay-action'] !== 'replay-settings') return send(response, 403, { error: 'Same-origin settings action required.' });
+        let body = '';
+        for await (const chunk of request) { body += chunk; if (Buffer.byteLength(body) > 1024) return send(response, 413, { error: 'Settings request too large.' }); }
+        let settings;
+        try { settings = validateReplaySettings(JSON.parse(body)); }
+        catch { return send(response, 400, { error: '保留天数须为 1–36500 的整数，或选择不限制。' }); }
+        const result = await withReplayOperation(dataDir, async () => {
+          await saveReplaySettings(settings, dataDir);
+          return replayWorker('retention', { dataDir });
+        });
+        return send(response, 200, result);
+      }
       const account = sourceIdentity?.kind === 'published-history' ? null : url.searchParams.get('account');
       if (account !== null && account !== 'unassigned' && !validAccountKey(account)) return send(response, 400, { error: 'Invalid account scope.' });
       if (path.includes('\0') || path.includes('\\') || path.split('/').includes('..')) return send(response, 400, { error: 'Invalid path.' });
@@ -211,20 +247,22 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
           const imageCached = await cardImageIsCached(id, { dataDir });
           if (cardRoute[2]) {
             const image = imageCached ? await getCardImage(id, { dataDir, fetchFn: async () => { throw Error('Historical network disabled'); } }) : null;
-            return image ? send(response, 200, image.data, image.contentType) : send(response, 404, { error: 'Historical card image unavailable.' });
+            return image ? send(response, 200, image.data, image.contentType, { 'Cache-Control': 'private, max-age=86400' }) : send(response, 404, { error: 'Historical card image unavailable.' });
           }
           return send(response, 200, { ...metadata, display_name_zh: chineseNames.get(id) ?? null,
             metadata_source: 'published-history', source_revision: sourceIdentity.revision,
             image_url: imageCached ? `/api/cards/${id}/image` : null, image_available: imageCached, image_cached: imageCached });
         }
-        const options = { dataDir, fetchFn, identityResolver, refreshImage: url.searchParams.get('retry') === '1', local: await localCard(id) };
+        const options = { dataDir, fetchFn, identityResolver, refreshImage: url.searchParams.get('retry') === '1',
+          refreshMetadata: url.searchParams.get('retry') === '1', local: await localCard(id) };
         if (cardRoute[2]) {
           const image = await getCardImage(id, options);
-          return image ? send(response, 200, image.data, image.contentType) : send(response, 503, { error: 'Image temporarily unavailable. Use card text.', retry_after: cardImageRetryAfter(id, options) }, 'application/json; charset=utf-8', { 'Retry-After': String(Math.max(1, Math.ceil((cardImageRetryAfter(id, options) - Date.now()) / 1000))) });
+          return image ? send(response, 200, image.data, image.contentType, { 'Cache-Control': options.refreshImage ? 'no-store' : 'private, max-age=86400' }) : send(response, 503, { error: 'Image temporarily unavailable. Use card text.', retry_after: cardImageRetryAfter(id, options) }, 'application/json; charset=utf-8', { 'Retry-After': String(Math.max(1, Math.ceil((cardImageRetryAfter(id, options) - Date.now()) / 1000))) });
         }
         const metadata = await getCardMetadata(id, options);
         return send(response, 200, { ...metadata, display_name_zh: chineseNames.get(id) ?? null,
           image_url: metadata.image_source ? `/api/cards/${id}/image` : null,
+          image_error: cardImageFailure(id, options),
           image_retry_after: cardImageRetryAfter(id, options), image_available: Boolean(metadata.image_source), image_cached: await cardImageIsCached(id, { dataDir }) });
       }
       if (path.startsWith('/api/')) return send(response, 404, { error: 'Unknown API route.' });
@@ -246,6 +284,20 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
   assignedPort = server.address().port;
   const url = `http://127.0.0.1:${assignedPort}/`;
+  let maintenanceActive = null;
+  async function maintainRetention() {
+    if (maintenanceActive || !enableReplaySync || closing) return;
+    const settings = await readReplaySettings(dataDir);
+    if (settings.retention_days === null) return;
+    let last = 0;
+    try { last = JSON.parse(await readFile(join(dataDir, 'replay-retention-receipt.json'), 'utf8')).checked_at ?? 0; } catch { /* first cleanup */ }
+    if (Date.now() - last < 86400000) return;
+    maintenanceActive = withReplayOperation(dataDir, () => replayWorker('retention', { dataDir }));
+    try { await maintenanceActive; } finally { maintenanceActive = null; }
+  }
+  const maintenanceTimer = enableReplaySync ? setInterval(() => { void maintainRetention().catch(() => {}); }, 3600000) : null;
+  maintenanceTimer?.unref();
+  void maintainRetention().catch(() => {});
   if (writeInfo) {
     await mkdir(dataDir, { recursive: true, mode: 0o700 });
     await writeFile(join(dataDir, 'server.json'), JSON.stringify({ pid: process.pid, url, port: assignedPort, viewerDir: root }), { mode: 0o600 });
@@ -254,9 +306,12 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
   const close = () => {
     if (closePromise) return closePromise;
     closing = true;
+    clearInterval(maintenanceTimer);
     closePromise = (async () => {
       await reviews.close();
       await localHistory?.close();
+      await queuedAutoSync;
+      await maintenanceActive;
       // Finish a publication before shutting down; don't strand a Git write.
       await closeExtension?.();
       await Promise.all([sync.wait(), collection.wait()]);

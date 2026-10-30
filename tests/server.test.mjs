@@ -77,6 +77,25 @@ test('rapid sync requests share one job, expose progress and structured partial 
   await finishedJob(url); assert.equal(calls, 2);
 });
 
+test('a replay arriving during sync schedules one automatic follow-up without another log change', async t => {
+  let releaseImport, releaseSync, calls = 0;
+  const importGate = new Promise(resolve => { releaseImport = resolve; });
+  const syncGate = new Promise(resolve => { releaseSync = resolve; });
+  const running = await setup(t, { observeLocalLogs: true, autoSyncReplays: true,
+    localHistoryOptions: { probe: async () => ({ input: 'unchanged', archive: 'unchanged' }),
+      workflow: async () => { await importGate; return { archive: { archived: 1 } }; } },
+    syncWorkflow: async () => { calls++; if (calls === 1) await syncGate; return { status: 'succeeded' }; } });
+  await syncPost(running.url);
+  assert.equal(calls, 1);
+  releaseImport();
+  for (let i = 0; i < 50 && running.localHistory.snapshot().status !== 'succeeded'; i++)
+    await new Promise(resolve => setTimeout(resolve, 5));
+  releaseSync();
+  for (let i = 0; i < 100 && calls < 2; i++) await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(calls, 2);
+  await finishedJob(running.url);
+});
+
 test('unexpected sync exceptions never expose raw credentials or local paths', async t => {
   const { url } = await setup(t, { syncWorkflow: async () => { throw new Error('ghp_SyntheticSecret /Users/synthetic/private.log'); } });
   await syncPost(url); const job = await finishedJob(url);
@@ -145,6 +164,7 @@ test('offline card image failure returns card text and never blocks replay endpo
   assert.equal(metadata.image_url, null);
   const failed = await fetch(running.url + 'api/cards/100/image');
   assert.equal(failed.status, 503);
+  assert.equal(failed.headers.get('cache-control'), 'no-store');
   assert.ok(Number(failed.headers.get('retry-after')) >= 1);
   assert.equal((await fetch(running.url + 'api/matches/latest')).status, 200);
   assert.equal(requests, 1); // Failed metadata is cached briefly, so playback does not retry every step.
@@ -169,12 +189,19 @@ test('public Scryfall metadata and DFC images are cached locally, preserving MIM
   const imageUrl = new URL(metadata.image_url, running.url);
   const image = await fetch(imageUrl);
   assert.equal(image.headers.get('content-type'), 'image/png');
+  assert.equal(image.headers.get('cache-control'), 'private, max-age=86400');
   assert.deepEqual(Buffer.from(await image.arrayBuffer()), png);
   assert.equal((await fetch(imageUrl)).headers.get('content-type'), 'image/png');
-  const cached = await fetch(running.url + 'api/cards/100').then(response => response.json());
+  const cachedResponse = await fetch(running.url + 'api/cards/100');
+  assert.equal(cachedResponse.headers.get('cache-control'), 'no-store');
+  const cached = await cachedResponse.json();
   assert.equal(cached.image_cached, true);
   assert.equal(requests.length, 2);
   assert.equal(requests.some(url => /synthetic-match|started_at|Jump_In/.test(url)), false);
+  const retry = await fetch(new URL('api/cards/100/image?retry=1', running.url));
+  assert.equal(retry.status, 200);
+  assert.equal(retry.headers.get('cache-control'), 'no-store');
+  assert.equal(requests.length, 3); // Explicit image recovery bypasses the local image cache.
 });
 
 test('Coach Context is a native JSON attachment with exact before hand, no future reveal, and missing-anchor 404', async (t) => {

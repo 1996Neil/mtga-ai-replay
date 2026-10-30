@@ -823,3 +823,15 @@ a{
 .draft-picks li strong{color:#e7efeb}.draft-picks time{float:right;color:#a9b7b0}
 .draft-picks li>p{margin:3px 0}.draft-picks li.incomplete{color:#f2c77b}
 .draft-picks li details>summary{cursor:pointer}.draft-picks li details p{margin:4px 0;line-height:1.5;overflow-wrap:anywhere}
+/* Replay storage preferences use the existing dark Viewer palette. */
+.replay-settings-dialog { color: #e8e8ef; background: #171923; border: 1px solid #62667a; border-radius: 12px; padding: 24px; width: min(480px, calc(100vw - 32px)); max-height: calc(100dvh - 40px); overflow: auto; }
+.replay-settings-dialog::backdrop { background: rgb(0 0 0 / 70%); }
+.settings-heading, .settings-actions { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.settings-heading h2 { margin: 0 0 16px; font-size: 20px; }
+.settings-heading button { min-width: 40px; min-height: 40px; font-size: 24px; }
+.settings-choice, .settings-days { display: flex; align-items: center; gap: 12px; margin: 16px 0; }
+.settings-days input { width: 100px; padding: 10px; color: inherit; background: #252838; border: 1px solid #81869d; border-radius: 6px; font-size: 16px; }
+.settings-help { color: #bec2d3; font-size: 14px; line-height: 1.65; }
+.settings-preview { border-top: 1px solid #62667a; padding-top: 16px; line-height: 1.65; }
+.settings-actions { margin-top: 24px; justify-content: flex-end; flex-wrap: wrap; }
+.replay-settings-dialog :focus-visible { outline: 2px solid #a5c7ff; outline-offset: 3px; }

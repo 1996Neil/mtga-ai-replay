@@ -16,8 +16,9 @@ export function useCardImage(grpId: number) {
   const snapshot = useCallback(() => client.snapshot(visibleId), [visibleId]);
   const state = useSyncExternalStore(subscribe, snapshot, snapshot);
   const card = useCardCacheStore(s => s.cards.get(visibleId));
-  return { imageUrl: visibleId && state.phase === 'ready' ? `/api/cards/${visibleId}/image${state.refreshImage ? '?retry=1' : ''}` : null,
+  return { imageUrl: visibleId && state.phase === 'ready' ? `/api/cards/${visibleId}/image?v=${encodeURIComponent(state.card?.scryfall_id ?? 'local')}${state.refreshImage ? `&retry=1&attempt=${state.attempt}` : ''}` : null,
     imageAttempt: state.attempt, imagePhase: state.phase,
+    imageIssue: state.issue,
     retryImage: () => client.retry(visibleId),
     imageError: () => client.imageError(visibleId, state.attempt),
     imageLoaded: () => client.imageLoaded(visibleId, state.attempt),

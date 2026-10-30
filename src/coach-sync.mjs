@@ -1,6 +1,7 @@
 import { isDraftSyncPath } from './draft-backup.mjs';
 import { validateSyncChanges } from './sync-changes.mjs';
 import {CoachSyncError} from './coach-sync-error.mjs';
+import { readReplaySettings, replayInRetention } from './replay-settings.mjs';
 import {bundleFiles} from './coach-bundle-files.mjs';
 import { execFile } from 'node:child_process';
 import { createGitBatch } from './git-batch.mjs';
@@ -239,6 +240,7 @@ export async function enqueueCoachBundle(bundle, options = {}) {
   const dataDir = options.dataDir ?? defaultDataDir(), files = options.computePool ? await options.computePool.run('bundleFiles',{bundle}) : bundleFiles(bundle);
   return locked(dataDir, async () => {
     const state = await readState(dataDir), id = bundle.summary.match_id;
+    if (!replayInRetention(bundle.summary, await readReplaySettings(dataDir))) return { queued: false, expired: true };
     if (await isReplayExcluded(id, { dataDir })) fail('SYNC_EXCLUDED', 'This replay is excluded from upload.');
     const stableKey = state.synced[id]?.history_key ?? state.pending.find(item => item.match_id === id)?.history_key;
     if (stableKey && stableKey !== bundle.historyKey) fail('SYNC_BUNDLE', 'The match history key changed; regenerate with its existing stable history key.');
@@ -443,6 +445,28 @@ async function publishPending(state, dataDir, options) {
   const { git, branch, validate } = await prepareCheckout(state, meta, run, repoDir, options);
   options.onProgress?.({ phase: 'publishing' });
   await assertOutgoingSyncOwnership(git, branch, 'coach', Boolean(meta.defaultBranchRef?.name));
+  const retention = await readReplaySettings(dataDir);
+  if (retention.retention_days !== null && meta.defaultBranchRef?.name) {
+    const revisions = String(await git(['rev-list', `origin/${branch}..HEAD`])).trim().split('\n').filter(Boolean);
+    let expiredOutgoing = false;
+    for (const revision of revisions) {
+      const paths = String(await git(['diff-tree', '--root', '--no-commit-id', '--name-only', '-r', revision])).trim().split('\n');
+      for (const path of paths.filter(path => /^matches\/[A-Za-z0-9_-]+\/summary\.json$/.test(path))) {
+        const summary = JSON.parse(await git(['show', `${revision}:${path}`]));
+        if (!replayInRetention(summary, retention)) expiredOutgoing = true;
+      }
+    }
+    if (expiredOutgoing) {
+      // These are private generated transport commits, with a verified clean
+      // checkout and coach-only ownership. Retain a recovery ref, then rebuild
+      // recent pending bundles from the remote baseline without force pushing.
+      const oldHead = String(await git(['rev-parse', 'HEAD'])).trim();
+      await git(['update-ref', `refs/retention-recovery/${oldHead}`, oldHead]);
+      await git(['switch', '--detach', `origin/${branch}`]);
+      await git(['branch', '-f', branch, `origin/${branch}`]);
+      await git(['switch', branch]);
+    }
+  }
   let collectionEntry = '';
   try { await readFile(join(repoDir, 'collection', 'README.md'), 'utf8'); collectionEntry = COLLECTION_ENTRY; }
   catch (error) { if (error.code !== 'ENOENT') throw error; }
@@ -454,6 +478,9 @@ async function publishPending(state, dataDir, options) {
   for (const item of [...state.pending].sort((a, b) => -byDate(a, b))) {
     const { files, summary } = await queuedFiles(item, dataDir, options.computePool);
     const previous = index.matches.find(match => match.match_id === item.match_id);
+    if (options.expectedRemoteContentHashes &&
+        (previous?.content_hash ?? null) !== (options.expectedRemoteContentHashes[item.match_id] ?? null) &&
+        previous?.content_hash !== item.content_hash) fail('SYNC_CONFLICT', '线上回放已变化，未覆盖；请重新同步并核对冲突。');
     if (previous && previous.history_key !== item.history_key) fail('SYNC_BUNDLE', 'Published history key differs from the queued bundle; regenerate with its existing stable history key.');
     if (previous?.content_hash === item.content_hash) continue;
     const path = `matches/${previous?.history_key ?? item.history_key}`;
@@ -536,6 +563,9 @@ export async function syncCoachBundles(options = {}) {
   const dataDir = options.dataDir ?? defaultDataDir();
   return locked(dataDir, async () => {
     const state = await readState(dataDir);
+    const settings = await readReplaySettings(dataDir);
+    state.pending = state.pending.filter(item => replayInRetention(item, settings));
+    await saveState(dataDir, state);
     if (!state.enabled) return { synced: false, disabled: true, pending: state.pending.length };
     if (!state.pending.length) return { synced: true, duplicate: true, committed: 0, pending: 0, repository: state.repository, last_synced: state.last_synced };
     try { return await publishPending(state, dataDir, options); }

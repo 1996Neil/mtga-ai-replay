@@ -12,10 +12,16 @@ const isReplayRecord = (obj, text) => Boolean(obj.greToClientEvent || obj.matchG
 
 // Shared framing only; semantic state remains the canonical PerspectiveState.
 // An unfinished event stays here between reads and never crosses a file reset.
-export function createRecordFramer({ acceptRecord = isReplayRecord, maxRecordCharacters = 16 * 1024 * 1024 } = {}) {
+export function createRecordFramer({ acceptRecord = isReplayRecord, maxRecordCharacters = 16 * 1024 * 1024, snapshot } = {}) {
   if (!Number.isSafeInteger(maxRecordCharacters) || maxRecordCharacters < 2) throw new Error('Invalid JSON framing limit.');
   let buffer = '', depth = 0, quoted = false, escaped = false, markerTail = '', detailed = false, discarding = false, integrityLossCount = 0;
+  if (snapshot) {
+    ({ buffer, depth, quoted, escaped, markerTail, detailed, discarding, integrityLossCount } = snapshot);
+    if (typeof buffer !== 'string' || buffer.length > maxRecordCharacters || !Number.isSafeInteger(depth) || depth < 0)
+      throw Error('Invalid framing checkpoint');
+  }
   const framer = {
+    snapshot: () => ({ buffer, depth, quoted, escaped, markerTail, detailed, discarding, integrityLossCount }),
     get detailed() { return detailed; },
     get pending() { return depth > 0; },
     get bufferedCharacters() { return buffer.length; },
