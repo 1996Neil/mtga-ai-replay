@@ -11,6 +11,16 @@
 - Performance changes must retain account isolation and atomic writes. Verify
   work counts for idle, one-record change and retry, not just test duration.
 
+# Verification cost
+
+- Default to the smallest affected test set and a small regression fixture.
+  Expand only for a concrete failure or a changed shared contract; do not rerun
+  passing checks without new evidence.
+- Full suites, full-corpus replay rebuilds and release/history audits are
+  explicit separate workflows, never startup, polling or ordinary replay reads.
+- Verify idle, one-record change and retry with bounded synthetic work counts;
+  do not scan the user's whole archive to prove a local change.
+
 # UI scope
 
 - Replay is a desktop application. Keep one desktop layout; do not add mobile

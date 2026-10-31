@@ -1,6 +1,7 @@
 // Adapted from m1kk3l/mtg-replay-viewer (see viewer/ATTRIBUTION.md).
 import { create } from 'zustand';
 import type { ParsedMatch, ReplayStep } from '../types/game';
+import { observationGroup } from '../lib/observationGroups.ts';
 
 interface ReplayState {
   matches: ParsedMatch[]; currentMatchIndex: number; currentStepIndex: number;
@@ -44,10 +45,14 @@ export const useReplayStore = create<ReplayState>((set, get) => ({
   stepForward: () => {
     const { currentStepIndex, currentMatch } = get();
     const match = currentMatch();
-    if (match && currentStepIndex < match.steps.length - 1) set({ currentStepIndex: currentStepIndex + 1 });
+    if (match && observationGroup(match.steps, currentStepIndex).end < match.steps.length - 1)
+      set({ currentStepIndex: observationGroup(match.steps, currentStepIndex).end + 1, viewBefore: false });
     else set({ isPlaying: false });
   },
-  stepBackward: () => { const i = get().currentStepIndex; if (i > 0) set({ currentStepIndex: i - 1 }); },
+  stepBackward: () => {
+    const steps = get().currentMatch()?.steps ?? [], group = observationGroup(steps, get().currentStepIndex);
+    if (group.start > 0) set({ currentStepIndex: observationGroup(steps, group.start - 1).start, viewBefore: false });
+  },
   previousTurn: () => {
     const { currentStepIndex } = get(), steps = get().currentMatch()?.steps ?? [];
     const turn = steps[currentStepIndex]?.turnNumber;
@@ -64,7 +69,7 @@ export const useReplayStore = create<ReplayState>((set, get) => ({
   goToLast: () => { const match = get().currentMatch(); if (match) set({ currentStepIndex: Math.max(0, match.steps.length - 1), isPlaying: false }); },
   togglePlay: () => {
     const s = get(), last = (s.currentMatch()?.steps.length ?? 0) - 1;
-    set({ isPlaying: !s.isPlaying, currentStepIndex: !s.isPlaying && s.currentStepIndex === last ? 0 : s.currentStepIndex });
+    set({ isPlaying: !s.isPlaying, currentStepIndex: !s.isPlaying && observationGroup(s.currentMatch()?.steps ?? [], s.currentStepIndex).end === last ? 0 : s.currentStepIndex });
   },
   pause: () => set({ isPlaying: false }), setSpeed: playbackSpeed => set({ playbackSpeed }),
   setViewBefore: viewBefore => set({ viewBefore }),

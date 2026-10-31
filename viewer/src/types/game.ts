@@ -21,6 +21,9 @@ export interface CardInstance {
   toughness?: number;
   counters: Record<string, number>;
   isAttacking: boolean;
+  attackState?: string;
+  blockState?: string;
+  isBlocked?: boolean;
   name?: string;
   objectType?: string; // GameObjectType_Card | GameObjectType_Token | GameObjectType_Ability ...
   logicalId?: string;

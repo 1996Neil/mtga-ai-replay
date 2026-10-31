@@ -187,7 +187,7 @@ function compactCard(card) {
   // Field allowlist retains combat/target identities, never arbitrary log data.
   for (const key of ['arena_id', 'instance_id', 'logical_id', 'owner', 'controller', 'power', 'toughness',
     'damage_marked', 'has_summoning_sickness', 'card_types', 'colors', 'is_tapped', 'counters',
-    'is_attacking', 'is_blocking', 'attacking_target_id', 'blocked_attacker_ids', 'attached_to', 'attachments']) {
+    'is_attacking', 'is_blocking', 'attacking_target_id', 'blocked_attacker_ids', 'is_blocked', 'attack_state', 'block_state', 'attached_to', 'attachments']) {
     if (card[key] !== undefined) value[key] = card[key];
   }
   if (Array.isArray(card.targets)) value.targets = card.targets.map(compactCard);

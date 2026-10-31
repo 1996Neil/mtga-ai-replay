@@ -177,7 +177,7 @@ test('attachment and stack target projection uses public identities and removes 
   const attached = snap(state);
   assert.deepEqual(attached.players.me.battlefield[0].attachments, [103]);
   assert.equal(attached.players.me.battlefield[1].attached_to, 101);
-  assert.deepEqual(attached.stack[0].targets, [{ name: 'My Creature', arena_id: 1001, instance_id: 101, visibility: 'public' }, { hidden: true }]);
+  assert.deepEqual(attached.stack[0].targets, [{ name: 'My Creature', arena_id: 1001, instance_id: 101, logical_id: 'C101', visibility: 'public' }, { hidden: true }]);
   assert.equal(JSON.stringify(attached).includes('Hidden Opponent Sentinel'), false);
   state.apply({ diffDeletedPersistentAnnotationIds: [10, 11] });
   assert.deepEqual(snap(state).players.me.battlefield[0].attachments, []);

@@ -36,7 +36,7 @@ async function openDatabase(dataDir, write = false) {
 
 // The parser is the visibility boundary. Archive explicit hidden/postgame markers
 // defensively as anonymous placeholders, including future nested board snapshots.
-function safeArchive(value) {
+export function safeArchive(value) {
   if (Array.isArray(value)) return value.map(safeArchive);
   if (!value || typeof value !== 'object') return value;
   if (value.hidden === true || /hidden|post.?game/i.test(value.visibility ?? '')) return { hidden: true };
@@ -140,7 +140,7 @@ function canReplace(candidate, existing) {
 }
 
 /** Persist safe replay snapshots by stable match ID, independent of any analytics tables. */
-export async function archiveReplays(replays, { dataDir = defaultDataDir(), replaceRevision } = {}) {
+export async function archiveReplays(replays, { dataDir = defaultDataDir(), replaceRevision, strictReplaceRevision = false, updateCards = true } = {}) {
   const policyDir = dataDir.endsWith('/replay-outbox') ? join(dataDir, '..') : dataDir;
   const settings = await readReplaySettings(policyDir);
   const database = await openDatabase(dataDir, true);
@@ -162,19 +162,20 @@ export async function archiveReplays(replays, { dataDir = defaultDataDir(), repl
       const replay = safeArchive(input), now = new Date().toISOString();
       const replayJson = JSON.stringify(replay);
       const previous = previousReplay.get(replay.match.id);
+      const replaceRemoteCopy = replaceRevision && previous &&
+        historyEntry({ ...previous, notes_json: database.prepare('SELECT notes_json FROM coach_notes WHERE match_id=?').get(replay.match.id)?.notes_json }).replay_revision === replaceRevision;
+      if (strictReplaceRevision && !replaceRemoteCopy) { preserved++; conflicts++; continue; }
       if (previous?.replay_json === replayJson) {
         revisions[replay.match.id] = historyEntry({ ...previous,
           notes_json: database.prepare('SELECT notes_json FROM coach_notes WHERE match_id=?').get(replay.match.id)?.notes_json }).replay_revision;
         preserved++; continue;
       }
-      const replaceRemoteCopy = replaceRevision && previous &&
-        historyEntry({ ...previous, notes_json: database.prepare('SELECT notes_json FROM coach_notes WHERE match_id=?').get(replay.match.id)?.notes_json }).replay_revision === replaceRevision;
       if (previous && !replaceRemoteCopy && !canReplace(replay, JSON.parse(previous.replay_json))) { preserved++; conflicts++; continue; }
       const summaryJson = JSON.stringify({ ...summary(replay), replay_revision: createHash('sha256').update(replayJson).digest('hex') });
       upsert.run(replay.match.id, replay.match.started_at, summaryJson, replayJson, now, now);
       revisions[replay.match.id] = historyEntry({ summary_json: summaryJson,
         notes_json: database.prepare('SELECT notes_json FROM coach_notes WHERE match_id=?').get(replay.match.id)?.notes_json }).replay_revision;
-      for (const [id, card] of collectCards(replay)) cardUpsert.run(id, card.name, JSON.stringify(card));
+      if (updateCards) for (const [id, card] of collectCards(replay)) cardUpsert.run(id, card.name, JSON.stringify(card));
       archived++;
     }
     database.exec('COMMIT');

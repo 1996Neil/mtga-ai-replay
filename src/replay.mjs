@@ -24,7 +24,7 @@ function initialGame(number) {
 
 export async function buildReplays(records, names = new Map(), { counterNames = new Map() } = {}) {
   const meta = indexMatchMetadata(records), states = new Map(), games = new Map(), sanitized = [];
-  const actionEvents = new Map(), seenStates = new Set(), seenAnnotations = new Set(), seenCombat = new Set(); let currentId;
+  const actionEvents = new Map(), seenStates = new Set(), seenAnnotations = new Set(), ephemeralCombatFrames = new Set(); let currentId;
   const sequences = new Map();
   function gameFor(id, number) {
     const key = `${id}:${number}`;
@@ -145,7 +145,8 @@ export async function buildReplays(records, names = new Map(), { counterNames = 
       const id = `S${game._frames.length + 1}`;
       state.currentFrame = { id, before_id: game._frames.at(-1)?.id ?? null };
       game.states[id] = snapshot;
-      game._frames.push({ ...state.currentFrame, turn: snapshot.turn, meaningful: visibleStateSignature(snapshot) !== state.lastVisualSignature });
+      game._frames.push({ ...state.currentFrame, turn: snapshot.turn,
+        terminal: endMessage, meaningful: endMessage || visibleStateSignature(snapshot) !== state.lastVisualSignature });
       state.lastVisualSignature = visibleStateSignature(snapshot);
       const safe = state.safeMessage(message);
       sanitized.push({ greToClientEvent: { greToClientMessages: [safe] } });
@@ -183,7 +184,9 @@ export async function buildReplays(records, names = new Map(), { counterNames = 
                 const event = push(state, game, { type: types[category], actor, ...(card ? { card } : {}), targets: [] });
                 if (event) actionEvents.set(`${key}:${category}:${id}`, event);
               } else {
-                const types = { PlayLand: 'land', Sacrifice: 'sacrifice', Destroy: 'destroy', Exile: 'exile', Discard: 'discard', Mill: 'mill', Return: 'return', Put: 'zone_change', SBA_Damage: 'dies', SBA_ZeroToughness: 'dies' };
+                const types = { PlayLand: 'land', Sacrifice: 'sacrifice', Destroy: 'destroy', Exile: 'exile', Discard: 'discard', Mill: 'mill', Return: 'return', Put: 'zone_change',
+                  SBA_Damage: 'dies', SBA_ZeroToughness: 'dies', SBA_Deathtouch: 'dies',
+                  SBA_ZeroLoyalty: 'put_into_graveyard', SBA_UnattachedAura: 'put_into_graveyard' };
                 const type = ((category === 'Resolve' || category === 'Put') && to === 'Battlefield') ? 'enters' : types[category] ?? 'zone_change';
                 if (type === 'zone_change' && category === 'Resolve' && to !== 'Battlefield') continue;
                 push(state, game, { type, actor, ...(card ? { card } : {}), from, to, details: category });
@@ -200,10 +203,17 @@ export async function buildReplays(records, names = new Map(), { counterNames = 
               if (event) actionEvents.set(`${key}:Ability:${id}`, event);
             }
           }
-          if (has(a, 'DamageDealt')) push(state, game, { type: 'damage', actor: state.actor(a.affectorId),
-            ...(state.card(a.affectorId, names) ? { card: state.card(a.affectorId, names) } : {}),
-            targets: (a.affectedIds ?? []).map(id => state.target(id, names)), amount: detail(a, 'damage'),
-            damage_kind: /FirstStrike/i.test(state.turn.step ?? '') ? 'first_strike' : /CombatDamage/.test(state.turn.step ?? '') ? 'combat' : 'ability_or_spell' });
+          if (has(a, 'DamageDealt')) {
+            // Damage and a zone change may arrive together. The event can name
+            // the previously public participant even after its old ID vanished.
+            const card = state.card(a.affectorId, names) ?? cardsBefore.get(a.affectorId);
+            push(state, game, { type: 'damage', actor: actorsBefore.get(a.affectorId) ?? state.actor(a.affectorId),
+              ...(card ? { card } : {}),
+              targets: (a.affectedIds ?? []).map(id => state.players.has(id) ? state.target(id, names)
+                : state.card(id, names) ?? cardsBefore.get(id) ?? { hidden: true }),
+              amount: detail(a, 'damage'),
+              damage_kind: /FirstStrike/i.test(state.turn.step ?? '') ? 'first_strike' : /CombatDamage/.test(state.turn.step ?? '') ? 'combat' : 'ability_or_spell' });
+          }
           if (has(a, 'CounterAdded') || has(a, 'CounterRemoved')) {
             for (const id of a.affectedIds ?? []) push(state, game, { type: 'counter', actor: state.actor(id),
               ...(state.card(id, names) ? { card: state.card(id, names) } : {}), amount: detail(a, 'transaction_amount'),
@@ -234,16 +244,24 @@ export async function buildReplays(records, names = new Map(), { counterNames = 
           if (o.type === 'GameObjectType_Token' && !objectsBefore.has(o.instanceId) && state.zones.get(o.zoneId)?.type === 'ZoneType_Battlefield') {
             push(state, game, { type: 'token', actor: state.actor(o.instanceId), card: state.card(o.instanceId, names), amount: 1 });
           }
-          const attackKey = `${key}:${state.turn.turnNumber}:attack:${o.instanceId}:${o.attackInfo?.targetId}`;
-          if (o.attackState === 'AttackState_Declared' && o.attackInfo && !seenCombat.has(attackKey)) {
-            seenCombat.add(attackKey);
-            push(state, game, { type: 'attack', actor: state.actor(o.instanceId), card: state.card(o.instanceId, names), targets: [state.target(o.attackInfo.targetId, names)] });
-          }
-          const blockKey = `${key}:${state.turn.turnNumber}:block:${o.instanceId}:${JSON.stringify(o.blockInfo?.attackerIds)}`;
-          if (o.blockState === 'BlockState_Declared' && o.blockInfo && !seenCombat.has(blockKey)) {
-            seenCombat.add(blockKey);
-            push(state, game, { type: 'block', actor: state.actor(o.instanceId), card: state.card(o.instanceId, names), targets: (o.blockInfo.attackerIds ?? []).map(id => state.target(id, names)) });
-          }
+          const previous = objectsBefore.get(o.instanceId), current = state.objects.get(o.instanceId);
+          if (state.turn.phase !== 'Phase_Combat' || !current) continue;
+          const attackChanged = previous?.attackState !== current.attackState ||
+            previous?.attackInfo?.targetId !== current.attackInfo?.targetId;
+          if (attackChanged && current.attackInfo && current.attackState === 'AttackState_Attacking') {
+            push(state, game, { type: 'attack',
+              actor: state.actor(o.instanceId), card: state.card(o.instanceId, names),
+              targets: [state.target(current.attackInfo.targetId, names)] });
+          } else if (attackChanged && (current.attackState === 'AttackState_Declared' ||
+              previous?.attackState === 'AttackState_Declared' && !current.attackInfo)) ephemeralCombatFrames.add(`${key}:${state.currentFrame.id}`);
+          const blockChanged = previous?.blockState !== current.blockState ||
+            JSON.stringify(previous?.blockInfo?.attackerIds) !== JSON.stringify(current.blockInfo?.attackerIds);
+          if (blockChanged && current.blockInfo && current.blockState === 'BlockState_Blocking') {
+            push(state, game, { type: 'block',
+              actor: state.actor(o.instanceId), card: state.card(o.instanceId, names),
+              targets: (current.blockInfo.attackerIds ?? []).map(id => state.target(id, names)) });
+          } else if (blockChanged && (current.blockState === 'BlockState_Declared' ||
+              previous?.blockState === 'BlockState_Declared' && !current.blockInfo)) ephemeralCombatFrames.add(`${key}:${state.currentFrame.id}`);
         }
         const life = {};
         let changed = false;
@@ -290,15 +308,25 @@ export async function buildReplays(records, names = new Map(), { counterNames = 
       const perTurn = new Map();
       for (const frame of game._frames) {
         let frameEvents = events.filter(event => event.state_id === frame.id);
-        if (!frameEvents.length && !frame.meaningful) continue;
         const after = game.states[frame.id], before = game.states[frame.before_id];
+        if (!frameEvents.length && !frame.terminal) {
+          if (!frame.meaningful) continue;
+          if (before && ephemeralCombatFrames.has(`${match.id}:${game.game_number}:${frame.id}`) &&
+              visibleStateSignature(after, { omitTentativeCombat: true }) === visibleStateSignature(before, { omitTentativeCombat: true })) continue;
+        }
         if (!frameEvents.length) {
           if (!after.turn && !after.players.me.hand.length) continue;
           const phaseChanged = before?.phase !== after.phase || before?.step !== after.step || before?.turn !== after.turn;
           const handChanged = JSON.stringify(before?.players.me.hand) !== JSON.stringify(after.players.me.hand);
-          frameEvents = [{ type: after.turn === 0 ? 'mulligan_state' : phaseChanged ? 'phase' : 'state',
+          frameEvents = [{ type: frame.terminal ? 'game_over' : after.turn === 0 ? 'mulligan_state' : phaseChanged ? 'phase' : 'state',
             actor: after.turn === 0 ? 'me' : after.activePlayer ?? 'unknown', phase: after.phase, step: after.step,
-            details: after.turn === 0 ? 'Opening hand / mulligan state' : phaseChanged ? 'Phase / step changed' : handChanged ? 'Hand updated' : 'Visible board / stack updated' }];
+            details: frame.terminal ? 'Game over / terminal snapshot' : after.turn === 0 ? 'Opening hand / mulligan state' : phaseChanged ? 'Phase / step changed' : handChanged ? 'Hand updated' : 'Visible board / stack updated' }];
+        }
+        // Lethal damage and the GameOver can share one observation. The
+        // terminal entry must remain visible even when that frame has actions.
+        if (frame.terminal && !frameEvents.some(event => event.type === 'game_over')) {
+          frameEvents = [...frameEvents, { type: 'game_over', actor: after.activePlayer ?? 'unknown',
+            phase: after.phase, step: after.step, details: 'Game over / terminal snapshot' }];
         }
         for (const event of frameEvents) {
           const action = (perTurn.get(frame.turn) ?? 0) + 1; perTurn.set(frame.turn, action);
@@ -331,7 +359,7 @@ export async function buildReplays(records, names = new Map(), { counterNames = 
       queue_id: config?.queueId });
     const deckCounts = new Map();
     for (const card of parsed.myDeckListMap.get(match.id)?.main ?? []) deckCounts.set(card.cardId, (deckCounts.get(card.cardId) ?? 0) + card.quantity);
-    replays.push({ schema_version: '2.0', perspective: { policy: 'Only identities legally visible to the local player at that event; no future backfill.', hidden_information: 'omitted', post_game_reveals: 'omitted' },
+    replays.push({ schema_version: '2.1', perspective: { policy: 'Only identities legally visible to the local player at that event; no future backfill.', hidden_information: 'omitted', post_game_reveals: 'omitted' },
       match: { id: match.id, account_key: arenaAccountKey(player?.userId), started_at: new Date(match.timestamp).toISOString(), ...mode, result: match.matchResult, on_play: match.onPlay, player: player?.playerName ?? 'Me', opponent: opponent?.playerName ?? 'Opponent' },
       deck: [...deckCounts].map(([id, quantity]) => ({ name: names.get(id) ?? `Arena card ${id}`, arena_id: id, quantity })),
       games: matchGames, warnings: ['Turns use global Arena numbering (each player turn increments it).', 'Legal alternatives/priority windows are not reconstructed; ability text and counter names may be incomplete.'] });
