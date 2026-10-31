@@ -127,8 +127,23 @@ async function linkedFixture(h, { multipart = false, owner = A } = {}) {
     await writeFile(join(h.dataDir, 'replay-remote-receipts.json'), JSON.stringify({ [replay.match.id]: {
       local_revision: local.replay_revision, content_hash: bundle.contentHash } }));
   };
-  return { publishMatch, replay, path, bundle };
+  return { publishMatch, replay, path, bundle, observations };
 }
+
+test('pending remote refresh keeps duplicate observations grouped by their verified local course', async t => {
+  const h = await harness(t), fixture = await linkedFixture(h);
+  h.append(fixture.observations.map((item, i) => ({ ...item, observation_id: 'd' + (1000 + i).toString(16).padStart(63, '0') })));
+  const cwd = join(h.root, 'seed'), git = async (args, encoding = 'utf8') =>
+    (await execute('git', args, { cwd, encoding, env, maxBuffer: 8 * 1024 * 1024 })).stdout;
+  const revision = String(await git(['rev-parse', 'HEAD'])).trim();
+  const snapshot = await createDraftBackup({ dataDir: h.dataDir });
+  const result = await buildPublishedDraftLinks(snapshot, { dataDir: h.dataDir, git, revision });
+  assert.equal(result.get(A).runs.length, 1);
+  assert.equal(result.get(A).runs[0].sources.length, 2);
+  assert.equal(result.get(A).runs[0].status, 'pending');
+  assert.equal(result.get(A).runs[0].reason, 'awaiting_match_upload');
+  validateDraftBackup(attachDraftBindings(snapshot, result));
+});
 
 test('explicit verified ownership correction preserves immutable capture lineage and restores under the match account', async t => {
   const h = await harness(t), fixture = await linkedFixture(h, { owner: B });
@@ -202,12 +217,12 @@ test('upload includes pending associations, completes after match upload without
   await assert.rejects(readPublishedDraftLinks(source, { dataDir: h.dataDir, history: await listReplays({ dataDir: h.dataDir, limit: null }) }));
 });
 
-test('mismatched local/remote content stays pending despite a receipt claiming equality; corrupt evidence refuses publication', async t => {
+test('changed draft relationship facts stay pending despite a receipt claiming equality; corrupt evidence refuses publication', async t => {
   const h = await harness(t), fixture = await linkedFixture(h);
   await fixture.publishMatch();
   const revision = (await listReplays({ dataDir: h.dataDir }))[0].replay_revision;
   const changed = await getReplay(fixture.replay.match.id, { dataDir: h.dataDir });
-  changed.match.player = 'Synthetic locally changed player';
+  changed.match.result = 'Loss';
   await archiveReplays([changed], { dataDir: h.dataDir, replaceRevision: revision });
   const newRevision = (await listReplays({ dataDir: h.dataDir }))[0].replay_revision;
   await writeFile(join(h.dataDir, 'replay-remote-receipts.json'), JSON.stringify({ [fixture.replay.match.id]: {
@@ -233,7 +248,7 @@ test('binding source hashes cannot be forged or silently omit a capture', () => 
   assert.throws(() => attachDraftBindings(snapshot, new Map([[A, doc]])), /association/);
 });
 
-test('small multipart uploads verify and each stale generation-cache component independently falls back', async t => {
+test('small multipart association survives replay-only repairs and ignores stale full-replay generation cache', async t => {
   const h = await harness(t), fixture = await linkedFixture(h, { multipart: true });
   await fixture.publishMatch();
   const cwd = join(h.root, 'seed'), git = async (args, encoding = 'utf8') =>
@@ -244,6 +259,7 @@ test('small multipart uploads verify and each stale generation-cache component i
   const previous = (await listReplays({ dataDir: h.dataDir }))[0].replay_revision;
   const replay = await getReplay(fixture.replay.match.id, { dataDir: h.dataDir });
   replay.match.player = 'Synthetic changed local';
+  replay.games[0].warnings = ['Synthetic repaired timeline'];
   await archiveReplays([replay], { dataDir: h.dataDir, replaceRevision: previous });
   const current = await getReplay(fixture.replay.match.id, { dataDir: h.dataDir });
   const generated = { fast_snapshot: syncDigest(current), content_hash: fixture.bundle.contentHash, history_key: fixture.bundle.historyKey };
@@ -252,8 +268,27 @@ test('small multipart uploads verify and each stale generation-cache component i
       schema: 'MTGA_SYNC_CACHE_V1', matches: { [fixture.replay.match.id]: { ...generated, [field]: replacement } },
     }));
     const result = await buildPublishedDraftLinks(snapshot, { dataDir: h.dataDir, git, revision });
-    assert.equal(result.get(A).runs[0].status, 'pending', `${field} mismatch must not accept a cached source→output mapping`);
+    assert.equal(result.get(A).runs[0].status, 'linked', `${field} must not invalidate unchanged relationship evidence`);
   }
+  await syncDraftCapture(h.options);
+  const source = await listCapturedDraftRuns({ dataDir: h.dataDir });
+  const refreshed = await listReplays({ dataDir: h.dataDir, limit: null });
+  const repaired = await getReplay(fixture.replay.match.id, { dataDir: h.dataDir });
+  repaired.games[0].warnings.push('Second process-only repair');
+  await archiveReplays([repaired], { dataDir: h.dataDir, replaceRevision: refreshed[0].replay_revision });
+  const history = await listReplays({ dataDir: h.dataDir, limit: null });
+  const restored = await readPublishedDraftLinks(source, { dataDir: h.dataDir, history });
+  assert.equal(restored[0].matches.length, 1, 'Viewer keeps a published relation while the battle timeline changes');
+  const work = {};
+  const again = await buildPublishedDraftLinks(snapshot, { dataDir: h.dataDir, git, revision, work });
+  assert.equal(again.get(A).runs[0].status, 'linked');
+  assert.equal(work.proofs_checked, 0, 'unchanged relation reuses the verified remote proof');
+  assert.equal(work.local_decks_read, 0, 'write-time identity avoids extracting unchanged decks');
+  assert.equal(work.canonical_builds, 0, 'association never rebuilds a full replay');
+  repaired.deck[0].arena_id = 987654;
+  await archiveReplays([repaired], { dataDir: h.dataDir, replaceRevision: history[0].replay_revision });
+  assert.equal((await readPublishedDraftLinks(source, { dataDir: h.dataDir,
+    history: await listReplays({ dataDir: h.dataDir, limit: null }) }))[0].matches.length, 0);
 });
 
 test('a binding input arriving during push is not acknowledged as part of the earlier snapshot', async t => {

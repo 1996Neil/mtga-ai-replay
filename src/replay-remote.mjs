@@ -4,9 +4,10 @@ import { join } from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { createGitBatch } from './git-batch.mjs';
 import { readPublishedReviewSource } from './review/cloud-review.mjs';
-import { archiveReplays, listReplays, isReplayExcluded } from './history.mjs';
+import { archiveReplays, listReplays, getReplay, isReplayExcluded, listReplaySummaries } from './history.mjs';
 import { replayInRetention, readReplaySettings } from './replay-settings.mjs';
 import { atomicSyncWrite } from './coach-sync.mjs';
+import { buildCoachBundle } from './coach-bundle.mjs';
 
 const execute = promisify(execFile);
 export async function importRemoteReplays({ dataDir, snapshot, baselines = {} }) {
@@ -30,9 +31,8 @@ export async function importRemoteReplays({ dataDir, snapshot, baselines = {} })
     for (const entry of candidates) {
       if (await isReplayExcluded(entry.match_id, { dataDir })) continue;
       if (!/^matches\/[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(entry.path ?? '')) throw Error('Invalid remote match path');
-      if (local.has(entry.match_id) && local.get(entry.match_id).replay_revision !== receipts[entry.match_id]?.local_revision) {
-        conflicts.push({ match_id: entry.match_id, reason: '本地和线上均有修改，已保留本地版本。' }); continue;
-      }
+      const bothChanged = local.has(entry.match_id) &&
+        local.get(entry.match_id).replay_revision !== receipts[entry.match_id]?.local_revision;
       const { stdout } = await execute('git', ['ls-tree', '-rz', snapshot.commit, '--', entry.path], { cwd, maxBuffer: 1024 * 1024 });
       const objects = new Map(stdout.split('\0').filter(Boolean).map(row => {
         const [meta, path] = row.split('\t'), [mode, type, oid] = meta.split(' ');
@@ -55,6 +55,23 @@ export async function importRemoteReplays({ dataDir, snapshot, baselines = {} })
       for (const name of names) files.set(name.startsWith('matches/') ? name : `${entry.path}/${name}`,
         await read(name.startsWith('matches/') ? name : `${entry.path}/${name}`));
       const source = readPublishedReviewSource({ files, matchId: entry.match_id, revision: snapshot.commit });
+      if (bothChanged) {
+        // A completed single-match upload can precede its download receipt.
+        // Only exact full-content equality can reconcile that apparent conflict.
+        const before = local.get(entry.match_id).replay_revision;
+        const replay = await getReplay(entry.match_id, { dataDir });
+        const coach = JSON.parse(files.get(`${entry.path}/coach.json`));
+        const rebuilt = await buildCoachBundle(replay, { cards: source.cards,
+          historyKey: source.history_key, multipart: Boolean(coach.reference_encoding) });
+        const current = (await listReplaySummaries([entry.match_id], { dataDir }))[0];
+        if (current?.replay_revision !== before || rebuilt.contentHash !== entry.content_hash) {
+          conflicts.push({ match_id: entry.match_id, reason: '本地和线上均有修改，已保留本地版本。' }); continue;
+        }
+        receipts[entry.match_id] = { content_hash: entry.content_hash, local_revision: before };
+        remoteRevisions[entry.match_id] = before;
+        await atomicSyncWrite(join(dataDir, 'replay-remote-receipts.json'), JSON.stringify(receipts));
+        continue;
+      }
       const result = await archiveReplays([source.replay], { dataDir, replaceRevision: receipts[entry.match_id]?.local_revision });
       if (result.conflicts) { conflicts.push({ match_id: entry.match_id, reason: '本地版本已变化，未覆盖。' }); continue; }
       const revision = result.revisions[entry.match_id];

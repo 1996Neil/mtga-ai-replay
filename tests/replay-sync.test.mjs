@@ -8,6 +8,7 @@ import { archiveReplays, getReplay } from '../src/history.mjs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { saveReplaySettings } from '../src/replay-settings.mjs';
+import { buildCoachBundle } from '../src/coach-bundle.mjs';
 test('sync downloads cloud-only replay and unchanged repeat neither rebuilds nor uploads it', async t => {
   const h = await harness(t);
   await configureCoachSync('fixture-owner/private-coaching', h.options);
@@ -80,4 +81,29 @@ test('remote updates of an existing download are applied once, while simultaneou
   assert.equal(result.failed, 1);
   assert.equal(await h.commits(), commits);
   assert.equal((await getReplay('versioned', h.options)).match.player, 'Locally changed');
+});
+
+test('an already published identical local repair reconciles an older receipt without replacing or uploading the replay', async t => {
+  const h = await harness(t);
+  await configureCoachSync('fixture-owner/private-coaching', h.options);
+  const first = await bundle({ id: 'already-published-repair' });
+  await enqueueCoachBundle(first, h.options); await syncCoachBundles({ ...h.options, fastSync: true });
+  await syncReplays({ ...h.options, workerCount: 0 });
+  const replay = await getReplay(first.summary.match_id, h.options);
+  const baseline = (await listReplays(h.options))[0].replay_revision;
+  replay.match.player = 'Synthetic repaired display';
+  await archiveReplays([replay], { ...h.options, replaceRevision: baseline });
+  const current = (await listReplays(h.options))[0].replay_revision;
+  const repaired = await buildCoachBundle(await getReplay(first.summary.match_id, h.options),
+    { cards: first.cards, historyKey: first.historyKey, multipart: true });
+  await enqueueCoachBundle(repaired, h.options); await syncCoachBundles({ ...h.options, fastSync: true });
+  const commits = await h.commits();
+  const result = await syncReplays({ ...h.options, workerCount: 0 });
+  assert.equal(result.status, 'succeeded');
+  assert.equal(result.downloaded, 0); assert.equal(result.updated, 0);
+  assert.equal(await h.commits(), commits);
+  assert.equal((await listReplays(h.options))[0].replay_revision, current);
+  const receipt = JSON.parse(await readFile(join(h.dataDir, 'replay-remote-receipts.json'), 'utf8'));
+  assert.equal(receipt[first.summary.match_id].content_hash, repaired.contentHash);
+  assert.equal(receipt[first.summary.match_id].local_revision, current);
 });
