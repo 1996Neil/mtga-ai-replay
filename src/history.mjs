@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { isTutorialMatch } from './replay-policy.mjs';
 import { readReplaySettings, replayInRetention } from './replay-settings.mjs';
+import { draftMatchIdentity } from './draft-match-identity.mjs';
 
 export const defaultDataDir = (home = homedir()) => join(home, '.local', 'share', 'mtga-gpt-replay');
 const dbPath = (dataDir) => join(dataDir, 'replays.sqlite3');
@@ -46,6 +47,7 @@ export function safeArchive(value) {
 function summary(replay) {
   const games = replay.games ?? [];
   return { ...replay.match, game_count: games.length,
+    draft_match_identity: draftMatchIdentity(replay.match, replay.deck, games.length),
     turn_count: games.reduce((n, game) => n + (game.turns?.length ?? 0), 0),
     step_count: games.reduce((n, game) => n + (game.replay_steps?.length ?? game.steps?.length ?? game.turns?.reduce((m, turn) => m + (turn.events?.length ?? 0), 0) ?? 0), 0),
   };

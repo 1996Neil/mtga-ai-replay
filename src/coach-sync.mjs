@@ -12,6 +12,7 @@ import { defaultDataDir, isReplayExcluded, listReplaySummaries } from './history
 import { isTutorialMatch } from './replay-policy.mjs';
 import { serializeCoachJson } from './coach-bundle.mjs';
 import { validateBundleFiles, validateStagedRepository, validateSyncHistoryApproval, isCollectionSyncPath, isCoachSyncPath, createSyncValidationSession } from './sync-security.mjs';
+import { syncNetworkEnvironment } from './sync-network.mjs';
 
 const NAMES = ['summary.json', 'coach.json', 'cards.json', 'manifest.json'];
 const SHA = /^[a-f0-9]{64}$/;
@@ -172,9 +173,12 @@ function execute(file, args, { cwd, encoding = 'utf8', env = {}, input, timeout 
 }
 function runner(options) {
   const run = options.runCommand ?? execute;
+  let networkEnvironment;
   return async (file, args, settings) => {
     try {
-      const result = await run(file, args, settings);
+      networkEnvironment ??= syncNetworkEnvironment(options.dataDir ?? defaultDataDir());
+      const result = await run(file, args, { ...settings,
+        env: { ...await networkEnvironment, ...settings?.env } });
       return result && typeof result === 'object' && !(result instanceof Uint8Array) ? result.stdout : result;
     } catch (error) {
       // Never interpolate stderr, token-bearing URLs or command arguments.
