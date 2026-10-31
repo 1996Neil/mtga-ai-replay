@@ -49,6 +49,12 @@ truncation or lost oversized records fail to unknown ownership. Unknown-owner
 observations remain local and are excluded from Git. No identity is inferred
 from event, time, name similarity or the latest match.
 
+Arena log restart notices (`Starting from beginning of file…`) also clear both
+the active and disconnected identities. 17Lands can log the next identity only
+when the first match begins, after an entire draft. Such preceding picks stay
+unknown instead of inheriting the previous login. Normal tracker log rotation
+still preserves the existing identity/cursor; unchanged polling reads no rows.
+
 Replay provides a game-account selector. Draft and match history requests carry
 that account scope; switching clears the previous board and cancels stale
 requests. Newly parsed matches also carry the hashed ID from the explicitly
@@ -88,7 +94,11 @@ missing historical selection is invented.
 The display layer now separately corroborates complete captured pools against a
 unique recorded course and independently checks each archived main deck before
 showing linked matches. Account conflicts remain explicit and never rewrite
-capture ownership. See [binding evidence, limitations and checks](DRAFT_BINDING.md).
+capture ownership automatically. For a diagnosed stale-login error, an explicit
+source-fingerprinted correction can be published with the existing relationship,
+without modifying original observations or immutable chunks. See
+[ownership repair](DRAFT_OWNERSHIP_REPAIR.md) and
+[binding evidence, limitations and checks](DRAFT_BINDING.md).
 
 ## Git protocol and compatibility
 
