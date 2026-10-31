@@ -5,7 +5,7 @@ import { configureCoachSync, enqueueCoachBundle, syncCoachBundles } from '../src
 import { syncReplays } from '../src/replay-sync.mjs';
 import { listReplays } from '../src/history.mjs';
 import { archiveReplays, getReplay } from '../src/history.mjs';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { saveReplaySettings } from '../src/replay-settings.mjs';
 test('sync downloads cloud-only replay and unchanged repeat neither rebuilds nor uploads it', async t => {
@@ -23,6 +23,21 @@ test('sync downloads cloud-only replay and unchanged repeat neither rebuilds nor
   assert.equal(second.downloaded, 0);
   assert.equal(await h.commits(), before);
   assert.equal(second.remote_checked, true);
+});
+test('successful match sync refreshes draft associations without new picks and reports association failure separately', async t => {
+  const h = await harness(t);
+  await configureCoachSync('fixture-owner/private-coaching', h.options);
+  await enqueueCoachBundle(await bundle(), h.options); await syncCoachBundles({ ...h.options, fastSync: true });
+  // Injected publisher owns the fixture; no game read or real remote is used.
+  await writeFile(join(h.dataDir, 'draft-capture.sqlite3'), 'synthetic publisher marker');
+  let calls = 0;
+  const failed = await syncReplays({ ...h.options, workerCount: 0,
+    draftPublisher: async () => { calls++; throw Error('Synthetic draft publication failure'); } });
+  assert.equal(calls, 1); assert.equal(failed.status, 'partial'); assert.match(failed.error, /轮抽关联发布尚未完成/);
+  assert.equal(failed.downloaded, 1);
+  const success = await syncReplays({ ...h.options, workerCount: 0,
+    draftPublisher: async () => { calls++; return { verified: true, linked_runs: 1, pending_runs: 0, revision: 'a'.repeat(40) }; } });
+  assert.equal(calls, 2); assert.equal(success.status, 'succeeded'); assert.equal(success.draft_links.linked_runs, 1);
 });
 test('saved retention days filter both old local upload candidates and old cloud downloads', async t => {
   const h = await harness(t);

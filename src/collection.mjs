@@ -6,11 +6,12 @@ import { discoverCardDatabase, loadCardNames } from './cards.mjs';
 import { loadInstalledChineseDisplayNames } from './display-names.mjs';
 import { defaultDataDir } from './history.mjs';
 import { validateBundleFiles } from './sync-security.mjs';
+import { collectionAccountKey, collectionPrefix, collectionReadmePath, collectionStoreRoot } from './collection-scope.mjs';
 
 export const MAX_COLLECTION_PART_BYTES = 32 * 1024;
 const SOURCE = 'mtga-reader@0.1.13/readCollection+readInventory';
 const HASH = /^[a-f0-9]{64}$/;
-const PART = /^collection\/latest\/parts\/cards-[0-9]{3,6}\.json$/;
+const PART = /^collection\/(?:accounts\/[a-f0-9]{64}\/)?latest\/parts\/cards-[0-9]{3,6}\.json$/;
 const PREFIX = 'collection/latest/';
 const RARITIES = new Map([[0, 'unknown'], [1, 'basic_land'], [2, 'common'], [3, 'uncommon'], [4, 'rare'], [5, 'mythic']]);
 const CARD_KEYS = ['grpId', 'qty', 'counted_qty', 'duplicate_of', 'name', 'display_name_zh', 'set', 'collector_number', 'rarity', 'is_primary', 'linked_face_ids', 'status'];
@@ -52,7 +53,7 @@ const versionHash = files => digest(JSON.stringify([...files].sort(([a], [b]) =>
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
 const integer = value => Number.isSafeInteger(value) && value >= 0;
 const positive = value => integer(value) && value > 0;
-const location = dataDir => join(resolve(dataDir ?? defaultDataDir()), 'collection');
+const location = (dataDir, accountKey) => collectionStoreRoot(dataDir ?? defaultDataDir(), accountKey);
 
 export class CollectionError extends Error {
   constructor(code, message) { super(message); this.name = 'CollectionError'; this.code = code; }
@@ -155,10 +156,10 @@ function warnings(cards) {
   if (cards.some(card => card.duplicate_of !== null)) result.push(WARNING_FACE);
   return result;
 }
-function shardCards(cards) {
+function shardCards(cards, accountKey) {
   const parts = new Map(); let records = [];
   function add() {
-    const path = `${PREFIX}parts/cards-${String(parts.size + 1).padStart(3, '0')}.json`;
+    const path = `${collectionPrefix(accountKey)}parts/cards-${String(parts.size + 1).padStart(3, '0')}.json`;
     parts.set(path, serialize({ schema: 'MTGA_COLLECTION_CARD_PART_V1', cards: records })); records = [];
   }
   for (const card of cards) {
@@ -173,19 +174,22 @@ function shardCards(cards) {
   return parts;
 }
 function makeFiles(summary, inventory, cards) {
-  const parts = shardCards(cards);
-  const files = new Map([['collection/README.md', README], [`${PREFIX}summary.json`, serialize(summary)], [`${PREFIX}inventory.json`, serialize(inventory)], ...parts]);
+  const prefix = collectionPrefix(summary.account_key), parts = shardCards(cards, summary.account_key);
+  const readme = summary.account_key ? README.replaceAll(PREFIX, prefix) +
+    '\nThis snapshot belongs only to the hashed account_key in its summary. Ownership was explicitly confirmed by the user.\n' : README;
+  const files = new Map([[collectionReadmePath(summary.account_key), readme], [`${prefix}summary.json`, serialize(summary)], [`${prefix}inventory.json`, serialize(inventory)], ...parts]);
   const manifest = { schema: 'MTGA_COLLECTION_MANIFEST_V1', read_at: summary.read_at, verified_at: summary.verified_at,
     content_hash: summary.content_hash, card_content_hash: summary.card_content_hash,
     record_count: summary.record_count, card_kinds: summary.card_kinds, total_quantity: summary.total_quantity,
     parts: [...parts.keys()], files: Object.fromEntries([...files].map(([path, content]) => [path, {
       sha256: digest(content), bytes: Buffer.byteLength(content), record_count: parts.has(path) ? JSON.parse(content).cards.length : 0 }])) };
-  files.set(`${PREFIX}manifest.json`, serialize(manifest));
+  files.set(`${prefix}manifest.json`, serialize(manifest));
   return { files, manifest };
 }
 
 /** Whitelist and enrich one already stable full API result; never reads account data. */
-export async function buildCollectionSnapshot(probe, { cardDb, displayNamesZh } = {}) {
+export async function buildCollectionSnapshot(probe, { cardDb, displayNamesZh, accountKey } = {}) {
+  collectionAccountKey(accountKey);
   const rawInventory = validateProbe(probe);
   let path = cardDb;
   if (path === undefined) { try { path = await discoverCardDatabase(); } catch { path = null; } }
@@ -206,9 +210,11 @@ export async function buildCollectionSnapshot(probe, { cardDb, displayNamesZh } 
       status: name && row?.set && row?.number && row.rarity !== 'unknown' ? 'identified' : 'unidentified' };
   });
   normalizeLinkedFaces(cards, metadata);
-  const cardContentHash = digest(JSON.stringify(cards)), contentHash = digest(JSON.stringify({ cards, inventory: rawInventory }));
+  const cardContentHash = digest(JSON.stringify(cards)), contentHash = digest(JSON.stringify({
+    ...(accountKey ? { account_key: accountKey } : {}), cards, inventory: rawInventory }));
   const verifiedAt = new Date().toISOString();
-  const summary = { schema: 'MTGA_COLLECTION_SUMMARY_V1', read_at: probe.read_at, verified_at: verifiedAt, ...counts(cards),
+  const summary = { schema: 'MTGA_COLLECTION_SUMMARY_V1', ...(accountKey ? { account_key: accountKey } : {}),
+    read_at: probe.read_at, verified_at: verifiedAt, ...counts(cards),
     source: SOURCE, stable_reads: probe.stable_reads, coverage: 'full_collection_api_result; independent_client_comparison_not_encoded',
     warnings: warnings(cards), content_hash: contentHash, card_content_hash: cardContentHash };
   const inventory = { schema: 'MTGA_COLLECTION_INVENTORY_V1', read_at: probe.read_at, verified_at: verifiedAt, content_hash: contentHash, ...rawInventory };
@@ -221,7 +227,10 @@ export async function buildCollectionSnapshot(probe, { cardDb, displayNamesZh } 
 export function validateCollectionSnapshot(snapshot) {
   exactKeys(snapshot, ['files', 'summary', 'inventory', 'manifest', 'cards']);
   const { files, summary, inventory, manifest, cards } = snapshot;
-  requireValue(files instanceof Map); exactKeys(summary, SUMMARY_KEYS); exactKeys(inventory, INVENTORY_KEYS); exactKeys(manifest, MANIFEST_KEYS);
+  requireValue(files instanceof Map);
+  exactKeys(summary, [...SUMMARY_KEYS, ...(Object.hasOwn(summary ?? {}, 'account_key') ? ['account_key'] : [])]);
+  collectionAccountKey(summary.account_key);
+  exactKeys(inventory, INVENTORY_KEYS); exactKeys(manifest, MANIFEST_KEYS);
   requireValue(summary.schema === 'MTGA_COLLECTION_SUMMARY_V1' && inventory.schema === 'MTGA_COLLECTION_INVENTORY_V1' && manifest.schema === 'MTGA_COLLECTION_MANIFEST_V1');
   requireValue(timestamp(summary.read_at) && timestamp(summary.verified_at) && summary.verified_at >= summary.read_at);
   requireValue(inventory.read_at === summary.read_at && inventory.verified_at === summary.verified_at && manifest.read_at === summary.read_at && manifest.verified_at === summary.verified_at);
@@ -252,7 +261,8 @@ export function validateCollectionSnapshot(snapshot) {
   requireValue(computed.total_quantity > 0 && Object.entries(computed).every(([key, value]) => summary[key] === value));
   requireValue(Array.isArray(summary.warnings) && serialize(summary.warnings) === serialize(warnings(cards)));
   const rawInventory = resources({ gold: inventory.gold, gems: inventory.gems, wildcards: inventory.wildcards });
-  requireValue(summary.card_content_hash === digest(JSON.stringify(cards)) && summary.content_hash === digest(JSON.stringify({ cards, inventory: rawInventory })));
+  requireValue(summary.card_content_hash === digest(JSON.stringify(cards)) && summary.content_hash === digest(JSON.stringify({
+    ...(summary.account_key ? { account_key: summary.account_key } : {}), cards, inventory: rawInventory })));
   requireValue(inventory.content_hash === summary.content_hash && manifest.content_hash === summary.content_hash && manifest.card_content_hash === summary.card_content_hash);
   requireValue(Array.isArray(manifest.parts) && object(manifest.files));
   const expected = makeFiles(summary, inventory, cards);
@@ -296,12 +306,15 @@ function comparePrevious(previous, next) {
 }
 
 /** Validate entirely before switching current.json; unchanged card bytes reuse hardlinks. */
-async function saveSnapshot(snapshot, { dataDir } = {}) {
+async function saveSnapshot(snapshot, { dataDir, accountKey } = {}) {
   validateCollectionSnapshot(snapshot);
-  const root = location(dataDir);
-  await mkdir(resolve(root, '..'), { recursive: true, mode: 0o700 }); await directory(root);
+  collectionAccountKey(accountKey);
+  requireValue(snapshot.summary.account_key === accountKey, 'Collection account does not match the destination; no snapshot was saved.');
+  const base = location(dataDir), root = location(dataDir, accountKey);
+  await mkdir(resolve(base, '..'), { recursive: true, mode: 0o700 }); await directory(base);
+  if (accountKey) { await directory(join(base, 'accounts')); await directory(root); }
   return localLock(root, async () => {
-    const previous = await loadCollectionSnapshot({ dataDir }); comparePrevious(previous, snapshot);
+    const previous = await loadCollectionSnapshot({ dataDir, accountKey }); comparePrevious(previous, snapshot);
     await directory(join(root, 'cards')); await directory(join(root, 'versions'));
     const cache = join(root, 'cards', snapshot.summary.card_content_hash);
     const temporaryCache = join(root, 'cards', `.pending-${randomUUID()}`);
@@ -349,11 +362,15 @@ async function saveSnapshot(snapshot, { dataDir } = {}) {
 async function readVersionDirectory(path) {
   await existingDirectory(path); await existingDirectory(join(path, 'parts'));
   const files = new Map();
-  files.set('collection/README.md', await regularText(join(path, 'README.md')));
-  for (const name of ['summary.json', 'inventory.json', 'manifest.json']) files.set(`${PREFIX}${name}`, await regularText(join(path, name)));
   let summary, inventory, manifest;
-  try { summary = JSON.parse(files.get(`${PREFIX}summary.json`)); inventory = JSON.parse(files.get(`${PREFIX}inventory.json`)); manifest = JSON.parse(files.get(`${PREFIX}manifest.json`)); }
+  try { summary = JSON.parse(await regularText(join(path, 'summary.json'))); inventory = JSON.parse(await regularText(join(path, 'inventory.json'))); manifest = JSON.parse(await regularText(join(path, 'manifest.json'))); }
   catch { fail('COLLECTION_INVALID', 'The local collection snapshot is invalid; no upload was attempted.'); }
+  const prefix = collectionPrefix(summary.account_key);
+  files.set(collectionReadmePath(summary.account_key), await regularText(join(path, 'README.md')));
+  for (const [name, value] of [['summary.json', summary], ['inventory.json', inventory], ['manifest.json', manifest]]) {
+    const bytes = await regularText(join(path, name));
+    requireValue(bytes === serialize(value)); files.set(`${prefix}${name}`, bytes);
+  }
   exactKeys(manifest, MANIFEST_KEYS); requireValue(Array.isArray(manifest.parts) && manifest.parts.length > 0 && manifest.parts.length <= 100000);
   const cards = [];
   for (const relative of manifest.parts) {
@@ -372,18 +389,24 @@ async function readVersion(root, version) {
 }
 
 /** Read only the atomically selected successful snapshot; game access is unnecessary. */
-async function loadSnapshot({ dataDir } = {}) {
-  const root = location(dataDir);
+async function loadSnapshot({ dataDir, accountKey } = {}) {
+  const base = location(dataDir), root = location(dataDir, accountKey);
   let bytes;
-  try { await existingDirectory(root); bytes = await regularText(join(root, 'current.json')); }
+  try {
+    await existingDirectory(base);
+    if (accountKey) await existingDirectory(join(base, 'accounts'));
+    await existingDirectory(root); bytes = await regularText(join(root, 'current.json'));
+  }
   catch (error) { if (error.code === 'ENOENT') return null; throw error; }
   let pointer;
   try { pointer = JSON.parse(bytes); } catch { fail('COLLECTION_INVALID', 'The local collection pointer is invalid; no upload was attempted.'); }
   exactKeys(pointer, ['schema', 'version']); requireValue(pointer.schema === 'MTGA_COLLECTION_CURRENT_V1' && HASH.test(pointer.version) && bytes === serialize(pointer));
-  return readVersion(root, pointer.version);
+  const snapshot = await readVersion(root, pointer.version);
+  requireValue(snapshot.summary.account_key === accountKey, 'Saved collection belongs to a different account.');
+  return snapshot;
 }
 function storageFailure(error) {
-  if (error instanceof CollectionError || error?.code === 'MTGA_SYNC_SECURITY') throw error;
+  if (error instanceof CollectionError || ['MTGA_SYNC_SECURITY', 'COLLECTION_ACCOUNT_INVALID'].includes(error?.code)) throw error;
   fail('COLLECTION_STORAGE', 'Local collection storage is unavailable or incomplete; no snapshot was published.');
 }
 export async function saveCollectionSnapshot(snapshot, options = {}) {

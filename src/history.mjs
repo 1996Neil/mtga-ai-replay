@@ -252,6 +252,16 @@ export async function listReplays({ dataDir = defaultDataDir(), limit = 100 } = 
   } finally { database.close(); }
 }
 
+/** Incremental consumers query only IDs known to have changed. */
+export async function listReplaySummaries(matchIds, { dataDir = defaultDataDir() } = {}) {
+  const database = await openDatabase(dataDir);
+  if (!database) return [];
+  try {
+    const query = database.prepare('SELECT r.summary_json, r.updated_at, n.notes_json FROM replays r LEFT JOIN coach_notes n ON n.match_id=r.match_id WHERE r.match_id=?');
+    return [...new Set(matchIds)].flatMap(id => { const row = query.get(id); return row ? [historyEntry(row)] : []; });
+  } finally { database.close(); }
+}
+
 export async function getReplay(matchId, { dataDir = defaultDataDir() } = {}) {
   const database = await openDatabase(dataDir);
   if (!database) return null;

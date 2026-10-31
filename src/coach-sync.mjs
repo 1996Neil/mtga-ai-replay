@@ -71,6 +71,12 @@ export function syncErrorMessage(error) {
 }
 
 async function atomicWrite(path, content) {
+  try {
+    const info = await lstat(path);
+    if (!info.isFile() || info.isSymbolicLink()) fail('SYNC_OUTPUT', 'Sync output must be a regular file.');
+    const expected = Buffer.isBuffer(content) ? content : Buffer.from(content);
+    if (info.size === expected.length && (await readFile(path)).equals(expected)) return;
+  } catch (error) { if (error.code !== 'ENOENT') throw error; }
   const temporary = `${path}.${randomUUID()}.tmp`;
   await mkdir(resolve(path, '..'), { recursive: true, mode: 0o700 });
   await writeFile(temporary, content, { mode: 0o600 });
@@ -295,10 +301,11 @@ async function prepareCheckout(state, meta, run, repoDir, options = {}) {
   const historyOptions = { repository: meta.nameWithOwner, branch,
     historyApproval: validateSyncHistoryApproval(state.history_approval, { repository: meta.nameWithOwner, branch }) };
   const validationSession = options.validationSession ?? createSyncValidationSession();
+  const checkedChangeObjects = new Set();
   const validate = async historyRevision => {
     if (options.fastSync) {
       options.onProgress?.({ phase: 'comparing' });
-      return validateSyncChanges(git, { branch, onValidation: options.onValidation });
+      return validateSyncChanges(git, { branch, onValidation: options.onValidation, checkedObjects: checkedChangeObjects });
     }
     options.onProgress?.({ phase: 'security' });
     return validateStagedRepository(repoDir, { ...historyOptions, validationSession,
@@ -331,7 +338,7 @@ async function prepareCheckout(state, meta, run, repoDir, options = {}) {
 
 /** A failed push leaves safe commits locally. Only their owning command may
  * retry them: otherwise one namespace could silently publish the other. */
-export async function assertOutgoingSyncOwnership(git, branch, namespace, hasRemoteBranch) {
+export async function assertOutgoingSyncOwnership(git, branch, namespace, hasRemoteBranch, accountPathAllowed) {
   const hasHead = String(await git(['for-each-ref', '--format=%(refname)', `refs/heads/${branch}`])).trim();
   if (!hasHead) return;
   const revisions = String(await git(['rev-list', hasRemoteBranch ? `origin/${branch}..HEAD` : 'HEAD'])).trim().split('\n').filter(Boolean);
@@ -339,14 +346,14 @@ export async function assertOutgoingSyncOwnership(git, branch, namespace, hasRem
   if (!allowed) fail('SYNC_NAMESPACE', 'Unknown upload namespace.');
   for (const revision of revisions) {
     const paths = String(await git(['diff-tree', '--root', '-m', '--no-commit-id', '--name-only', '--no-renames', '-r', '-z', revision])).split('\0').filter(Boolean);
-    if (paths.some(path => !allowed(path))) fail('SYNC_FOREIGN_COMMIT', 'Sync checkout contains an unpublished commit belonging to another namespace; finish that sync first.');
+    if (paths.some(path => !allowed(path) || (accountPathAllowed && !accountPathAllowed(path)))) fail('SYNC_FOREIGN_COMMIT', 'Sync checkout contains an unpublished commit belonging to another namespace or account; finish that sync first.');
   }
 }
-export async function assertStagedSyncOwnership(git, namespace) {
+export async function assertStagedSyncOwnership(git, namespace, accountPathAllowed) {
   const allowed = namespace === 'draft' ? isDraftSyncPath : namespace === 'collection' ? isCollectionSyncPath : namespace === 'coach' ? isCoachSyncPath : null;
   if (!allowed) fail('SYNC_NAMESPACE', 'Unknown upload namespace.');
   const paths = String(await git(['diff', '--cached', '--name-only', '-z', '--no-ext-diff', '--no-renames'])).split('\0').filter(Boolean);
-  if (paths.some(path => !allowed(path))) fail('SYNC_FOREIGN_STAGE', 'Another namespace has staged changes; no commit was created.');
+  if (paths.some(path => !allowed(path) || (accountPathAllowed && !accountPathAllowed(path)))) fail('SYNC_FOREIGN_STAGE', 'Another namespace or account has staged changes; no commit was created.');
 }
 
 // Narrow shared boundary for the independent collection command. Its state and

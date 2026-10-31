@@ -10,6 +10,5 @@
 .control-button-row button:hover { background:#47534e; }
 .control-button-row .play-button { background:#587367; min-width:65px; }
 .playback-options summary { padding:4px; font-size:11px; }
-@media(max-width:700px) { .replay-controls { column-gap:8px; } .control-button-row button { padding:4px; font-size:10px; } .control-button-row .play-button {min-width:48px;} .replay-position-title {white-space:normal;line-height:1.3;} .nearby-list {display:flex;} .nearby-action:not(.current) {display:none;} .nearby-action.current {width:100%;} }
 
 .published-source { border: 1px solid #769a94; border-radius: 6px; padding: 4px 8px; color: #c4e7db; font-size: 12px; }

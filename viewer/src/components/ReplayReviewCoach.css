@@ -66,8 +66,3 @@
 .replay-review-marker.severity-major { background: #ffc17d; }
 .replay-review-marker.severity-tip { background: #86cfff; }
 .replay-review-marker.severity-positive { background: #8fe2a7; }
-@media (max-width: 600px) {
-  .replay-review-float { max-height: 60vh; }
-  .replay-review-drag-label { display: none; }
-  .replay-review-drag strong { margin-right: auto; }
-}

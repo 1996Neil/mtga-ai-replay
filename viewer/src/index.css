@@ -40,6 +40,8 @@ a{
   min-height:700px}
 .app-shell{
   display:flex;
+  /* One desktop workspace; smaller windows scroll instead of switching layouts. */
+  min-width:1200px;
   flex-direction:column}
 .app-header{
   height:50px;
@@ -630,22 +632,6 @@ a{
   min-height:30px}
 }
 
-@media(max-width:1100px){
-  .match-caption{
-  display:none}
-.app-header{
-  padding-inline:12px;
-  gap:12px}
-.analysis-drawer{
-  width:280px}
-.player-name{
-  display:none}
-.nearby-list{
-  grid-template-columns:repeat(3,minmax(0,1fr))}
-.nearby-action:nth-child(1),.nearby-action:nth-child(5){
-  display:none}
-}
-
 @media(prefers-reduced-motion:reduce){
   *,*::before,*::after{
   scroll-behavior:auto!important;
@@ -689,7 +675,6 @@ a{
 .sync-details ul{max-height:220px;overflow:auto;padding-left:18px;overflow-wrap:anywhere}
 .sync-details>button{float:right;padding:0 4px}
 @keyframes sync-spin{to{transform:rotate(360deg)}}
-@media(max-width:600px){.app-header{gap:6px 10px}.app-header h1{font-size:14px}.app-header h1 span{font-size:12px}.mode-switch button{padding-inline:12px}.player-info{gap:8px;flex-basis:200px}.player-zone-counts{font-size:10px}}
 @media(prefers-reduced-motion:reduce){.sync-button[aria-busy=true] svg{animation:none}}
 /* Coach controls stay in the toolbar; the expanded panel never takes board space. */
 .live-coach-toolbar { position: relative; flex-shrink: 0; }
@@ -726,8 +711,6 @@ a{
 .coach-voice-provider button { margin-top: 10px; }
 .coach-setup-actions { margin-top: 12px; }
 .live-coach-panel .coach-setup-error { color: #ffccc5; }
-@media(max-width:900px) { .app-header { position: relative; } .live-coach-toolbar { position: static; } .live-coach-panel { left: 12px; right: 12px; top: calc(100% + 6px); width: auto; max-height: calc(100dvh - 160px); } }
-@media(max-width:600px) { .coach-voice-grid { grid-template-columns: 1fr; } .live-coach-panel { padding-inline: 10px; } }
 
 /* Short windows reserve both HUDs and transport; art crops compactly while names/stats stay readable. */
 @media(max-height:760px) {
@@ -747,14 +730,6 @@ a{
   .nearby-action { min-height: 22px; padding-block: 2px; }
   .turn-scrubber { height: 12px; margin-top: 5px; }
   .live-coach-panel { max-height: calc(100dvh - 120px); }
-}
-@media(max-height:760px) and (max-width:700px) {
-  .app-header h1 span { display: none; }
-  .land-row { gap: 6px; }
-  .land-pile { width: 70px; }
-  .land-pile-art { width: 66px; }
-  .playback-options summary { font-size: 11px; padding: 4px; }
-  .turn-scrubber { margin-top: 1px; }
 }
 #root, .app-shell { min-height: 0; }
 .card-readout.card-caption { display: flex; align-items: center; gap: 4px; height: 18px; min-height: 18px; padding: 0 1px; border-radius: 0; background: transparent; }
@@ -776,9 +751,6 @@ a{
 .relationship-arrow { fill: none; stroke-width: 2.5; opacity: .9; stroke-linecap: round; filter: drop-shadow(0 1px 2px #000); }
 .relationship-arrow.source { stroke: var(--relationship-source); }
 .relationship-arrow.target { stroke: var(--relationship-target); }
-@media(max-width:700px) {
-  .card-inspector-overlay { right: 12px; width: min(280px, 75vw, calc((100dvh - 160px) * 5 / 7)); }
-}
 
 .sync-details .task-note { color: #b3c1b8; font-size: 11px; }
 .sync-details > .task-retry { float: none; margin-top: 6px; padding: 7px 10px; }
@@ -810,11 +782,6 @@ a{
 .history-row-bottom{justify-content:space-between}
 .history-row-result{display:flex;align-items:baseline;gap:8px;margin-left:auto;white-space:nowrap}
 .history-row-context{color:#b9c5be;font-size:10px}
-@media(max-width:760px){
-  .app-header{position:relative}
-  .history-picker{position:static}
-  .history-menu{left:12px;right:auto;top:calc(100% + 4px);width:calc(80% - 19.2px);max-height:min(65dvh,540px)}
-}
 
 .draft-picks{margin:0 4px 6px;background:#202628;border-radius:5px}
 .draft-picks>summary{padding:7px;cursor:pointer;font-size:11px}

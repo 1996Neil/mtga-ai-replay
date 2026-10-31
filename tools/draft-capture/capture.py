@@ -75,6 +75,15 @@ def connect(data_dir):
       CREATE TABLE IF NOT EXISTS gaps (
         gap_id TEXT PRIMARY KEY, reason TEXT NOT NULL);
     ''')
+    db.execute("INSERT OR IGNORE INTO meta VALUES ('observation_revision','0')")
+    db.executescript('''
+      CREATE TRIGGER IF NOT EXISTS draft_observations_insert AFTER INSERT ON observations
+      BEGIN UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='observation_revision'; END;
+      CREATE TRIGGER IF NOT EXISTS draft_observations_update AFTER UPDATE ON observations
+      BEGIN UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='observation_revision'; END;
+      CREATE TRIGGER IF NOT EXISTS draft_observations_delete AFTER DELETE ON observations
+      BEGIN UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='observation_revision'; END;
+    ''')
     return db
 
 
@@ -174,11 +183,11 @@ def capture(log_dir, data_dir, before_commit=None, start_now=False):
                 offset = source.tell()
                 source.seek(max(0, offset - 256))
                 checkpoint = digest(source.read(min(256, offset)))
-                db.execute('INSERT INTO sources VALUES (?,?,?,?,?,?) ON CONFLICT(file_key) DO UPDATE SET incarnation=excluded.incarnation,byte_offset=excluded.byte_offset,checkpoint=excluded.checkpoint,account_key=excluded.account_key,disconnected=excluded.disconnected', (key, incarnation, offset, checkpoint, account, departed))
+                db.execute('INSERT INTO sources VALUES (?,?,?,?,?,?) ON CONFLICT(file_key) DO UPDATE SET incarnation=excluded.incarnation,byte_offset=excluded.byte_offset,checkpoint=excluded.checkpoint,account_key=excluded.account_key,disconnected=excluded.disconnected WHERE sources.incarnation IS NOT excluded.incarnation OR sources.byte_offset IS NOT excluded.byte_offset OR sources.checkpoint IS NOT excluded.checkpoint OR sources.account_key IS NOT excluded.account_key OR sources.disconnected IS NOT excluded.disconnected', (key, incarnation, offset, checkpoint, account, departed))
                 active, disconnected = account, departed
         db.execute("INSERT INTO meta VALUES ('initialized','1') ON CONFLICT(key) DO NOTHING")
-        db.execute("INSERT INTO meta VALUES ('active_account',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (account if files else active,))
-        db.execute("INSERT INTO meta VALUES ('disconnected',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (departed if files else disconnected,))
+        db.execute("INSERT INTO meta VALUES ('active_account',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value WHERE meta.value IS NOT excluded.value", (account if files else active,))
+        db.execute("INSERT INTO meta VALUES ('disconnected',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value WHERE meta.value IS NOT excluded.value", (departed if files else disconnected,))
         if before_commit:
             before_commit()
         db.commit()

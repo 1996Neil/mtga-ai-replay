@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { request } from 'node:http';
 import { EventEmitter } from 'node:events';
+import { DatabaseSync } from 'node:sqlite';
 import { mkdtemp, mkdir, writeFile, rm, symlink, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -240,15 +241,19 @@ test('Coach Context is a native JSON attachment with exact before hand, no futur
 
 test('collection API rejects foreign/parameterized actions and excludes concurrent replay publication', async t => {
  let reads=0,release;const gate=new Promise(resolve=>{release=resolve;});
- const {url}=await setup(t,{collectionUpdate:async()=>{reads++;await gate;return {local_updated:true,synced:true,summary:{card_kinds:3,total_quantity:9}};}});
+ const {url,dataDir}=await setup(t,{collectionUpdate:async()=>{reads++;await gate;return {local_updated:true,synced:true,summary:{card_kinds:3,total_quantity:9}};}});
+ const account='a'.repeat(64),catalog=new DatabaseSync(join(dataDir,'draft-capture.sqlite3'));
+ catalog.exec('CREATE TABLE accounts(account_key TEXT PRIMARY KEY,label TEXT); CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT); CREATE TABLE observations(seq INTEGER PRIMARY KEY,observation_id TEXT,body TEXT); CREATE TABLE gaps(gap_id TEXT PRIMARY KEY,reason TEXT);');
+ catalog.prepare('INSERT INTO accounts VALUES (?,?)').run(account,'Synthetic account');catalog.prepare('INSERT INTO meta VALUES (?,?)').run('active_account',account);catalog.close();
+ const path=`api/collection?account=${account}`;
  const headers={Origin:new URL(url).origin,'X-MTGA-Replay-Action':'collection-update','X-MTGA-Replay-Account-Confirmation':'unknown-account-reviewed'};
  for(const override of [{Origin:'https://foreign.invalid'},{'X-MTGA-Replay-Action':'wrong'}])assert.equal((await fetch(url+'api/collection',{method:'POST',headers:{...headers,...override}})).status,403);
  assert.equal((await fetch(url+'api/collection?path=/private',{method:'POST',headers})).status,400);
  assert.equal((await fetch(url+'api/collection',{method:'POST',headers,body:'{}'})).status,400);assert.equal(reads,0);
- const a=await fetch(url+'api/collection',{method:'POST',headers}).then(r=>r.json());
- const b=await fetch(url+'api/collection',{method:'POST',headers}).then(r=>r.json());assert.equal(a.id,b.id);
+ const a=await fetch(url+path,{method:'POST',headers}).then(r=>r.json());
+ const b=await fetch(url+path,{method:'POST',headers}).then(r=>r.json());assert.equal(a.id,b.id);
  assert.equal((await syncPost(url)).status,409);release();
- for(let i=0;i<100;i++){const job=await fetch(url+'api/collection').then(r=>r.json());if(job.status==='succeeded'){assert.equal(reads,1);return;}await new Promise(r=>setTimeout(r,10));}assert.fail('Collection did not finish');
+ for(let i=0;i<100;i++){const job=await fetch(url+path).then(r=>r.json());if(job.status==='succeeded'){assert.equal(reads,1);return;}await new Promise(r=>setTimeout(r,10));}assert.fail('Collection did not finish');
 });
 test('isolated replay providers never expose collection reads or uploads by default', async t => {
  let reads=0;const {url}=await setup(t,{replayProvider:{list:async()=>[],get:async()=>null,latest:async()=>null},collectionUpdate:async()=>{reads++;}});

@@ -3,13 +3,13 @@ import type { ReactNode } from 'react';
 import { createTaskClient, taskPause } from '../lib/taskClient';
 import type { TaskJob } from '../lib/taskClient';
 
-export function LocalTaskButton<Result>({ path, action, capability, label, describe, retryUpload = false, hint, extra }:
+export function LocalTaskButton<Result>({ path, action, capability, label, describe, retryUpload = false, hint, extra, accountKey, accountLabel, disabledReason }:
   { path: '/api/sync' | '/api/collection'; action: 'sync' | 'collection-update'; capability: string;
-    label: (job: TaskJob<Result>) => string; describe: (job: TaskJob<Result>) => string; retryUpload?: boolean; hint: string; extra?: (job: TaskJob<Result>) => ReactNode }) {
+    label: (job: TaskJob<Result>) => string; describe: (job: TaskJob<Result>) => string; retryUpload?: boolean; hint: string; extra?: (job: TaskJob<Result>) => ReactNode; accountKey?: string; accountLabel?: string; disabledReason?: string }) {
   const [available, setAvailable] = useState(false), [job, setJob] = useState<TaskJob<Result>>({ id: null, status: 'idle' });
   const [details, setDetails] = useState(false), [lost, setLost] = useState(false), [starting, setStarting] = useState(true), [requestError, setRequestError] = useState('');
   const busy = useRef(false), controller = useRef<AbortController | null>(null);
-  const client = useMemo(() => createTaskClient<Result>(path, action), [path, action]);
+  const client = useMemo(() => createTaskClient<Result>(path, action, fetch, taskPause, accountKey), [path, action, accountKey]);
   function observe(value: TaskJob<Result>) {
     setJob(value); setStarting(false);
   }
@@ -36,7 +36,7 @@ export function LocalTaskButton<Result>({ path, action, capability, label, descr
   }, [client, capability]);
   async function start(retry = false) {
     if (busy.current || job.status==='needs_recovery') return;
-    if(action==='collection-update'&&!retry&&!window.confirm('当前读取器无法自动识别账户。请核对 Arena 已登录的是预期账户；确认后将读取并更新收藏。是否继续？'))return;
+    if(action==='collection-update'&&!retry&&!window.confirm(`即将更新「${accountLabel ?? '所选账号'}」的收藏。读取器无法自动证明账号身份，请确认 Arena 当前登录的就是这个账号。是否继续？`))return;
     busy.current = true;
     controller.current?.abort(); const abort = new AbortController(); controller.current = abort;
     setRequestError(''); setDetails(true); setStarting(true);
@@ -52,8 +52,8 @@ export function LocalTaskButton<Result>({ path, action, capability, label, descr
   const running = job.status === 'running', success = job.status === 'succeeded';
   const buttonLabel = label(running || details || job.status === 'needs_recovery' ? job : { id: null, status: 'idle' });
   return <div className="replay-sync">
-    <button type="button" className="sync-button" disabled={starting || !available || lost} aria-busy={running || starting} aria-label={buttonLabel} aria-expanded={details} data-status={job.status}
-      title={available ? hint : '当前服务不支持此功能，请更新或重启 Replay 2.0。'} onClick={() => { if (running || job.status === 'needs_recovery') setDetails(true); else void start(); }}>
+    <button type="button" className="sync-button" disabled={starting || !available || lost || Boolean(disabledReason)} aria-busy={running || starting} aria-label={buttonLabel} aria-expanded={details} data-status={job.status}
+      title={disabledReason ?? (available ? hint : '当前服务不支持此功能，请更新或重启 Replay 2.0。')} onClick={() => { if (running || job.status === 'needs_recovery') setDetails(true); else void start(); }}>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">{success && details ? <path d="m5 12 4 4 10-10" /> : <><path d="M20 7v5h-5M4 17v-5h5" /><path d="M6 6a8 8 0 0 1 14 6M18 18a8 8 0 0 1-14-6" /></>}</svg>
       <span role="status" aria-live="polite">{buttonLabel}</span>
     </button>
