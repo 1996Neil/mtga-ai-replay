@@ -1,21 +1,22 @@
 import { readFile, lstat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { listReplays, listReplayDecks, getReplay } from './history.mjs';
+import { listReplays, listReplayDecks } from './history.mjs';
 import { listDraftRuns } from './draft-runs.mjs';
 import { projectDraftCaptures } from './draft-capture.mjs';
 import { bindDraftCaptures, recentDraftCourses, mergeDraftCourse, verifyDraftCourseMatches } from './draft-binding.mjs';
 import { parseDraftBackup } from './draft-backup.mjs';
 import { draftSourceFingerprint, draftLinkPath, linkText, linkDigest, parseDraftLinks, validateDraftLinkSources } from './draft-link-contract.mjs';
-import { serializeCoachJson, buildCoachBundle } from './coach-bundle.mjs';
-import { readSyncCache, syncDigest } from './sync-cache.mjs';
+import { serializeCoachJson } from './coach-bundle.mjs';
+import { draftMatchIdentity } from './draft-match-identity.mjs';
 import { atomicSyncWrite, safeSyncOutputParents } from './coach-sync.mjs';
+import { draftOwnershipPath, readDraftOwnershipCorrections, draftOwnershipCorrection } from './draft-ownership.mjs';
 
 const SHA = /^[a-f0-9]{64}$/;
 const basic = name => /^(?:Snow-Covered )?(?:Plains|Island|Swamp|Mountain|Forest|Wastes)$/.test(name ?? '');
 const fail = () => { throw Error('Draft publication evidence is invalid.'); };
 let rulesPromise;
 function publicationRules() {
-  rulesPromise ??= Promise.all(['draft-publication.mjs', 'draft-binding.mjs', 'draft-link-contract.mjs', 'coach-bundle.mjs']
+  rulesPromise ??= Promise.all(['draft-publication.mjs', 'draft-binding.mjs', 'draft-link-contract.mjs', 'draft-ownership.mjs', 'draft-match-identity.mjs']
     .map(path => readFile(new URL(path, import.meta.url)))).then(parts => linkDigest(Buffer.concat(parts)));
   return rulesPromise;
 }
@@ -30,8 +31,9 @@ async function proofCache(dataDir) {
 }
 export async function cachedDraftDecks(dataDir, history) {
   const records = await proofCache(dataDir), decks = new Map();
-  for (const match of history) if (records[match.id]?.local_revision === match.replay_revision &&
-    Array.isArray(records[match.id].local_deck)) decks.set(match.id, records[match.id].local_deck);
+  for (const match of history) if ((records[match.id]?.local_revision === match.replay_revision ||
+    match.draft_match_identity && records[match.id]?.local_relation_hash === match.draft_match_identity) &&
+    Array.isArray(records[match.id]?.local_deck)) decks.set(match.id, records[match.id].local_deck);
   return decks;
 }
 export function capturesInBackup(snapshot, work = {}) {
@@ -86,6 +88,33 @@ export async function readPublishedDraftMatch(git, revision, entry) {
 }
 
 export async function buildPublishedDraftLinks(snapshot, { dataDir, git, revision, work = {} }) {
+  const ownershipCorrections = await readDraftOwnershipCorrections(dataDir);
+  let priorCorrections;
+  const restoredCorrections = () => priorCorrections ??= (async () => {
+    // An explicit correction survives restore/retry without a machine-local ledger.
+    const corrections = [];
+    if (!String(await git(['ls-tree', '--name-only', revision, '--', 'drafts/index.json'])).trim())
+      return { corrections };
+    const read = async path => {
+      const size = Number(String(await git(['cat-file', '-s', `${revision}:${path}`])).trim());
+      if (!Number.isSafeInteger(size) || size < 1 || size > 4 * 1024 * 1024) fail();
+      const text = String(await git(['show', `${revision}:${path}`]));
+      if (Buffer.byteLength(text) !== size) fail();
+      return text;
+    };
+    const root = parseDraftBackup('drafts/index.json', await read('drafts/index.json'));
+    for (const account of root.accounts) {
+      if (!account.bindings) continue;
+      const text = await read(account.bindings.path);
+      if (linkDigest(text) !== account.bindings.sha256 || Buffer.byteLength(text) !== account.bindings.bytes) fail();
+      const doc = parseDraftLinks(account.bindings.path, text);
+      if (doc.runs.length !== account.bindings.runs) fail();
+      for (const row of doc.runs) if (row.ownership) corrections.push({
+        sources: row.sources, source_account_key: account.account_key, account_key: row.ownership.account_key,
+      });
+    }
+    return { corrections };
+  })();
   const captures = capturesInBackup(snapshot, work), history = await listReplays({ dataDir, limit: null });
   const rawCourses = await loadDraftCourses(dataDir, history);
   const relevantCourses = new Set([...captures.values()].flatMap(runs =>
@@ -94,7 +123,9 @@ export async function buildPublishedDraftLinks(snapshot, { dataDir, git, revisio
   const localDecks = new Map(), changedDecks = [];
   for (const id of new Set(rawCourses.filter(course => relevantCourses.has(course.run_id)).flatMap(course => course.matches.map(match => match.id)))) {
     const previous = cached[id];
-    if (previous?.local_revision === localHistory.get(id)?.replay_revision && Array.isArray(previous.local_deck))
+    if ((previous?.local_revision === localHistory.get(id)?.replay_revision ||
+      localHistory.get(id)?.draft_match_identity && previous?.local_relation_hash === localHistory.get(id).draft_match_identity) &&
+      Array.isArray(previous?.local_deck))
       localDecks.set(id, previous.local_deck);
     else changedDecks.push(id);
   }
@@ -112,7 +143,6 @@ export async function buildPublishedDraftLinks(snapshot, { dataDir, git, revisio
       new Set(remoteIndex.matches.map(entry => entry.match_id)).size !== remoteIndex.matches.length) fail();
   }
   const entries = new Map(remoteIndex.matches.map(entry => [entry.match_id, entry]));
-  const generation = await readSyncCache(dataDir, 'replay-coach-generation-cache.json');
   const remoteDecks = new Map(), remoteOwners = new Map(), proofs = new Map(), remoteMatches = new Map();
   const failures = new Set();
   const wantedIds = [...new Set(localCourses.filter(course => relevantCourses.has(course.run_id)).flatMap(course => course.matches.map(match => match.id)))];
@@ -127,6 +157,7 @@ export async function buildPublishedDraftLinks(snapshot, { dataDir, git, revisio
   const checks = {}, rules = await publicationRules();
   const remember = (id, verdict) => {
     checks[id] = { ...verdict, local_revision: localHistory.get(id)?.replay_revision,
+      local_relation_hash: draftMatchIdentity(localHistory.get(id), localDecks.get(id)),
       local_deck: (localDecks.get(id) ?? []).map(card => ({ arena_id: card.arena_id, name: card.name, quantity: card.quantity ?? card.Quantity ?? 1 })) };
   };
   work.proofs_reused = 0; work.proofs_checked = 0; work.canonical_builds = 0;
@@ -136,9 +167,8 @@ export async function buildPublishedDraftLinks(snapshot, { dataDir, git, revisio
     const local = localHistory.get(id);
     const objectIds = ['manifest.json', 'coach.json', 'cards.json'].map(name => objects.get(`${entry.path}/${name}`));
     if (objectIds.some(oid => !oid)) fail();
-    const generated = generation?.matches?.[id];
-    const key = linkDigest(JSON.stringify([rules, local?.replay_revision, entry.path, entry.content_hash, objectIds,
-      generated?.fast_snapshot, generated?.content_hash, generated?.history_key]));
+    const relationHash = draftMatchIdentity(local, localDecks.get(id));
+    const key = linkDigest(JSON.stringify([rules, relationHash, entry.path, entry.content_hash, objectIds]));
     let source;
     const prior = cached[id];
     if (prior?.key === key && typeof prior.ok === 'boolean') {
@@ -155,17 +185,10 @@ export async function buildPublishedDraftLinks(snapshot, { dataDir, git, revisio
     source = await readPublishedDraftMatch(git, revision, entry);
     if (!local || !SHA.test(local.replay_revision ?? '') ||
       source.proof.event_id !== (local.event_id ?? local.event)) { failures.add(id); remember(id, { key, ok: false }); continue; }
-    // Receipts are only hints: old receipt bootstrapping cannot prove local
-    // facts equal published facts. Rebuild with the published card dictionary
-    // and compare the complete canonical bundle hash before accepting a link.
-    const replay = await getReplay(id, { dataDir });
-    const historyKey = entry.path.slice('matches/'.length);
-    const exactGeneratedSource = generated?.fast_snapshot === syncDigest(replay) &&
-      generated.content_hash === entry.content_hash && generated.history_key === historyKey;
-    if (!exactGeneratedSource) {
-      work.canonical_builds++;
-      const rebuilt = await buildCoachBundle(replay, { cards: source.cards, historyKey, multipart: source.multipart });
-      if (rebuilt.contentHash !== entry.content_hash) { failures.add(id); remember(id, { key, ok: false }); continue; }
+    // A battle-state or timeline repair does not change which draft produced
+    // this match. Verify exact relationship facts against hash-checked remote bytes.
+    if (!relationHash || draftMatchIdentity(source.match, source.deck, source.proof.game_count) !== relationHash) {
+      failures.add(id); remember(id, { key, ok: false }); continue;
     }
     remember(id, { key, ok: true, source: { match: { id: source.match.id, account_key: source.match.account_key ?? null,
       started_at: source.match.started_at, result: source.match.result ?? null },
@@ -173,7 +196,7 @@ export async function buildPublishedDraftLinks(snapshot, { dataDir, git, revisio
     }
     remoteDecks.set(id, source.deck);
     remoteOwners.set(id, source.match.account_key ?? null);
-    proofs.set(id, { ...source.proof, local_revision: local.replay_revision });
+    proofs.set(id, { ...source.proof, local_revision: local.replay_revision, relation_hash: relationHash });
     remoteMatches.set(id, { id, started_at: source.match.started_at, result: source.match.result ?? null,
       game_count: source.proof.game_count });
   }
@@ -185,11 +208,12 @@ export async function buildPublishedDraftLinks(snapshot, { dataDir, git, revisio
     const originals = new Map(sourceRuns.map(run => [run.run_id, run]));
     const localRuns = new Map(bindDraftCaptures(sourceRuns, localCourses).flatMap(run =>
       (run.capture_run_ids ?? [run.run_id]).map(id => [id, run])));
-    const runs = bindDraftCaptures(sourceRuns, remoteCourses).map(run => {
+    const runs = await Promise.all(bindDraftCaptures(sourceRuns, remoteCourses).map(async run => {
       const local = localRuns.get(run.run_id), matched = run.binding === 'matched_pool';
+      if (!matched && local?.capture_run_ids?.[0] !== undefined && local.capture_run_ids[0] !== run.run_id) return null;
       const missing = (local?.matches ?? []).map(match => match.id).filter(id => !run.matches.some(match => match.id === id));
-      const sourceIds = run.capture_run_ids ?? [run.run_id];
-      return {
+      const sourceIds = local?.capture_run_ids ?? run.capture_run_ids ?? [run.run_id];
+      const row = {
         run_id: run.run_id, sources: sourceIds.map(id => ({ run_id: id, sha256: draftSourceFingerprint(originals.get(id)) })),
         event_id: run.event_id, status: matched ? 'linked' : 'pending',
         reason: matched ? null : missing.length ? 'awaiting_match_upload' : run.binding_reason,
@@ -205,8 +229,12 @@ export async function buildPublishedDraftLinks(snapshot, { dataDir, git, revisio
             total_cards: deck.reduce((sum, card) => sum + (card.quantity ?? 1), 0) };
         }) : [], pending_match_ids: missing.sort(),
       };
-    });
-    const doc = { schema: 'MTGA_DRAFT_BINDINGS_V1', account_key: account, runs };
+      const ownership = draftOwnershipCorrection(row, account, ownershipCorrections) ??
+        (matched && run.binding_account_status === 'conflict'
+          ? draftOwnershipCorrection(row, account, await restoredCorrections()) : null);
+      return ownership ? { ...row, ownership } : row;
+    }));
+    const doc = { schema: 'MTGA_DRAFT_BINDINGS_V1', account_key: account, runs: runs.filter(Boolean) };
     parseDraftLinks(draftLinkPath(account), linkText(doc)); validateDraftLinkSources(doc, sourceRuns);
     documents.set(account, doc);
   }
@@ -221,7 +249,7 @@ export async function buildPublishedDraftLinks(snapshot, { dataDir, git, revisio
 export async function draftBindingInputKey(dataDir) {
   const values = [];
   for (const relative of ['draft-capture.sqlite3', 'replays.sqlite3', 'replays.sqlite3-wal', 'replay-ingest.sqlite3', 'replay-ingest.sqlite3-wal',
-    'draft-runs.sqlite3', 'draft-runs.sqlite3-wal', 'coach-sync/state.json', 'replay-coach-generation-cache.json']) {
+    'draft-runs.sqlite3', 'draft-runs.sqlite3-wal', 'coach-sync/state.json', 'replay-coach-generation-cache.json', draftOwnershipPath]) {
     try { const stat = await lstat(join(dataDir, relative), { bigint: true }); values.push([relative, String(stat.size), String(stat.mtimeNs)]); }
     catch (error) { if (error.code !== 'ENOENT') throw error; values.push([relative, null]); }
   }
@@ -241,6 +269,17 @@ export async function readPublishedDraftLinks(captures, { dataDir, history }) {
   parseDraftBackup('drafts/index.json', linkText(saved.index));
   if (saved.index.schema !== 'MTGA_DRAFT_ACCOUNTS_V2' || !saved.documents || Array.isArray(saved.documents)) fail();
   const baselines = new Map(history.map(match => [match.id, match]));
+  // Old archives have no write-time identity yet. Read only the deck columns
+  // needed for changed linked matches; never rebuild their replay bodies.
+  let legacyDecks;
+  const legacyMatches = Object.values(saved.documents).flatMap(doc => (doc.runs ?? []).flatMap(row =>
+    (row.matches ?? []).filter(match => match.relation_hash && baselines.has(match.id) &&
+      !baselines.get(match.id).draft_match_identity && baselines.get(match.id).replay_revision !== match.local_revision)));
+  if (legacyMatches.length) {
+    legacyDecks = await cachedDraftDecks(dataDir, history);
+    const missing = legacyMatches.filter(match => !legacyDecks.has(match.id)).map(match => match.id);
+    if (missing.length) for (const [id, deck] of await listReplayDecks(missing, { dataDir })) legacyDecks.set(id, deck);
+  }
   const output = [];
   for (const account of saved.index.accounts) {
     const sourceRuns = captures.filter(run => run.account_key === account.account_key);
@@ -259,7 +298,10 @@ export async function readPublishedDraftLinks(captures, { dataDir, history }) {
       }
       const matches = row.matches.filter(match => {
         const current = baselines.get(match.id);
-        return current && current.replay_revision === match.local_revision;
+        return current && (match.relation_hash
+          ? (current.draft_match_identity ?? draftMatchIdentity(current, legacyDecks?.get(match.id))) === match.relation_hash ||
+            !current.draft_match_identity && current.replay_revision === match.local_revision
+          : current.replay_revision === match.local_revision);
       }).map(match => ({ id: match.id, account_key: match.account_key, started_at: match.started_at,
         result: match.result, game_count: match.game_count, binding_evidence: 'published_pool_and_main_deck' }));
       if (!matches.length) {
@@ -274,10 +316,13 @@ export async function readPublishedDraftLinks(captures, { dataDir, history }) {
       const scoreVerified = !row.pending_match_ids.length && matches.length === row.matches.length && matches.every(match => ['Win', 'Loss', 'Draw'].includes(match.result)) &&
         row.course.wins === wins && row.course.losses === losses;
       const names = new Map(run.picks.flatMap(pick => pick.candidates).map(card => [card.arena_id, card.name]));
-      output.push({ ...run, binding: 'matched_pool', binding_method: 'exact_card_pool', binding_reason: null,
+      const owner = row.ownership?.account_key ?? run.account_key;
+      output.push({ ...run, account_key: owner,
+        ...(row.ownership ? { capture_account_key: run.account_key, ownership_corrected: true } : {}),
+        binding: 'matched_pool', binding_method: 'exact_card_pool', binding_reason: null,
         binding_publication: saved.revision, bound_run_id: row.course.run_id, binding_card_count: row.course.card_ids.length,
         binding_pending_matches: row.pending_match_ids.length + row.matches.length - matches.length,
-        binding_account_key: matchAccount, binding_account_status: matchAccount ? matchAccount === run.account_key ? 'matched' : 'conflict' : 'unknown',
+        binding_account_key: matchAccount, binding_account_status: matchAccount ? matchAccount === owner ? 'matched' : 'conflict' : 'unknown',
         capture_run_ids: row.sources.map(source => source.run_id), current_module: row.course.module,
         card_pool: row.course.card_ids.map(arena_id => ({ arena_id, name: names.get(arena_id) ?? `Arena card ${arena_id}` })),
         course_wins: row.course.wins, course_losses: row.course.losses, replay_wins: wins, replay_losses: losses,
