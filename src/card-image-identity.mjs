@@ -4,7 +4,24 @@ const links = value => String(value ?? '').split(/[,;|\s]+/).filter(Boolean).map
 const collector = row => `${row.CollectorNumber}${row.CollectorSuffix ?? ''}`;
 /** IDs are linked by Arena's catalog, never by similar names or shared artwork alone. */
 export function resolveCatalogIdentity(row, linked) {
-  if (!row || row.IsToken || row.IsRebalanced) return null;
+  if (!row || row.IsRebalanced) return null;
+  // Arena numbers token printings in their parent expansion; the public
+  // catalog stores that same token sheet separately (FRA -> TFRA).
+  if (row.IsToken) {
+    const token = { requestedId: row.GrpId, primaryId: row.GrpId, faceIndex: 0,
+      set: `t${String(row.ExpansionCode).toLowerCase()}`, collector: collector(row), isToken: true };
+    if (!links(row.LinkedFaceGrpIds).length) return token;
+    // Arena's incubator tokens mark BOTH faces non-primary; use their explicit
+    // reciprocal a/b relationship rather than the ordinary primary flag.
+    if (linked?.IsToken && !linked.IsRebalanced && linked.ExpansionCode === row.ExpansionCode &&
+        links(row.LinkedFaceGrpIds).length === 1 && links(linked.LinkedFaceGrpIds).length === 1 &&
+        links(linked.LinkedFaceGrpIds)[0] === row.GrpId && String(row.CollectorNumber) === String(linked.CollectorNumber) &&
+        [row.CollectorSuffix, linked.CollectorSuffix].sort().join('') === 'ab') {
+      return { ...token, primaryId: row.CollectorSuffix === 'a' ? row.GrpId : linked.GrpId,
+        faceIndex: row.CollectorSuffix === 'a' ? 0 : 1, collector: String(row.CollectorNumber) };
+    }
+    return { ...token, unresolved: true };
+  }
   const reciprocal = linked && links(row.LinkedFaceGrpIds).length === 1 && links(linked.LinkedFaceGrpIds).length === 1
     && links(linked.LinkedFaceGrpIds)[0] === row.GrpId && linked.ExpansionCode === row.ExpansionCode;
   // Arena labels the two faces of e.g. NEO 141 as 141a/141b; the printing is 141.
@@ -46,10 +63,11 @@ export function createCardIdentityResolver({ discover = discoverCardDatabase } =
 const separateFaces = new Set(['transform', 'modal_dfc', 'double_faced_token', 'reversible_card']);
 const sharedFaces = new Set(['prepare', 'adventure', 'split', 'aftermath', 'flip']);
 export function selectPrintedFace(card, identity, { allowMissingArenaId = false } = {}) {
-  if (!identity) return null;
+  if (!identity || identity.unresolved) return null;
   const arenaMatches = card.arena_id === identity.primaryId || allowMissingArenaId && card.arena_id == null;
   if (card.lang !== 'en' || !arenaMatches || card.set?.toLowerCase() !== identity.set
     || card.collector_number !== identity.collector || !card.id || !card.name) return null;
+  if (identity.isToken && !['token', 'double_faced_token', 'emblem'].includes(card.layout)) return null;
   const face = identity.faceIndex ? card.card_faces?.[identity.faceIndex] : card.card_faces?.[0] ?? card;
   if (!face || (identity.faceIndex && !separateFaces.has(card.layout) && !sharedFaces.has(card.layout))) return null;
   const side = separateFaces.has(card.layout) && identity.faceIndex ? 'back' : 'front';
