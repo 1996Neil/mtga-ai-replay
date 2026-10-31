@@ -1,4 +1,5 @@
 import { describeMatchMode } from '../../../src/match-mode.mjs';
+import { normalizeCombatState } from '../../../src/combat-state.mjs';
 import type { CardInstance, CanonicalEvent, CoachNote, DraftRun, GameState, HistoryMatch, ParsedMatch, PlayerState, ReplayStep, Zone } from '../types/game.ts';
 
 type Json = Record<string, any>;
@@ -24,10 +25,7 @@ export function normalizeCard(raw: Json, containingSeat: number, zoneId: number)
     cardTypes: types, name: isHidden ? undefined : raw.name, logicalId: raw.logical_id,
     isTapped: Boolean(raw.is_tapped ?? raw.isTapped),
     power: number(raw.power), toughness: number(raw.toughness), counters,
-    isAttacking: Boolean(raw.is_attacking ?? raw.isAttacking),
-    isBlocking: Boolean(raw.is_blocking ?? raw.isBlocking ?? raw.blocked_attacker_ids?.length),
-    blockedAttackerIds: raw.blocked_attacker_ids ?? raw.blockedAttackerIds ?? [],
-    attackingTargetId: raw.attacking_target_id ?? raw.attackingTargetId,
+    ...normalizeCombatState(raw),
     exiledBy: !isHidden && raw.exiled_by && !hidden(raw.exiled_by) ? number(raw.exiled_by.instance_id) : undefined,
     exileSourceLogicalId: !isHidden && raw.exiled_by && !hidden(raw.exiled_by) ? raw.exiled_by.logical_id : undefined,
     attachedTo: raw.attached_to ?? raw.attachedTo, attachments: raw.attachments ?? [],
@@ -38,7 +36,7 @@ export function normalizeCard(raw: Json, containingSeat: number, zoneId: number)
     manaCost: isHidden ? undefined : raw.mana_cost ?? raw.manaCost,
     typeLine: isHidden ? undefined : raw.type_line ?? raw.typeLine,
     objectType: raw.is_ability ? 'GameObjectType_Ability' : raw.is_token ?? raw.isToken ? 'GameObjectType_Token' : raw.object_type ?? raw.objectType ?? 'GameObjectType_Card',
-    damage: number(raw.damage),
+    damage: number(raw.damage_marked ?? raw.damage),
   };
 }
 
@@ -120,10 +118,13 @@ export function describeEvent(event: CanonicalEvent): string {
     case 'enters': case 'entered_battlefield': return `${card} enters battlefield`;
     case 'attack': return `${card} attacks${target ? ` → ${target}` : ''}`;
     case 'block': return `${card} blocks${target ? ` ${target}` : ''}`;
+    case 'attack_selection': case 'block_selection': return `${actor} selects ${card} to ${event.type === 'attack_selection' ? 'attack' : 'block'}${target ? ` → ${target}` : ''} (unconfirmed)`;
+    case 'attack_selection_cancelled': case 'block_selection_cancelled': return `${actor} cancels ${card}'s combat selection`;
     case 'target': return `${card} targets ${target || 'unknown target'}`;
     case 'damage': return `${event.card ? card : actor} → ${target || '?'}: ${event.amount ?? '?'} damage`;
     case 'life': case 'life_changed': return `Life — Me ${event.life?.me ?? '?'} · Opponent ${event.life?.opponent ?? '?'}`;
     case 'destroy': case 'destroyed': case 'dies': return `${card} dies${event.details ? ` (${words(event.details)})` : ''}`;
+    case 'put_into_graveyard': return `${card} is put into graveyard${event.details ? ` (${words(event.details)})` : ''}`;
     case 'exile': return `${card} is exiled`;
     case 'sacrifice': return `${actor} sacrifices ${card}`;
     case 'discard': return `${actor} discards ${card}`;
@@ -134,6 +135,7 @@ export function describeEvent(event: CanonicalEvent): string {
     case 'ability': return `Ability created from ${card} (classification unknown)`;
     case 'counter': return `${card}: ${event.details || 'counters changed'}${event.amount != null ? ` (${event.amount})` : ''}`;
     case 'state': case 'phase': return `${words(event.phase) || 'State'}${event.step ? ` · ${words(event.step)}` : ''}`;
+    case 'game_over': return 'Game over (terminal snapshot)';
     case 'mulligan': return `${actor} mulligan decision`;
     case 'mulligan_state': return 'My opening hand / mulligan state';
     case 'reveal': return `${actor} reveals ${card}`;
@@ -197,6 +199,8 @@ export function coachContext(match: ParsedMatch, step: ReplayStep, before: boole
     logical_id: c.logicalId, visibility: c.visibility, is_tapped: c.isTapped, power: c.power,
     toughness: c.toughness, counters: c.counters, is_attacking: c.isAttacking,
     is_blocking: c.isBlocking, blocked_attacker_ids: c.blockedAttackerIds,
+    is_blocked: c.isBlocked, attack_state: c.attackState, block_state: c.blockState,
+    attacking_target_id: c.attackingTargetId, damage_marked: c.damage,
     attached_to: c.attachedTo, attachments: c.attachments, targets: c.targets, ability_source: c.abilitySource, is_ability: c.objectType === 'GameObjectType_Ability' });
   const player = (id: number) => {
     const p = s.players.find(p => p.systemSeatId === id)!;
@@ -222,7 +226,15 @@ export function normalizeDraftRuns(raw: unknown): DraftRun[] {
   return arr(data).filter(item => typeof item.run_id === 'string' && typeof item.event === 'string').map(item => ({
     run_id: String(item.run_id), event_id: String(item.event_id ?? ''), event: String(item.event),
     capture_source: item.capture_source === '17lands-local-log' ? item.capture_source : undefined,
-    binding: item.binding === 'unresolved' ? item.binding : undefined,
+    binding: ['unresolved', 'matched_pool'].includes(item.binding) ? item.binding : undefined,
+    bound_run_id: typeof item.bound_run_id === 'string' && /^[a-f0-9]{32}$/.test(item.bound_run_id) ? item.bound_run_id : undefined,
+    binding_method: item.binding_method === 'exact_card_pool' ? item.binding_method : undefined,
+    binding_reason: ['incomplete_picks', 'missing_course', 'ambiguous_courses', 'missing_matches', 'evidence_unavailable', 'awaiting_match_upload'].includes(item.binding_reason) ? item.binding_reason : undefined,
+    binding_card_count: Number.isSafeInteger(item.binding_card_count) && item.binding_card_count > 0 ? item.binding_card_count : undefined,
+    binding_pending_matches: Number.isSafeInteger(item.binding_pending_matches) && item.binding_pending_matches >= 0 ? item.binding_pending_matches : undefined,
+    binding_account_status: ['matched', 'conflict', 'unknown'].includes(item.binding_account_status) ? item.binding_account_status : undefined,
+    binding_account_key: typeof item.binding_account_key === 'string' && /^[a-f0-9]{64}$/.test(item.binding_account_key) ? item.binding_account_key : undefined,
+    capture_run_ids: Array.isArray(item.capture_run_ids) ? item.capture_run_ids.filter((id: unknown) => typeof id === 'string' && /^[a-f0-9]{32}$/.test(id)) : undefined,
     current_module: typeof item.current_module === 'string' ? item.current_module : null,
     started_at: typeof item.started_at === 'string' ? item.started_at : null,
     status: ['in_progress', 'completed'].includes(item.status) ? item.status : 'incomplete',
@@ -239,6 +251,8 @@ export function normalizeDraftRuns(raw: unknown): DraftRun[] {
     })).filter(card => card.arena_id > 0),
     matches: arr(item.matches).filter(match => typeof match.id === 'string').map(match => ({
       id: String(match.id), started_at: String(match.started_at ?? ''),
+      account_key: typeof match.account_key === 'string' && /^[a-f0-9]{64}$/.test(match.account_key) ? match.account_key : undefined,
+      binding_evidence: match.binding_evidence === 'course_context_and_main_deck' ? match.binding_evidence : undefined,
       result: typeof match.result === 'string' ? match.result : null,
       game_count: Number.isSafeInteger(match.game_count) && match.game_count > 0 ? match.game_count : null,
     })),

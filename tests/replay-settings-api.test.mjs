@@ -1,0 +1,24 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { startReplayServer } from '../src/server.mjs';
+import { archiveReplays } from '../src/history.mjs';
+test('settings API validates input/origin and applies local-only retention after preview', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'replay-settings-api-')), viewerDir = join(root, 'viewer'), dataDir = join(root, 'data');
+  await mkdir(viewerDir); await writeFile(join(viewerDir, 'index.html'), '<title>Fixture</title>');
+  await archiveReplays([{ match: { id: 'expired-api', started_at: '2020-01-01T00:00:00Z' }, games: [] }], { dataDir });
+  const server = await startReplayServer({ dataDir, viewerDir, observeLocalLogs: false, displayNamesZh: new Map() });
+  t.after(async () => { await server.close(); await rm(root, { recursive: true, force: true }); });
+  const path = server.url + 'api/replay-settings';
+  const preview = await fetch(path + '?days=7').then(response => response.json());
+  assert.equal(preview.expired_records, 1);
+  assert.equal((await fetch(path, { method: 'POST', body: '{}' })).status, 403);
+  const headers = { Origin: new URL(server.url).origin, 'X-MTGA-Replay-Action': 'replay-settings', 'Content-Type': 'application/json' };
+  assert.equal((await fetch(path, { method: 'POST', headers, body: '{"retention_days":0}' })).status, 400);
+  const response = await fetch(path, { method: 'POST', headers, body: '{"retention_days":7}' });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).deleted_records, 1);
+  assert.deepEqual((await fetch(path).then(response => response.json())).settings, { retention_days: 7 });
+});

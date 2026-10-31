@@ -2,7 +2,12 @@
 import { resolve } from 'node:path';
 import { updateCollection,syncCollection,collectionStatus,collectionErrorMessage,recoverCollectionOperationLock } from '../src/collection-update.mjs';
 import { recoverCoachSyncLock } from '../src/coach-sync.mjs';
-const HELP=`mtga-gpt-collection update --confirm-account [--no-sync]\nmtga-gpt-collection status [--recover-lock] [--recover-sync-lock]\nmtga-gpt-collection sync\n\n保持 Arena 已登录并停在首页/收藏；仅 update 需要游戏运行。\n权限仅授予收藏读取 helper，文件保存与上传使用普通用户。\n`;
+import { readDraftCapture } from '../src/draft-capture.mjs';
+import { defaultDataDir } from '../src/history.mjs';
+import { validAccountKey } from '../src/account-scope.mjs';
+import { collectionPrefix } from '../src/collection-scope.mjs';
+import { createInterface } from 'node:readline/promises';
+const HELP=`mtga-gpt-collection update [--account <账号键>] [--confirm-account] [--no-sync]\nmtga-gpt-collection status [--account <账号键> | --legacy] [--recover-lock] [--recover-sync-lock]\nmtga-gpt-collection sync [--account <账号键>]\n\n默认使用本机采集器识别的 Arena 活动账号；update 必须确认游戏实际登录同一账号。\n--legacy 只读查看归属不明的旧收藏。仅 update 需要游戏运行。\n权限仅授予收藏读取 helper，文件保存与上传使用普通用户。\n`;
 function localTime(value){return value?new Date(value).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}):'无';}
 function totals(summary,inventory){
  if(!summary){console.log('本地暂无成功收藏快照。');return;}
@@ -21,12 +26,27 @@ try {
     else if(args[i]==='--recover-lock'&&command==='status')options.recoverLock=true;
     else if(args[i]==='--recover-sync-lock'&&command==='status')options.recoverSyncLock=true;
     else if(args[i]==='--no-sync'&&command==='update')options.noSync=true;
+    else if(args[i]==='--account'&&args[i+1])options.accountKey=args[++i];
+    else if(args[i]==='--legacy'&&command==='status')options.legacy=true;
     else if(args[i]==='--data-dir'&&args[i+1])options.dataDir=resolve(args[++i]);
     else throw new Error('USAGE');
   }
+  if(options.legacy&&options.accountKey)throw new Error('USAGE');
+  if (!options.legacy) {
+    const catalog=await readDraftCapture({dataDir:options.dataDir??defaultDataDir()});
+    options.accountKey??=catalog.active_account;
+    if(!validAccountKey(options.accountKey)||!catalog.accounts.some(item=>item.account_key===options.accountKey))throw Object.assign(new Error(),{code:'COLLECTION_ACCOUNT_INVALID'});
+    const account=catalog.accounts.find(item=>item.account_key===options.accountKey);
+    console.log(`收藏账号：${account.label} · ${options.accountKey.slice(0,8)}`);
+    if(command==='update'&&!options.confirmAccount&&process.stdin.isTTY){
+      const prompt=createInterface({input:process.stdin,output:process.stdout});
+      try{options.confirmAccount=(await prompt.question(`请确认 Arena 当前登录的是「${account.label}」；读取器无法自动证明账号身份。输入 YES 继续：`)).trim()==='YES';}
+      finally{prompt.close();}
+    }
+  }
   if(command==='update'||command==='sync') {
    const r=await (command==='update'?updateCollection:syncCollection)(options);totals(r.summary,r.inventory);
-   if(r.synced)console.log(`远端已校验：${r.sync.repository} @ ${r.sync.last_synced.commit}\nGPT 可从仓库 collection/latest/summary.json 开始读取。`);
+   if(r.synced)console.log(`远端已校验：${r.sync.repository} @ ${r.sync.last_synced.commit}\nGPT 可从仓库 ${collectionPrefix(options.accountKey)}summary.json 开始读取。`);
    else if(r.no_sync)console.log('本地更新成功；本次未同步远端。');
    else {console.log('本地更新成功，远端未更新。请运行 mtga-gpt-collection sync 重试。');if(r.sync_error)console.log(r.sync_error);process.exitCode=2;}
   }else if(command==='status'){

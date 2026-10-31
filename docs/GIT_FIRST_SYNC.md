@@ -1,5 +1,10 @@
 # Git-first incremental sync
 
+> Historical CLI workflow. Since 2026-10-30 the default Viewer uses independent
+> local ingestion and bidirectional sync instead. See
+> [INCREMENTAL_SYNC.md](INCREMENTAL_SYNC.md) for the current button and retention
+> settings. The implementation below remains available to legacy callers.
+
 New replays are parsed into `replay-outbox/replays.sqlite3`, a durable local
 transmission queue that is not the Viewer archive. The publisher uses the
 configured private repository and canonical exclusions. Only the exact snapshot

@@ -139,7 +139,8 @@ test('a running reader discovers a newly created log and clears committed combat
     gameObjects: [object(101, 1001, 2, 20, { attackState: 'AttackState_Declared', attackInfo: { targetId: 1 } })] })),
     msg(3, diff(3, { gameObjects: [object(101, 1001, 2, 20)] })))));
   const [selected, cancelled] = await source.pollOnce();
-  assert.deepEqual(selected.committed_combat.attackers, [101]); assert.deepEqual(cancelled.committed_combat.attackers, []);
+  assert.deepEqual(selected.committed_combat.attackers, []); assert.deepEqual(cancelled.committed_combat.attackers, []);
+  assert.deepEqual(selected.tentative.attackers, [101]);
   assert.equal(cancelled.tentative.known, false);
   await appendFile(path, text(envelope(msg(4, diff(4, { gameObjects: [object(101, 1001, 2, 20,
     { attackState: 'AttackState_Attacking', attackInfo: { targetId: 1 } })] })), msg(5, diff(5, { turnInfo: { step: 'Step_EndCombat' } })))));

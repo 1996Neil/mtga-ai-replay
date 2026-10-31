@@ -48,7 +48,7 @@ test('published-history session never reads the local draft sidecar', async t =>
 
 test('integrated UI retains draft groups, published source label and outer menu closing', async () => {
   const app = await readFile(new URL('../viewer/src/App.tsx', import.meta.url), 'utf8');
-  for (const pattern of [/draftRuns\.map/, /run\.replay_wins/, /run\.replay_losses/, /publishedSource\.revision/, /ref=\{historyPicker\}/, /void refreshDraftRuns\(\)/]) assert.match(app, pattern);
+  for (const pattern of [/draftRuns\.map/, /run\.replay_wins/, /run\.replay_losses/, /publishedSource\.revision/, /ref=\{historyPicker\}/, /void refreshDraftRuns\(/]) assert.match(app, pattern);
   assert.doesNotMatch(app, /closest\('details'\)/);
   assert.match(app, /historyPicker\.current\.open = false/);
 });

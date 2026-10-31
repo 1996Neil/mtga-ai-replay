@@ -1,5 +1,6 @@
 import { prepareHandKnowledge, updateHandKnowledge, handKnowledgeView } from './hand-knowledge.mjs';
 import { prepareExileLinks, updateExileLinks, visibleExileSource } from './exile-links.mjs';
+import { projectCombatState } from './combat-state.mjs';
 // Visual projection of the existing chronological PerspectiveState. This module
 // has no log reader/parser of its own and never resolves a future identity.
 const has = (a, type) => (Array.isArray(a.type) ? a.type : [a.type]).includes(`AnnotationType_${type}`);
@@ -131,10 +132,7 @@ export function visualSnapshot(state, names, { me = 'Me', opponent = 'Opponent',
       has_summoning_sickness: object.hasSummoningSickness ?? null,
       is_copy: object.isCopy ?? null,
       colors: Array.isArray(object.color) ? object.color.map(color => color.replace('CardColor_', '')) : [],
-      counters, is_attacking: ['AttackState_Declared', 'AttackState_Attacking'].includes(object.attackState),
-      attacking_target_id: object.attackInfo?.targetId ?? null,
-      is_blocking: (object.blockInfo?.attackerIds?.length ?? 0) > 0,
-      blocked_attacker_ids: [...(object.blockInfo?.attackerIds ?? [])],
+      counters, ...projectCombatState(object),
       attached_to: attachments.get(id) ?? null,
       attachments: [...attachments].filter(([, host]) => host === id).map(([attached]) => attached),
       targets: targetMap.get(id) ?? [],
@@ -188,7 +186,20 @@ export function visualSnapshot(state, names, { me = 'Me', opponent = 'Opponent',
     gameStateId, players, stack, warnings: ['Priority is the last observed GRE value; unrecorded priority windows are unknown.'] };
 }
 
-export function visibleStateSignature(snapshot) {
+export function visibleStateSignature(snapshot, { omitTentativeCombat = false } = {}) {
   const { priorityPlayer, gameStateId, warnings, ...meaningful } = snapshot;
+  if (omitTentativeCombat) {
+    const committed = card => ({
+      ...card,
+      ...(card.attack_state === 'AttackState_Declared' ? {
+        attack_state: 'AttackState_None', is_attacking: false, attacking_target_id: null,
+      } : {}),
+      ...(card.block_state === 'BlockState_Declared' ? {
+        block_state: 'BlockState_None', is_blocking: false, blocked_attacker_ids: [],
+      } : {}),
+    });
+    return JSON.stringify({ ...meaningful, players: Object.fromEntries(Object.entries(meaningful.players).map(([role, player]) =>
+      [role, { ...player, battlefield: player.battlefield.map(committed) }])) });
+  }
   return JSON.stringify(meaningful);
 }

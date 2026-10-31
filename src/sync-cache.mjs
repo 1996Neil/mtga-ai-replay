@@ -111,10 +111,14 @@ export async function writeSyncCache(dataDir, name, value) {
   const directory = await lstat(dataDir);
   if (!directory.isDirectory() || directory.isSymbolicLink()) return;
   const path = join(dataDir, name), temporary = `${path}.${randomUUID()}.tmp`;
+  const bytes = JSON.stringify({ ...value, schema: 'MTGA_SYNC_CACHE_V1' }) + '\n';
   try {
-    try { const info = await lstat(path); if (!info.isFile() || info.isSymbolicLink()) return; }
+    try {
+      const info = await lstat(path); if (!info.isFile() || info.isSymbolicLink()) return;
+      if (info.size === Buffer.byteLength(bytes) && await readFile(path, 'utf8') === bytes) return;
+    }
     catch (error) { if (error.code !== 'ENOENT') throw error; }
-    await writeFile(temporary, JSON.stringify({ ...value, schema: 'MTGA_SYNC_CACHE_V1' }) + '\n', { mode: 0o600, flag: 'wx' });
+    await writeFile(temporary, bytes, { mode: 0o600, flag: 'wx' });
     await rename(temporary, path);
   } finally { await rm(temporary, { force: true }); }
 }

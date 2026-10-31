@@ -13,16 +13,16 @@ import { configureCoachSync, enqueueCoachBundle, syncCoachBundles, getCoachSyncS
   withCoachSyncLock, recoverCoachSyncLock } from '../src/coach-sync.mjs';
 
 const execute = promisify(execFile);
-const REPOSITORY = 'example-user/mtga-replay-data', REMOTE = `https://github.com/${REPOSITORY}.git`;
+const REPOSITORY = '1996Neil/mtga-ai-replay-data', REMOTE = `https://github.com/${REPOSITORY}.git`;
 const digest = text => createHash('sha256').update(text).digest('hex');
 const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' };
 
-async function snapshot({ count = 5, readAt = '2026-10-02T00:00:00.000Z' } = {}) {
+async function snapshot({ count = 5, readAt = '2026-10-02T00:00:00.000Z', accountKey } = {}) {
   const cards = Array.from({ length: count }, (_, index) => ({ grpId: 900000 + index, qty: (index % 4) + 1 }));
   const inventory = { gold: 3210, gems: 123, wildcards: { common: 8, uncommon: 7, rare: 6, mythic: 5 } };
   return buildCollectionSnapshot({ schema: 'MTGA_COLLECTION_PROBE_V1', read_at: readAt,
     source: 'mtga-reader@0.1.13/readCollection+readInventory', stable_reads: 2, cards, inventory,
-    content_hash: digest(JSON.stringify({ cards, inventory })) }, { cardDb: null, displayNamesZh: new Map() });
+    content_hash: digest(JSON.stringify({ cards, inventory })) }, { cardDb: null, displayNamesZh: new Map(), accountKey });
 }
 async function replay(richer = false) {
   const forest = { arena_id: 1, name: 'Forest', instance_id: 101, logical_id: 'C1', visibility: 'public', card_types: ['Land'], counters: [] };
@@ -80,6 +80,33 @@ async function harness(t, { seed = true } = {}) {
 }
 const publishedMap = async (h, prefix) => new Map(await Promise.all((await h.tree(prefix)).map(async path => [path, await h.published(path)])));
 const assertMapUnchanged = async (h, map) => { for (const [path, bytes] of map) assert.equal(await h.published(path), bytes); };
+
+test('account-scoped publication preserves legacy and other account files and receipts', async t => {
+  const h = await harness(t), A = 'a'.repeat(64), B = 'b'.repeat(64);
+  await syncCollectionSnapshot(await snapshot(), h.options);
+  const legacy = await publishedMap(h, 'collection/');
+  const a = await snapshot({ accountKey: A }), b = await snapshot({ accountKey: B });
+  await syncCollectionSnapshot(a, { ...h.options, accountKey: A });
+  const firstAccount = await publishedMap(h, `collection/accounts/${A}/`);
+  await syncCollectionSnapshot(b, { ...h.options, accountKey: B });
+  await assertMapUnchanged(h, legacy); await assertMapUnchanged(h, firstAccount);
+  for (const [path, bytes] of b.files) assert.equal(await h.published(path), bytes);
+  assert.equal((await getCollectionSyncStatus({ ...h.options, accountKey: A })).last_synced.content_hash, a.summary.content_hash);
+  assert.equal((await getCollectionSyncStatus({ ...h.options, accountKey: B })).last_synced.content_hash, b.summary.content_hash);
+  await assert.rejects(syncCollectionSnapshot(a, { ...h.options, accountKey: B }), { code: 'COLLECTION_ACCOUNT_INVALID' });
+});
+
+test('one account cannot publish another account pending commit after failed push', async t => {
+  const h = await harness(t), A = 'a'.repeat(64), B = 'b'.repeat(64);
+  const a = await snapshot({ accountKey: A }), b = await snapshot({ accountKey: B });
+  h.control.rejectPush = true;
+  await assert.rejects(syncCollectionSnapshot(a, { ...h.options, accountKey: A }));
+  h.control.rejectPush = false;
+  await assert.rejects(syncCollectionSnapshot(b, { ...h.options, accountKey: B }), { code: 'SYNC_FOREIGN_COMMIT' });
+  await syncCollectionSnapshot(a, { ...h.options, accountKey: A });
+  await syncCollectionSnapshot(b, { ...h.options, accountKey: B });
+  for (const [path, bytes] of [...a.files, ...b.files]) assert.equal(await h.published(path), bytes);
+});
 
 test('collection publishes exact remote manifest and bytes while retaining all replay files; later replay retains collection', async t => {
   const h = await harness(t), before = await publishedMap(h), value = await snapshot();
