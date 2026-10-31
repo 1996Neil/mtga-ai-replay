@@ -8,7 +8,6 @@
 .full-card-board .player-header { position:relative; min-height:40px; }
 .full-card-board .player-header .player-info { grid-column:2; justify-self:center; transform:none; }
 .full-card-board .player-header .player-extras { position:absolute; grid-column:auto; right:0; top:50%; transform:translateY(-50%); }
-@media(max-width:700px) { .full-card-board { --battlefield-land-track:minmax(155px,32%); --battlefield-column-gap:8px; } }
 /* Reserve a stable right-hand stack lane on wide boards even when empty, so
  * stack appearance never moves cards and centering cannot cover a permanent. */
 @container replay-board (min-width:1100px) {

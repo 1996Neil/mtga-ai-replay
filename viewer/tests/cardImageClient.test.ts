@@ -82,3 +82,14 @@ test('late rate-limit reply from an aborted observer cannot replace a successful
  assert.equal(client.snapshot(100).phase,'ready');assert.equal(client.snapshot(100).issue,undefined);
  assert.equal(client.snapshot(100).retryAt,0);stop();
 });
+test('repeated successful image events across subscribers leave an already ready snapshot unchanged', async () => {
+ let calls=0,notifications=0;
+ const client=createCardImageClient({fetcher:async()=>{calls++;return Response.json({image_available:true});}});
+ const stops=Array.from({length:40},()=>client.subscribe(100,()=>{notifications++;}));
+ await tick();
+ const state=client.snapshot(100),before=notifications;
+ for(let i=0;i<40;i++)client.imageLoaded(100,state.attempt);
+ assert.strictEqual(client.snapshot(100),state);
+ assert.equal(notifications,before);assert.equal(calls,1);
+ stops.forEach(stop=>stop());
+});

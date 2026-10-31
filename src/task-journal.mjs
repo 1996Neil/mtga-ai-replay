@@ -37,6 +37,7 @@ export function createTaskJournal(dataDir) {
     return output;
   }
   return {
+    kinds: () => db.prepare('SELECT kind FROM task').all().map(row => row.kind),
     load(kind) {
       const row=read.get(kind);if(!row)return null;
       const job=sanitize(JSON.parse(row.value));

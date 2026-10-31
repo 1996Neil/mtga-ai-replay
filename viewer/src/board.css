@@ -63,7 +63,6 @@
 .empty-hand-label { display:block; margin-top:12px; }
 .relationship-arrow.attack { stroke:var(--relationship-attack); stroke-dasharray:5 4; }
 .relationship-arrow.block { stroke:var(--relationship-block); }
-@media(max-width:700px) { .game-board {padding-inline:6px;} .board-play-area {grid-template-columns:minmax(155px,32%) minmax(0,1fr);gap:8px;} .board-center-lane {grid-template-columns:1fr;gap:0;} .combat-summary {font-size:10px;gap:0;} .combat-legend {display:none;} }
 
 .board-scroll-controls { display:none; }
 @media(max-height:650px) { .board-scroll-controls { position:sticky; top:0; z-index:30; display:flex; align-items:center; justify-content:flex-end; gap:10px; min-height:26px; flex-shrink:0; background:#202a26; color:#bfcec5; font-size:10px; } .board-scroll-controls button { padding:3px 8px; border:1px solid #5d7062; border-radius:3px; } }
@@ -90,7 +89,6 @@
 .full-card-board .player-identity { flex-wrap:nowrap; gap:7px; }
 .full-card-board .player-extras { grid-column:3; display:flex; flex-wrap:wrap; justify-content:flex-end; align-items:center; min-width:0; gap:6px; }
 .full-card-board .player-extras .player-zones { margin-left:0; }
-@media(max-width:700px) { .full-card-board .player-info { gap:6px; } .full-card-board .player-name { max-width:66px; } .full-card-board .player-zone-counts { display:block; font-size:10px; } .full-card-board .player-extras .opponent-hand { display:none; } }
 
 .card-image-retry { position: relative; z-index: 2; padding: .4rem; font-size: .8rem; color: inherit; background: #1c2635; border: 1px solid #8192ab; border-radius: .35rem; cursor: pointer; }
 .card-image-retry:disabled { opacity: .7; cursor: wait; }

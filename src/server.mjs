@@ -1,9 +1,13 @@
 import { filterAccount, validAccountKey } from './account-scope.mjs';
 import { listCapturedDraftRuns, readDraftCapture } from './draft-capture.mjs';
 import { listDraftRuns, withDraftRunLandColors } from './draft-runs.mjs';
+import { bindDraftCaptures, recentDraftCourses, mergeDraftCourse, verifyDraftCourseMatches } from './draft-binding.mjs';
+import { readPublishedDraftLinks, cachedDraftDecks } from './draft-publication.mjs';
 import { discoverCardDatabase, loadCardLandColors, loadCardNames } from './cards.mjs';
 import { createTaskJournal } from './task-journal.mjs';
 import { createServer } from 'node:http';
+import { createHash } from 'node:crypto';
+import { fileRevision, revisionMemo } from './lightweight.mjs';
 import { readFile, stat, realpath, mkdir, writeFile, rm } from 'node:fs/promises';
 import { resolve, join, extname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,10 +17,12 @@ import { getCardMetadata, getCardImage, cardImageIsCached, cardImageRetryAfter, 
 import { createCoachContext } from './coach-context.mjs';
 import { loadInstalledChineseDisplayNames } from './display-names.mjs';
 import { createViewerSync } from './viewer-sync.mjs';
-import { createViewerCollection } from './viewer-collection.mjs';
+import { createAccountViewerCollections } from './viewer-collection.mjs';
 import { notifyViewerTask } from './task-notification.mjs';
 import { createLocalReplayHistory } from './viewer-local-history.mjs';
 import { createCloudReviewReader } from './review/review-sync.mjs';
+import { readDraftReview } from './review/draft-review.mjs';
+import { readDraftDeckComparison } from './review/draft-decks.mjs';
 import { findReviewGame } from './review/review-model.mjs';
 import { syncReplays } from './replay-sync.mjs';
 import { replayWorker } from './replay-worker.mjs';
@@ -34,7 +40,7 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
   let assignedPort, closePromise, closing = false;
   const journal = enableReplaySync || enableCollection ? createTaskJournal(dataDir) : null;
   const sync = createViewerSync({ dataDir, workflow: syncWorkflow ?? syncReplays, notify: notifyTask, journal });
-  const collection = createViewerCollection({ dataDir, update: collectionUpdate, sync: collectionSync, notify: notifyTask, journal });
+  const collection = createAccountViewerCollections({ dataDir, update: collectionUpdate, sync: collectionSync, notify: notifyTask, journal });
   let queuedAutoSync = null;
   function requestAutoSync() {
     if (queuedAutoSync || closing) return;
@@ -58,20 +64,79 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
   const reviews = reviewReader ?? createCloudReviewReader({ loadReplay: replayById, dataDir });
   let landColorCatalog, draftNameCatalog;
   const draftDeckCache = new Map();
-  async function draftRunsForDisplay() {
+  const draftBindingCache = {};
+  const workCounters = { history_loads: 0, draft_loads: 0, account_loads: 0 };
+  const historyFiles = ['replays.sqlite3', 'replays.sqlite3-wal'];
+  const archiveCards = new Map(); let archiveCardsRevision;
+  const draftFiles = [...historyFiles, 'draft-capture.sqlite3', 'draft-runs.sqlite3', 'draft-runs.sqlite3-wal',
+    'replay-ingest.sqlite3', 'replay-ingest.sqlite3-wal', 'draft-sync/published.json', 'draft-sync/published-bindings.json'];
+  const localCatalog = revisionMemo(() => fileRevision(dataDir, historyFiles), async () => {
+    workCounters.history_loads++;
+    return listReplays({ dataDir, limit: null });
+  });
+  const draftRunsForDisplay = revisionMemo(() => fileRevision(dataDir, draftFiles), loadDraftRunsForDisplay);
+  async function loadAccountCatalog() {
+    workCounters.account_loads++;
+    const captured = includeLocalHistory && sourceIdentity?.kind !== 'published-history'
+      ? await readDraftCapture({ dataDir, metadataOnly: true }) : { accounts: [], active_account: null };
+    const accounts = new Map(captured.accounts.map(a => [a.account_key, a]));
+    for (const entry of await replayCatalog()) if (validAccountKey(entry.account_key) && !accounts.has(entry.account_key))
+      accounts.set(entry.account_key, { account_key: entry.account_key, label: '账号 ' + entry.account_key.slice(0, 8) });
+    return { accounts: [...accounts.values()], active_account: captured.active_account };
+  }
+  const accountCatalog = replayProvider ? loadAccountCatalog :
+    revisionMemo(() => fileRevision(dataDir, ['draft-capture.sqlite3', ...historyFiles]), loadAccountCatalog);
+  async function catalogRevision() {
+    const digest = value => createHash('sha256').update(value).digest('hex');
+    if (sourceIdentity?.kind === 'published-history') {
+      const revision = digest(JSON.stringify(sourceIdentity));
+      return { history: revision, drafts: revision, accounts: revision };
+    }
+    const [history, drafts, accounts] = await Promise.all([
+      fileRevision(dataDir, historyFiles), fileRevision(dataDir, draftFiles), accountCatalog(),
+    ]);
+    const provider = replayProvider ? JSON.stringify(await replayProvider.list()) : '';
+    return { history: digest(history + provider), drafts: digest(drafts), accounts: digest(JSON.stringify(accounts)) };
+  }
+  async function loadDraftRunsForDisplay() {
     if (!includeLocalHistory || sourceIdentity?.kind === 'published-history') return [];
+    workCounters.draft_loads++;
     draftNameCatalog ??= cardNames.size ? Promise.resolve(cardNames) : discoverCardDatabase().then(loadCardNames).catch(() => new Map());
-    const runs = [...await listDraftRuns({ dataDir }), ...await listCapturedDraftRuns({ dataDir, cardNames: await draftNameCatalog })];
-    if (!runs.length) return runs;
-    landColorCatalog ??= discoverCardDatabase().then(loadCardLandColors).catch(() => new Map());
-    const latestIds = runs.flatMap(run => [...run.matches].sort((a, b) => String(b.started_at).localeCompare(String(a.started_at)) || b.id.localeCompare(a.id)).slice(0, 1).map(match => match.id));
-    const decks = await listReplayDecks(latestIds, { dataDir, cache: draftDeckCache });
-    const ownership = new Map((await listReplays({ dataDir, limit: null })).map(item => [item.id, item.account_key]));
-    return withDraftRunLandColors(runs, decks, await landColorCatalog).map(run => {
-      if (run.capture_source) return run;
-      const keys = new Set(run.matches.map(m => ownership.get(m.id)));
+    const history = await localCatalog();
+    const ownership = new Map(history.map(item => [item.id, item.account_key]));
+    const knownCourses = new Map((await listDraftRuns({ dataDir })).map(run => [run.run_id, run]));
+    const sourceCaptures = await listCapturedDraftRuns({ dataDir, cardNames: await draftNameCatalog });
+    let publishedCaptures;
+    try { publishedCaptures = await readPublishedDraftLinks(sourceCaptures, { dataDir, history }); }
+    catch { publishedCaptures = sourceCaptures.map(run => ({ ...run, binding: 'unresolved', binding_reason: 'evidence_unavailable' })); }
+    let bindingUnavailable = false;
+    if (publishedCaptures === null) try {
+      for (const run of await recentDraftCourses(history, { dataDir, cache: draftBindingCache }))
+        knownCourses.set(run.run_id, mergeDraftCourse(knownCourses.get(run.run_id), run));
+    } catch { bindingUnavailable = true; } // Saved picks remain readable while derived evidence is unavailable.
+    const rawCourses = [...knownCourses.values()].map(run => {
+      const keys = new Set(run.matches.map(match => ownership.get(match.id)));
       return { ...run, account_key: keys.size === 1 && validAccountKey([...keys][0]) ? [...keys][0] : null };
     });
+    let legacyCaptures;
+    if (publishedCaptures === null) {
+      const allDecks = await listReplayDecks(rawCourses.flatMap(run => run.matches.map(match => match.id)), { dataDir, cache: draftDeckCache });
+      legacyCaptures = bindDraftCaptures(sourceCaptures, verifyDraftCourseMatches(rawCourses, allDecks, ownership));
+    }
+    const captures = (publishedCaptures ?? legacyCaptures)
+      .map(run => bindingUnavailable && run.binding_reason === 'missing_course' ? { ...run, binding_reason: 'evidence_unavailable' } : run);
+    const attached = new Set(captures.filter(run => run.binding === 'matched_pool' && run.binding_account_status === 'matched').map(run => run.bound_run_id));
+    const runs = [...rawCourses.filter(run => !attached.has(run.run_id)), ...captures];
+    if (!runs.length) return runs;
+    const colorRuns = runs.filter(run => run.picks.length);
+    if (!colorRuns.length) return runs;
+    landColorCatalog ??= discoverCardDatabase().then(loadCardLandColors).catch(() => new Map());
+    const latestIds = colorRuns.flatMap(run => [...run.matches].sort((a, b) => String(b.started_at).localeCompare(String(a.started_at)) || b.id.localeCompare(a.id)).slice(0, 1).map(match => match.id));
+    const decks = await cachedDraftDecks(dataDir, history);
+    const missing = latestIds.filter(id => !decks.has(id));
+    if (missing.length) for (const [id, deck] of await listReplayDecks(missing, { dataDir, cache: draftDeckCache })) decks.set(id, deck);
+    const colored = new Map(withDraftRunLandColors(colorRuns, decks, await landColorCatalog).map(run => [run.run_id, run]));
+    return runs.map(run => colored.get(run.run_id) ?? run);
   }
   function send(response, status, value, contentType = 'application/json; charset=utf-8', extraHeaders = {}) {
     response.writeHead(status, { 'Content-Type': contentType, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
@@ -91,8 +156,14 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
     return request.headers['sec-fetch-site'] !== 'cross-site';
   }
   async function localCard(arenaId) {
-    return { ...(cardMetadata.get(arenaId) ?? {}), ...(await getArchivedCard(arenaId, { dataDir }) ?? {}),
+    const revision = await fileRevision(dataDir, historyFiles);
+    if (revision !== archiveCardsRevision) { archiveCards.clear(); archiveCardsRevision = revision; }
+    if (archiveCards.has(arenaId)) return archiveCards.get(arenaId);
+    const value = { ...(cardMetadata.get(arenaId) ?? {}), ...(await getArchivedCard(arenaId, { dataDir }) ?? {}),
       ...(cardNames.has(arenaId) ? { name: cardNames.get(arenaId) } : {}) };
+    if (archiveCards.size >= 512) archiveCards.delete(archiveCards.keys().next().value);
+    archiveCards.set(arenaId, value);
+    return value;
   }
   // Keep the immutable coaching source authoritative for its recorded matches.
   // Local log observation adds Viewer history only; it never extends the
@@ -100,7 +171,7 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
   async function replayCatalog() {
     const recorded = replayProvider ? await replayProvider.list() : [];
     if (replayProvider && !includeLocalHistory) return recorded;
-    const catalog = new Map((await listReplays({ dataDir, limit: null })).map(entry => [entry.id, entry]));
+    const catalog = new Map((await localCatalog()).map(entry => [entry.id, entry]));
     for (const entry of recorded) catalog.set(entry.id, entry);
     return [...catalog.values()].sort((a, b) => Date.parse(b.started_at) - Date.parse(a.started_at) || b.id.localeCompare(a.id));
   }
@@ -158,11 +229,17 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
       if ((path === '/api/collection' || path === '/api/collection/sync') && request.method === 'POST') {
         const operation = path.endsWith('/sync') ? 'sync' : 'update';
         if (request.headers.origin !== `http://${request.headers.host}` || request.headers['x-mtga-replay-action'] !== `collection-${operation}`) return send(response, 403, { error: 'Same-origin collection action required.' });
-        if (url.search || request.headers['transfer-encoding'] || Number(request.headers['content-length'] ?? 0) !== 0) return send(response, 400, { error: 'Collection update does not accept parameters.' });
+        if (url.searchParams.size !== 1 || !validAccountKey(account) || request.headers['transfer-encoding'] || Number(request.headers['content-length'] ?? 0) !== 0) return send(response, 400, { error: '请选择已识别的游戏账号后更新收藏。' });
+        const catalog = await readDraftCapture({ dataDir, metadataOnly: true });
+        if (!catalog.accounts.some(item => item.account_key === account)) return send(response, 400, { error: '收藏账号尚未在本机识别。' });
         if(operation==='update'&&request.headers['x-mtga-replay-account-confirmation']!=='unknown-account-reviewed')return send(response,409,{error:'无法自动识别账户；请确认当前 Arena 账户后再更新。'});
+        if (operation === 'update' && catalog.active_account !== account) return send(response, 409, { error: 'Arena 活动账号与所选账号不一致；请在游戏中切换到所选账号后再更新。' });
         if (sync.snapshot().status === 'running') return send(response, 409, { error: 'Replay upload is running; retry after completion.' });
         if(collection.snapshot().status==='needs_recovery'||sync.snapshot().status==='needs_recovery')return send(response,409,{error:'服务中断后的任务需要人工核对，请勿重复上传。'});
-        return send(response, 202, collection.start(operation));
+        if (collection.snapshot().status === 'running') return collection.snapshot(account).status === 'running'
+          ? send(response, 202, collection.snapshot(account))
+          : send(response, 409, { error: '另一个账号的收藏任务正在运行。' });
+        return send(response, 202, collection.start(operation, account));
       }
       if(path==='/api/sync/reconcile'&&request.method==='POST') {
         if(request.headers.origin!==`http://${request.headers.host}`||request.headers['x-mtga-replay-action']!=='sync-reconcile')return send(response,403,{error:'Same-origin reconciliation required.'});
@@ -182,17 +259,31 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
       }
       if (request.method !== 'GET' && request.method !== 'HEAD') return send(response, 405, { error: 'Unsupported replay action.' });
       if (path === '/api/source') return send(response, 200, sourceIdentity);
+      if (path === '/api/catalog-revision') return send(response, 200, request.method === 'HEAD' ? '' : await catalogRevision());
       if (path === '/api/local-history') return send(response, 200, request.method === 'HEAD' ? '' : localHistory?.snapshot() ?? { status: 'disabled' });
-      if (path === '/api/collection') return send(response, 200, request.method === 'HEAD' ? '' : collection.snapshot());
+      if (path === '/api/collection') return send(response, 200, request.method === 'HEAD' ? '' : collection.snapshot(account ?? 'unassigned'));
       if (path === '/api/sync') return send(response, 200, request.method === 'HEAD' ? '' : sync.snapshot());
       if (path === '/api/health') return send(response, 200, { service: 'mtga-gpt-replay', pid: process.pid, port: assignedPort, capabilities: [...(enableReplaySync ? ['replay-sync'] : []), ...(enableCollection ? ['collection-update'] : []), ...extraCapabilities, 'cloud-review-read', 'cloud-review-sync', 'replay-review-read', ...(!requestExtension ? ['replay-only-v1'] : [])] });
       if (path === '/api/accounts') {
-        const captured = includeLocalHistory && sourceIdentity?.kind !== 'published-history' ? await readDraftCapture({ dataDir }) : { accounts: [], active_account: null };
-        const accounts = new Map(captured.accounts.map(a => [a.account_key, a]));
-        for (const entry of await replayCatalog()) if (validAccountKey(entry.account_key) && !accounts.has(entry.account_key)) accounts.set(entry.account_key, { account_key: entry.account_key, label: '账号 ' + entry.account_key.slice(0, 8) });
-        return send(response, 200, { accounts: [...accounts.values()], active_account: captured.active_account });
+        return send(response, 200, await accountCatalog());
       }
       if (path === '/api/matches') return send(response, 200, filterAccount(await replayCatalog(), account));
+      const draftDeckRoute = path.match(/^\/api\/draft-runs\/([a-f0-9]{32})\/decks$/);
+      if (draftDeckRoute) {
+        if (!validAccountKey(account) || url.searchParams.size !== 1) return send(response, 400, { error: '请选择已识别的游戏账号。' });
+        const run = filterAccount(await draftRunsForDisplay(), account).find(run => run.run_id === draftDeckRoute[1]);
+        if (!run) return send(response, 404, { error: 'Unknown draft in selected account.' });
+        const value = await readDraftDeckComparison(run, { dataDir, accountKey: account, displayNamesZh: chineseNames });
+        return send(response, 200, request.method === 'HEAD' ? '' : value);
+      }
+      const draftReviewRoute = path.match(/^\/api\/draft-runs\/([a-f0-9]{32})\/review$/);
+      if (draftReviewRoute) {
+        if (!validAccountKey(account) || url.searchParams.size !== 1) return send(response, 400, { error: '请选择已识别的游戏账号。' });
+        const run = filterAccount(await draftRunsForDisplay(), account).find(run => run.run_id === draftReviewRoute[1]);
+        if (!run) return send(response, 404, { error: 'Unknown draft in selected account.' });
+        const value = await readDraftReview(run, { dataDir, accountKey: account });
+        return send(response, 200, request.method === 'HEAD' ? '' : { ...value, run_id: run.run_id });
+      }
       const reviewRoute = path.match(/^\/api\/matches\/([^/]+)\/review$/);
       if (reviewRoute) {
         const gameNumber = Number(url.searchParams.get('game') ?? 1);
@@ -324,7 +415,7 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
     })();
     return closePromise;
   };
-  return { server, url, port: assignedPort, close, localHistory };
+  return { server, url, port: assignedPort, close, localHistory, workCounters: () => ({ ...workCounters }) };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

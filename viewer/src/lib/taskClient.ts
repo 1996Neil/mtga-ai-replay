@@ -14,7 +14,8 @@ export function taskPause(signal?: AbortSignal) {
     signal?.addEventListener('abort', abort, { once: true });
   });
 }
-export function createTaskClient<Result>(path: '/api/sync' | '/api/collection', action: 'sync' | 'collection-update', request: typeof fetch = fetch, wait = taskPause) {
+export function createTaskClient<Result>(path: '/api/sync' | '/api/collection', action: 'sync' | 'collection-update', request: typeof fetch = fetch, wait = taskPause, accountKey?: string) {
+  const scoped = (target: string) => accountKey ? `${target}?account=${encodeURIComponent(accountKey)}` : target;
   let active: { promise: Promise<TaskJob<Result>>; signal?: AbortSignal } | null = null;
   class StatusError extends Error {
     status: number;
@@ -28,7 +29,7 @@ export function createTaskClient<Result>(path: '/api/sync' | '/api/collection', 
   }
   async function read(signal?: AbortSignal) {
     // A dead socket must not leave this observation pending indefinitely.
-    const response = await request(path, { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10000)]) : AbortSignal.timeout(10000), cache: 'no-store' });
+    const response = await request(scoped(path), { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10000)]) : AbortSignal.timeout(10000), cache: 'no-store' });
     if (!response.ok) throw new StatusError(response.status);
     const job = await response.json() as TaskJob<Result>;
     assertObserving(signal);
@@ -90,13 +91,15 @@ export function createTaskClient<Result>(path: '/api/sync' | '/api/collection', 
         const previousId = previous.id;
         let response: Response;
         let initial: TaskJob<Result> | undefined;
-        try { response = await request(retryUpload ? '/api/collection/sync' : path, { method: 'POST', headers: { 'X-MTGA-Replay-Action': retryUpload ? 'collection-sync' : action, ...(action==='collection-update'&&!retryUpload?{'X-MTGA-Replay-Account-Confirmation':'unknown-account-reviewed'}:{}) },
+        try { response = await request(scoped(retryUpload ? '/api/collection/sync' : path), { method: 'POST', headers: { 'X-MTGA-Replay-Action': retryUpload ? 'collection-sync' : action, ...(action==='collection-update'&&!retryUpload?{'X-MTGA-Replay-Account-Confirmation':'unknown-account-reviewed'}:{}) },
           signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10000)]) : AbortSignal.timeout(10000), cache: 'no-store' });
           // Headers can arrive before a socket failure truncates the JSON body.
           if (response.ok) initial = await response.json() as TaskJob<Result>;
         }
         catch { assertObserving(signal); connection?.(true); return poll(onChange, signal, connection, undefined, previousId); }
-        if (!response.ok) throw new Error(response.status === 404 || response.status === 405 ? '当前后台服务尚未更新，请重启 Viewer 服务后再试。' : response.status === 409 ? '另一个数据任务正在运行，请等它结束后重试。' : `无法启动任务（${response.status}）。`);
+        if (!response.ok) throw new Error(response.status === 404 || response.status === 405 ? '当前后台服务尚未更新，请重启 Viewer 服务后再试。' : response.status === 409
+          ? action === 'collection-update' ? '收藏未启动：请确认 Arena 当前账号与页面选择一致，并检查是否有其他数据任务正在运行。' : '另一个数据任务正在运行，请等它结束后重试。'
+          : `无法启动任务（${response.status}）。`);
         return poll(onChange, signal, connection, initial);
       }, signal);
     },

@@ -86,7 +86,8 @@ export function createCardImageClient({ fetcher = fetch, now = Date.now, schedul
       const e = get(id);
       if (e.state.attempt === attempt && e.state.phase === 'ready') {
         e.retries = 0;
-        publish(e, { refreshImage: false, issue: undefined });
+        if (e.state.refreshImage || e.state.issue !== undefined)
+          publish(e, { refreshImage: false, issue: undefined });
       }
     },
     retry(id: number) {

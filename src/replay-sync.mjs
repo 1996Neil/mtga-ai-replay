@@ -1,11 +1,12 @@
 import { join } from 'node:path';
-import { readFile } from 'node:fs/promises';
+import { readFile, lstat } from 'node:fs/promises';
 import { archiveReplays, listReplays, getReplay, acknowledgeReplayOutbox, defaultDataDir } from './history.mjs';
 import { readCoachSyncState, atomicSyncWrite } from './coach-sync.mjs';
 import { syncCoachCatalog } from './coach-catalog-sync.mjs';
 import { readReplaySettings, replayInRetention, withReplayOperation } from './replay-settings.mjs';
 import { replayWorker } from './replay-worker.mjs';
 import { replaySyncSnapshot } from './replay-sync-snapshot.mjs';
+import { syncDraftCapture } from './draft-sync.mjs';
 
 const active = new Map();
 /** Synchronize the archive, independent of raw-log discovery and parsing. */
@@ -15,7 +16,9 @@ export function syncReplays(options = {}) {
   const work = withReplayOperation(dataDir, () => run({ ...options, dataDir }), { exclusive: false }).finally(() => active.delete(dataDir));
   active.set(dataDir, work); return work;
 }
-async function run({ dataDir, onProgress, publisher = syncCoachCatalog, remoteImport = replayWorker, ...options }) {
+async function run({ dataDir, onProgress, publisher = syncCoachCatalog, remoteImport = replayWorker, draftPublisher, ...options }) {
+  const publishDrafts = draftPublisher ?? (options.runCommand ? options => syncDraftCapture({ ...options, automatic: true }) :
+    () => replayWorker('draft-publication', { dataDir }));
   const started = performance.now(), settings = await readReplaySettings(dataDir);
   // One-time migration: queued replays become locally visible even when offline.
   const outbox = join(dataDir, 'replay-outbox');
@@ -74,9 +77,27 @@ async function run({ dataDir, onProgress, publisher = syncCoachCatalog, remoteIm
         [id, { local_revision: revision, content_hash: final.get(id).content_hash }]))));
   }
   const count = (await listReplays({ dataDir, limit: null })).length;
-  return { status: result.sync_error || failures.length ? (result.published || downloaded ? 'partial' : 'failed') : 'succeeded',
+  let draftLinks = null, draftError = null;
+  if (!result.sync_error && !failures.length) {
+    let info;
+    try { info = await lstat(join(dataDir, 'draft-capture.sqlite3')); }
+    catch (error) {
+      if (error.code !== 'ENOENT') draftError = '对战已同步，轮抽关联发布尚未完成；本地记录保留，将重试。';
+    }
+    try {
+      if (info) {
+        if (!info.isFile() || info.isSymbolicLink()) throw Error('Unsafe draft store');
+        draftLinks = await publishDrafts({ ...options, dataDir });
+      }
+    } catch (error) {
+      draftError = '对战已同步，轮抽关联发布尚未完成；本地记录保留，将重试。';
+    }
+  }
+  return { status: result.sync_error || failures.length ? (result.published || downloaded ? 'partial' : 'failed') : draftError ? 'partial' : 'succeeded',
     new_matches: downloaded, local_matches: count, published: result.published, downloaded, updated: result.updated,
     failed: failures.length, skipped: result.skipped.length, github_matches: result.github_total,
-    latest: result.latest, failures, error: result.sync_error ?? null, remote_checked: !result.sync_error,
+    latest: result.latest, failures, error: result.sync_error ?? draftError, remote_checked: !result.sync_error,
+    draft_links: draftLinks ? { verified: draftLinks.verified, linked_runs: draftLinks.linked_runs, pending_runs: draftLinks.pending_runs,
+      revision: draftLinks.revision } : null,
     elapsed_ms: Math.round(performance.now() - started) };
 }

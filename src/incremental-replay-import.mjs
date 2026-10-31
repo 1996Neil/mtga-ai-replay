@@ -8,7 +8,7 @@ import { discoverLogs } from './discovery.mjs';
 import { createRecordFramer } from './log-reader.mjs';
 import { discoverCardDatabase, loadCardNames, loadCounterNames } from './cards.mjs';
 import { buildReplays } from './replay.mjs';
-import { archiveReplays, listReplays, defaultDataDir, isReplayExcluded } from './history.mjs';
+import { archiveReplays, listReplaySummaries, defaultDataDir, isReplayExcluded } from './history.mjs';
 import { readReplaySettings, replayInRetention } from './replay-settings.mjs';
 import { atomicSyncWrite } from './coach-sync.mjs';
 
@@ -48,7 +48,6 @@ export async function importIncrementalReplays({ dataDir = defaultDataDir(), log
     CREATE TABLE IF NOT EXISTS dirty(match_id TEXT PRIMARY KEY);
     CREATE TABLE IF NOT EXISTS matches(match_id TEXT PRIMARY KEY, started_at TEXT);`);
   const policy = await readReplaySettings(dataDir);
-  const catalog = new Map((await listReplays({ dataDir, limit: null })).map(match => [match.id, match]));
   let bytesRead = 0, filesRead = 0, inheritedMatch = null, archived = 0, conflicts = 0;
   try {
     for (const file of await discoverLogs({ logPath, logDir })) {
@@ -127,16 +126,20 @@ export async function importIncrementalReplays({ dataDir = defaultDataDir(), log
     }
     const targets = database.prepare('SELECT match_id FROM dirty').all();
     if (!targets.length) return { cached: !filesRead, bytes_read: bytesRead, files_read: filesRead, archive: { archived: 0 } };
+    const catalog = new Map((await listReplaySummaries(targets.map(row => row.match_id), { dataDir })).map(match => [match.id, match]));
     const source = cardDb ?? await discoverCardDatabase();
     const { names, counterNames } = await labels(dataDir, source);
+    const sharedRecords = database.prepare('SELECT sequence,json FROM records WHERE match_id IS NULL ORDER BY sequence').all()
+      .map(row => ({ sequence: row.sequence, record: JSON.parse(row.json) }));
     for (const { match_id: id } of targets) {
       if (await isReplayExcluded(id, { dataDir }) || catalog.has(id) && !replayInRetention(catalog.get(id), policy)) {
         database.prepare('DELETE FROM dirty WHERE match_id=?').run(id);
         database.prepare('DELETE FROM records WHERE match_id=?').run(id);
         continue;
       }
-      const records = database.prepare('SELECT json FROM records WHERE match_id=? OR match_id IS NULL ORDER BY sequence').all(id)
-        .map(row => JSON.parse(row.json));
+      const records = [...sharedRecords, ...database.prepare('SELECT sequence,json FROM records WHERE match_id=? ORDER BY sequence').all(id)
+        .map(row => ({ sequence: row.sequence, record: JSON.parse(row.json) }))]
+        .sort((a, b) => a.sequence - b.sequence).map(row => row.record);
       const { replays } = await buildReplays(records, names, { counterNames });
       for (const replay of replays) if (replay.match.id === id && !replayInRetention(replay.match, policy)) {
         database.prepare('INSERT OR REPLACE INTO matches VALUES(?,?)').run(id, replay.match.started_at);

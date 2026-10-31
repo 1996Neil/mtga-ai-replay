@@ -19,6 +19,7 @@ if (parentPort && workerData) {
     if (operation === 'ingest') result = await (await import('./incremental-replay-import.mjs')).importIncrementalReplays(options);
     else if (operation === 'retention') result = await (await import('./replay-retention.mjs')).cleanReplayRetention(options);
     else if (operation === 'remote') result = await (await import('./replay-remote.mjs')).importRemoteReplays(options);
+    else if (operation === 'draft-publication') result = await (await import('./draft-sync.mjs')).syncDraftCapture({ ...options, automatic: true });
     else throw Error('Unknown replay operation');
     parentPort.postMessage({ result });
   } catch {

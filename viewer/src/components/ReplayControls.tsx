@@ -15,7 +15,7 @@ export function ReplayControls({ analysis = false }: { analysis?: boolean }) {
     <div className="control-button-row">
       <button className="standard-button" type="button" onClick={s.previousTurn} disabled={first} title="Shift + 左方向键">上一回合</button>
       <button className="standard-button" type="button" onClick={s.stepBackward} disabled={first} title="左方向键">上一步</button>
-      <button className="standard-button play-button" type="button" onClick={s.togglePlay} aria-label={s.isPlaying ? '暂停' : '播放'} title="空格键">{s.isPlaying ? 'Ⅱ 暂停' : '▶ 播放'}</button>
+      <button className="standard-button play-button" type="button" onClick={s.togglePlay} aria-label={s.isPlaying ? '暂停' : '播放'}>{s.isPlaying ? 'Ⅱ 暂停' : '▶ 播放'}</button>
       <button className="standard-button" type="button" onClick={s.stepForward} disabled={last} title="右方向键">下一步</button>
       <button className="standard-button" type="button" onClick={s.nextTurn} disabled={last} title="Shift + 右方向键">下一回合</button>
       <details className="playback-options"><summary aria-label="回放速度与更多控制">{s.playbackSpeed}× <span aria-hidden="true">⌄</span></summary>
