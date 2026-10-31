@@ -21,6 +21,9 @@ export interface CardInstance {
   toughness?: number;
   counters: Record<string, number>;
   isAttacking: boolean;
+  attackState?: string;
+  blockState?: string;
+  isBlocked?: boolean;
   name?: string;
   objectType?: string; // GameObjectType_Card | GameObjectType_Token | GameObjectType_Ability ...
   logicalId?: string;
@@ -145,6 +148,8 @@ export interface DraftRunMatch {
   started_at: string;
   result: string | null;
   game_count: number | null;
+  account_key?: string;
+  binding_evidence?: string;
 }
 export interface DraftPick {
   pack_number: number;
@@ -160,6 +165,14 @@ export interface DraftPick {
 export interface DraftRun {
   capture_source?: string;
   binding?: string;
+  bound_run_id?: string;
+  binding_method?: string;
+  binding_reason?: string;
+  binding_card_count?: number;
+  binding_pending_matches?: number;
+  binding_account_status?: 'matched' | 'conflict' | 'unknown';
+  binding_account_key?: string;
+  capture_run_ids?: string[];
   run_id: string;
   event_id: string;
   event: string;

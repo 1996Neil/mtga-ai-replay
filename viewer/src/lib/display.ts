@@ -55,11 +55,16 @@ export function describeEventZh(event: CanonicalEvent, names?: DisplayNameMap): 
     case 'enters': case 'entered_battlefield': return `${card}进入战场`;
     case 'attack': return `${card}攻击${targets ? ` → ${targets}` : ''}`;
     case 'block': return `${card}阻挡${targets ? ` ${targets}` : ''}`;
+    case 'attack_selection': return `选择 ${card}攻击${targets ? ` → ${targets}` : ''}（待确认）`;
+    case 'block_selection': return `选择 ${card}阻挡${targets ? ` ${targets}` : ''}（待确认）`;
+    case 'attack_selection_cancelled': return `撤销 ${card}的攻击选择`;
+    case 'block_selection_cancelled': return `撤销 ${card}的阻挡选择`;
     case 'target': return `${card}指定目标 → ${targets || '未知目标'}`;
     case 'damage': return `${event.card ? card : actor}对${targets || '未知目标'}造成 ${event.amount ?? '?'} 点${event.step === 'Step_FirstStrikeDamage' ? '先攻' : event.step === 'Step_CombatDamage' ? '战斗' : ''}伤害`;
     case 'life': case 'life_changed': return `生命变化：我 ${event.life?.me ?? '?'} · 对手 ${event.life?.opponent ?? '?'}`;
     case 'destroy': case 'destroyed': return `${card}被消灭`;
     case 'dies': return `${card}死亡`;
+    case 'put_into_graveyard': return `${card}${event.details === 'SBA_ZeroLoyalty' ? '因忠诚为零' : event.details === 'SBA_UnattachedAura' ? '因未结附' : ''}置入墓地`;
     case 'exile': return `${card}被放逐`;
     case 'sacrifice': return `${actor}牺牲 ${card}`;
     case 'discard': return `${actor}弃掉 ${card}`;
@@ -74,6 +79,7 @@ export function describeEventZh(event: CanonicalEvent, names?: DisplayNameMap): 
     }
     case 'token': return `${actor}派出${event.amount && event.amount > 1 ? ` ${event.amount} 个` : ''} ${card}衍生物`;
     case 'state': return event.details === 'Hand updated' ? '我的手牌更新' : event.details === 'Visible board / stack updated' ? '战场与堆叠更新' : '局面更新';
+    case 'game_over': return '对局结束（终局状态）';
     case 'phase': return phaseTextZh(event.phase, event.step);
     case 'mulligan': return `${actor}进行调度`;
     case 'mulligan_state': return '我的起手牌与调度';

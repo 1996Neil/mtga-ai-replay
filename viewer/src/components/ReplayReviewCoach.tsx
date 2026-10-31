@@ -209,7 +209,7 @@ export function ReplayReviewCoach({ match, currentStepIndex, viewBefore, onJump 
   return <>
     <button type="button" className="sync-button replay-review-launch" data-review-status={launch.tone}
       aria-expanded={open} aria-busy={launch.busy} aria-label={`AI 复盘，${launch.description}`} title={launch.description}
-      aria-controls="replay-review-panel" onClick={() => { setOpen(o => !o); setFolded(false); }}>
+      aria-controls="replay-review-panel" aria-keyshortcuts="Space" onClick={() => { setOpen(o => !o); setFolded(false); }}>
       <span className="replay-review-launch-symbol" aria-hidden="true">{launch.symbol}</span>
       <span>{launch.label}</span>
     </button>

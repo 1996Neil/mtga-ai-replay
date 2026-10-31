@@ -115,7 +115,7 @@ function semanticMultipart(expanded, historyKey, { partitionBytes = 700 * 1024, 
 }
 
 const CARD_FIELDS = ['name', 'arena_id', 'instance_id', 'visibility', 'logical_id', 'card_types', 'is_tapped', 'is_token', 'is_ability',
-  'power', 'toughness', 'is_attacking', 'attacking_target_id', 'is_blocking', 'blocked_attacker_ids', 'attached_to', 'attachments',
+  'power', 'toughness', 'is_attacking', 'attacking_target_id', 'is_blocking', 'blocked_attacker_ids', 'is_blocked', 'attack_state', 'block_state', 'attached_to', 'attachments',
   'target_ids', 'owner', 'controller', 'damage', 'damage_marked', 'mana_cost', 'type_line', 'keywords', 'known', 'face_down',
   'transformed', 'transform_state', 'loyalty', 'defense', 'colors', 'quantity', 'count', 'is_face_down',
   'ability_kind', 'known_effect', 'effect', 'stack_order', 'ordering', 'object_type', 'has_summoning_sickness', 'is_copy'];
@@ -298,8 +298,8 @@ function annotateState(state, { id, events, anchor, known, aliases, actorHints, 
     if (reasons.length) state.mana_sources[side].push({ ...cardReference(card), candidate_reasons: reasons, usable_now: null });
   }
   const battlefield = [...state.players.me.battlefield, ...state.players.opponent.battlefield].filter(card => !card.hidden);
-  const attackers = battlefield.filter(card => card.is_attacking).map(card => {
-    const blockers = battlefield.filter(blocker => list(blocker.blocked_attacker_ids).includes(card.instance_id));
+  const attackers = battlefield.filter(card => card.is_attacking && card.attack_state !== 'AttackState_Declared').map(card => {
+    const blockers = battlefield.filter(blocker => blocker.block_state !== 'BlockState_Declared' && list(blocker.blocked_attacker_ids).includes(card.instance_id));
     const target = card.attacking_target_id;
     const normalizedTarget = events.find(event => event.type === 'attack' && event.card?.instance_id === card.instance_id)?.targets?.[0];
     const defending = normalizedTarget ? { ...structuredClone(normalizedTarget), source: 'normalized_attack_event' }
@@ -307,12 +307,12 @@ function annotateState(state, { id, events, anchor, known, aliases, actorHints, 
         source: 'opposing_controller_in_two_player_game' }
       : target != null ? { instance_id: target, ...(battlefield.find(value => value.instance_id === target) ? cardReference(battlefield.find(value => value.instance_id === target)) : {}), source: 'observed_object_target' } : null;
     const rule = rules.get(Number(card.arena_id));
-    return { ...cardReference(card), raw_attacking_target_id: target ?? null, defending, blockers: blockers.map(cardReference),
+    return { ...cardReference(card), raw_attacking_target_id: target ?? null, defending, blockers: blockers.map(cardReference), is_blocked: card.is_blocked ?? null,
       printed_combat_keywords: list(rule?.keywords).filter(keyword => /first strike|double strike|trample/i.test(keyword)),
       observed_combat_keywords: list(card.keywords).filter(keyword => /first strike|double strike|trample/i.test(keyword)) };
   });
   state.combat = { active: /combat/i.test(state.phase ?? ''), attackers,
-    blockers: battlefield.filter(card => card.is_blocking || list(card.blocked_attacker_ids).length).map(card => ({ ...cardReference(card), blocked_attacker_ids: list(card.blocked_attacker_ids) })),
+    blockers: battlefield.filter(card => card.block_state !== 'BlockState_Declared' && (card.is_blocking || list(card.blocked_attacker_ids).length)).map(card => ({ ...cardReference(card), blocked_attacker_ids: list(card.blocked_attacker_ids) })),
     damage_events: events.filter(event => event.type === 'damage').map(value => structuredClone(value)),
     death_events: events.filter(event => ['dies', 'destroy', 'sacrifice'].includes(event.type)).map(value => structuredClone(value)),
     damage_assignment: events.flatMap(event => list(event.damage_assignment)),

@@ -63,7 +63,6 @@
 .empty-hand-label { display:block; margin-top:12px; }
 .relationship-arrow.attack { stroke:var(--relationship-attack); stroke-dasharray:5 4; }
 .relationship-arrow.block { stroke:var(--relationship-block); }
-@media(max-width:700px) { .game-board {padding-inline:6px;} .board-play-area {grid-template-columns:minmax(155px,32%) minmax(0,1fr);gap:8px;} .board-center-lane {grid-template-columns:1fr;gap:0;} .combat-summary {font-size:10px;gap:0;} .combat-legend {display:none;} }
 
 .board-scroll-controls { display:none; }
 @media(max-height:650px) { .board-scroll-controls { position:sticky; top:0; z-index:30; display:flex; align-items:center; justify-content:flex-end; gap:10px; min-height:26px; flex-shrink:0; background:#202a26; color:#bfcec5; font-size:10px; } .board-scroll-controls button { padding:3px 8px; border:1px solid #5d7062; border-radius:3px; } }
@@ -90,8 +89,13 @@
 .full-card-board .player-identity { flex-wrap:nowrap; gap:7px; }
 .full-card-board .player-extras { grid-column:3; display:flex; flex-wrap:wrap; justify-content:flex-end; align-items:center; min-width:0; gap:6px; }
 .full-card-board .player-extras .player-zones { margin-left:0; }
-@media(max-width:700px) { .full-card-board .player-info { gap:6px; } .full-card-board .player-name { max-width:66px; } .full-card-board .player-zone-counts { display:block; font-size:10px; } .full-card-board .player-extras .opponent-hand { display:none; } }
 
 .card-image-retry { position: relative; z-index: 2; padding: .4rem; font-size: .8rem; color: inherit; background: #1c2635; border: 1px solid #8192ab; border-radius: .35rem; cursor: pointer; }
 .card-image-retry:disabled { opacity: .7; cursor: wait; }
+.card-image-open { position:absolute; inset:0; z-index:1; width:100%; height:100%; padding:0; border:0; border-radius:inherit; background:transparent; color:inherit; cursor:pointer; }
+.card-image-open:focus-visible { outline:2px solid var(--own, #b8dcc4); outline-offset:2px; }
+.card-image-recovery { position:absolute; z-index:3; left:3px; right:3px; bottom:22px; display:flex; flex-direction:column; align-items:center; gap:3px; padding:4px 2px; border-radius:4px; background:#121d26ed; color:#f1f5fa; pointer-events:auto; }
+.card-image-issue { font-size:10px; line-height:1.3; text-align:center; overflow-wrap:anywhere; }
+.card-image-recovery .card-image-retry { min-height:28px; max-width:100%; padding:3px 5px; font-size:11px; line-height:1.3; }
+.card-image-retry:focus-visible { outline:2px solid #b8dcc4; outline-offset:2px; }
 .card-inspector-overlay > .preview-dismiss { position: absolute; right: 0; top: -2rem; width: auto; height: auto; padding: .2rem .6rem; background: #1c2635; color: white; }

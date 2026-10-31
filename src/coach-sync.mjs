@@ -1,6 +1,7 @@
 import { isDraftSyncPath } from './draft-backup.mjs';
 import { validateSyncChanges } from './sync-changes.mjs';
 import {CoachSyncError} from './coach-sync-error.mjs';
+import { readReplaySettings, replayInRetention } from './replay-settings.mjs';
 import {bundleFiles} from './coach-bundle-files.mjs';
 import { execFile } from 'node:child_process';
 import { createGitBatch } from './git-batch.mjs';
@@ -70,6 +71,12 @@ export function syncErrorMessage(error) {
 }
 
 async function atomicWrite(path, content) {
+  try {
+    const info = await lstat(path);
+    if (!info.isFile() || info.isSymbolicLink()) fail('SYNC_OUTPUT', 'Sync output must be a regular file.');
+    const expected = Buffer.isBuffer(content) ? content : Buffer.from(content);
+    if (info.size === expected.length && (await readFile(path)).equals(expected)) return;
+  } catch (error) { if (error.code !== 'ENOENT') throw error; }
   const temporary = `${path}.${randomUUID()}.tmp`;
   await mkdir(resolve(path, '..'), { recursive: true, mode: 0o700 });
   await writeFile(temporary, content, { mode: 0o600 });
@@ -239,6 +246,7 @@ export async function enqueueCoachBundle(bundle, options = {}) {
   const dataDir = options.dataDir ?? defaultDataDir(), files = options.computePool ? await options.computePool.run('bundleFiles',{bundle}) : bundleFiles(bundle);
   return locked(dataDir, async () => {
     const state = await readState(dataDir), id = bundle.summary.match_id;
+    if (!replayInRetention(bundle.summary, await readReplaySettings(dataDir))) return { queued: false, expired: true };
     if (await isReplayExcluded(id, { dataDir })) fail('SYNC_EXCLUDED', 'This replay is excluded from upload.');
     const stableKey = state.synced[id]?.history_key ?? state.pending.find(item => item.match_id === id)?.history_key;
     if (stableKey && stableKey !== bundle.historyKey) fail('SYNC_BUNDLE', 'The match history key changed; regenerate with its existing stable history key.');
@@ -293,10 +301,11 @@ async function prepareCheckout(state, meta, run, repoDir, options = {}) {
   const historyOptions = { repository: meta.nameWithOwner, branch,
     historyApproval: validateSyncHistoryApproval(state.history_approval, { repository: meta.nameWithOwner, branch }) };
   const validationSession = options.validationSession ?? createSyncValidationSession();
+  const checkedChangeObjects = new Set();
   const validate = async historyRevision => {
     if (options.fastSync) {
       options.onProgress?.({ phase: 'comparing' });
-      return validateSyncChanges(git, { branch, onValidation: options.onValidation });
+      return validateSyncChanges(git, { branch, onValidation: options.onValidation, checkedObjects: checkedChangeObjects });
     }
     options.onProgress?.({ phase: 'security' });
     return validateStagedRepository(repoDir, { ...historyOptions, validationSession,
@@ -329,7 +338,7 @@ async function prepareCheckout(state, meta, run, repoDir, options = {}) {
 
 /** A failed push leaves safe commits locally. Only their owning command may
  * retry them: otherwise one namespace could silently publish the other. */
-export async function assertOutgoingSyncOwnership(git, branch, namespace, hasRemoteBranch) {
+export async function assertOutgoingSyncOwnership(git, branch, namespace, hasRemoteBranch, accountPathAllowed) {
   const hasHead = String(await git(['for-each-ref', '--format=%(refname)', `refs/heads/${branch}`])).trim();
   if (!hasHead) return;
   const revisions = String(await git(['rev-list', hasRemoteBranch ? `origin/${branch}..HEAD` : 'HEAD'])).trim().split('\n').filter(Boolean);
@@ -337,14 +346,14 @@ export async function assertOutgoingSyncOwnership(git, branch, namespace, hasRem
   if (!allowed) fail('SYNC_NAMESPACE', 'Unknown upload namespace.');
   for (const revision of revisions) {
     const paths = String(await git(['diff-tree', '--root', '-m', '--no-commit-id', '--name-only', '--no-renames', '-r', '-z', revision])).split('\0').filter(Boolean);
-    if (paths.some(path => !allowed(path))) fail('SYNC_FOREIGN_COMMIT', 'Sync checkout contains an unpublished commit belonging to another namespace; finish that sync first.');
+    if (paths.some(path => !allowed(path) || (accountPathAllowed && !accountPathAllowed(path)))) fail('SYNC_FOREIGN_COMMIT', 'Sync checkout contains an unpublished commit belonging to another namespace or account; finish that sync first.');
   }
 }
-export async function assertStagedSyncOwnership(git, namespace) {
+export async function assertStagedSyncOwnership(git, namespace, accountPathAllowed) {
   const allowed = namespace === 'draft' ? isDraftSyncPath : namespace === 'collection' ? isCollectionSyncPath : namespace === 'coach' ? isCoachSyncPath : null;
   if (!allowed) fail('SYNC_NAMESPACE', 'Unknown upload namespace.');
   const paths = String(await git(['diff', '--cached', '--name-only', '-z', '--no-ext-diff', '--no-renames'])).split('\0').filter(Boolean);
-  if (paths.some(path => !allowed(path))) fail('SYNC_FOREIGN_STAGE', 'Another namespace has staged changes; no commit was created.');
+  if (paths.some(path => !allowed(path) || (accountPathAllowed && !accountPathAllowed(path)))) fail('SYNC_FOREIGN_STAGE', 'Another namespace or account has staged changes; no commit was created.');
 }
 
 // Narrow shared boundary for the independent collection command. Its state and
@@ -443,6 +452,28 @@ async function publishPending(state, dataDir, options) {
   const { git, branch, validate } = await prepareCheckout(state, meta, run, repoDir, options);
   options.onProgress?.({ phase: 'publishing' });
   await assertOutgoingSyncOwnership(git, branch, 'coach', Boolean(meta.defaultBranchRef?.name));
+  const retention = await readReplaySettings(dataDir);
+  if (retention.retention_days !== null && meta.defaultBranchRef?.name) {
+    const revisions = String(await git(['rev-list', `origin/${branch}..HEAD`])).trim().split('\n').filter(Boolean);
+    let expiredOutgoing = false;
+    for (const revision of revisions) {
+      const paths = String(await git(['diff-tree', '--root', '--no-commit-id', '--name-only', '-r', revision])).trim().split('\n');
+      for (const path of paths.filter(path => /^matches\/[A-Za-z0-9_-]+\/summary\.json$/.test(path))) {
+        const summary = JSON.parse(await git(['show', `${revision}:${path}`]));
+        if (!replayInRetention(summary, retention)) expiredOutgoing = true;
+      }
+    }
+    if (expiredOutgoing) {
+      // These are private generated transport commits, with a verified clean
+      // checkout and coach-only ownership. Retain a recovery ref, then rebuild
+      // recent pending bundles from the remote baseline without force pushing.
+      const oldHead = String(await git(['rev-parse', 'HEAD'])).trim();
+      await git(['update-ref', `refs/retention-recovery/${oldHead}`, oldHead]);
+      await git(['switch', '--detach', `origin/${branch}`]);
+      await git(['branch', '-f', branch, `origin/${branch}`]);
+      await git(['switch', branch]);
+    }
+  }
   let collectionEntry = '';
   try { await readFile(join(repoDir, 'collection', 'README.md'), 'utf8'); collectionEntry = COLLECTION_ENTRY; }
   catch (error) { if (error.code !== 'ENOENT') throw error; }
@@ -454,6 +485,9 @@ async function publishPending(state, dataDir, options) {
   for (const item of [...state.pending].sort((a, b) => -byDate(a, b))) {
     const { files, summary } = await queuedFiles(item, dataDir, options.computePool);
     const previous = index.matches.find(match => match.match_id === item.match_id);
+    if (options.expectedRemoteContentHashes &&
+        (previous?.content_hash ?? null) !== (options.expectedRemoteContentHashes[item.match_id] ?? null) &&
+        previous?.content_hash !== item.content_hash) fail('SYNC_CONFLICT', '线上回放已变化，未覆盖；请重新同步并核对冲突。');
     if (previous && previous.history_key !== item.history_key) fail('SYNC_BUNDLE', 'Published history key differs from the queued bundle; regenerate with its existing stable history key.');
     if (previous?.content_hash === item.content_hash) continue;
     const path = `matches/${previous?.history_key ?? item.history_key}`;
@@ -475,7 +509,13 @@ async function publishPending(state, dataDir, options) {
       catch (error) { if (error.code !== 'ENOENT') throw error; }
       await atomicWrite(target, text);
     }
-    await git(['add', '--', ...writes.keys()]);
+    // Retention keeps old history sparse. New, validated match files may be
+    // outside that checkout without authorizing any other path for staging.
+    const sparse = String(await git(['config', '--get', '--default', 'false', 'core.sparseCheckout'])).trim() === 'true';
+    const version = sparse ? String(await git(['--version'])).match(/git version (\d+)\.(\d+)/) : null;
+    // Older Git already permits these paths and does not support --sparse.
+    const explicitSparse = sparse && version && (Number(version[1]) > 2 || Number(version[1]) === 2 && Number(version[2]) >= 34);
+    await git(['add', ...(explicitSparse ? ['--sparse'] : []), '--', ...writes.keys()]);
     await assertStagedSyncOwnership(git, 'coach');
     if (!options.deferFullHistoryValidation) await validate();
     if (String(await git(['diff', '--cached', '--name-only'])).trim()) {
@@ -536,6 +576,9 @@ export async function syncCoachBundles(options = {}) {
   const dataDir = options.dataDir ?? defaultDataDir();
   return locked(dataDir, async () => {
     const state = await readState(dataDir);
+    const settings = await readReplaySettings(dataDir);
+    state.pending = state.pending.filter(item => replayInRetention(item, settings));
+    await saveState(dataDir, state);
     if (!state.enabled) return { synced: false, disabled: true, pending: state.pending.length };
     if (!state.pending.length) return { synced: true, duplicate: true, committed: 0, pending: 0, repository: state.repository, last_synced: state.last_synced };
     try { return await publishPending(state, dataDir, options); }

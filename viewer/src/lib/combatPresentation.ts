@@ -1,7 +1,7 @@
 import type { CanonicalEvent, CardInstance, GameState, ReplayStep } from '../types/game.ts';
 
 export type CombatEndpoint = { card: number } | { player: number };
-export interface CombatLink { from: CombatEndpoint; to: CombatEndpoint; kind: 'attack' | 'block'; }
+export interface CombatLink { from: CombatEndpoint; to: CombatEndpoint; kind: 'attack' | 'block'; suppressed?: boolean; }
 export interface CombatMark { text: string; detail: string; attacking: boolean; blocking: boolean; }
 const hidden = (card: { visibility?: string; hidden?: unknown }) => card.hidden === true || /hidden|post.?game/i.test(card.visibility ?? '');
 
@@ -39,7 +39,7 @@ export function observedAttackTargets(steps: readonly ReplayStep[], current: Rep
       if (!card || !sameAttacker(seen.card, card)) observations.delete(id);
     }
     const event = steps[i].event;
-    if (event?.type !== 'attack') continue;
+    if (!event || !['attack', 'attack_selection'].includes(event.type ?? '')) continue;
     const id = Number(event.card?.instance_id ?? event.card?.instanceId), card = field.get(id);
     if (!card || hidden(event.card ?? {}) || hidden(card) || !card.isAttacking) {
       // An anonymous attack must not let a previous semantic target reappear.
@@ -72,7 +72,7 @@ export function combatPresentation(state: GameState, localSeat: number, event?: 
     // Without an explicit seat map, numeric player targets cannot be safely resolved.
   }
   function target(card: CardInstance): CombatEndpoint | undefined {
-    const currentAttack = event?.type === 'attack' && Number(event.card?.instance_id ?? event.card?.instanceId) === card.instanceId;
+    const currentAttack = ['attack', 'attack_selection'].includes(event?.type ?? '') && Number(event?.card?.instance_id ?? event?.card?.instanceId) === card.instanceId;
     // Explicit redaction takes precedence over raw IDs retained by older adapters.
     if (currentAttack && (hidden(event?.card ?? {}) || event?.targets?.some(hidden))) return;
     // A resolved permanent remains authoritative. An unresolved raw ID must not
@@ -98,9 +98,14 @@ export function combatPresentation(state: GameState, localSeat: number, event?: 
     const label = labels.get(card.instanceId)!;
     const to = target(card);
     const blockers = blocking.filter(blocker => blocker.blockedAttackerIds?.includes(card.instanceId));
-    const detail = `${label} 攻击 → ${targetName(to)}；${blockers.length ? `${blockers.length} 个阻挡者` : '尚无已记录阻挡者'}`;
-    marks.set(card.instanceId, { text: to ? '' : '攻击目标未知', detail, attacking: true, blocking: false });
-    if (to && !hidden(card)) links.push({ from: { card: card.instanceId }, to, kind: 'attack' });
+    const tentative = card.attackState === 'AttackState_Declared';
+    const blocked = card.isBlocked === true;
+    const status = blockers.length ? `${blockers.length} 个${blockers.some(b => b.blockState === 'BlockState_Declared') ? '待确认' : ''}阻挡者`
+      : blocked ? '已被阻挡；阻挡者已离场' : '尚无已记录阻挡者';
+    const detail = `${label} ${tentative ? '选择攻击（待确认）' : '攻击'} → ${targetName(to)}；${status}`;
+    marks.set(card.instanceId, { text: tentative ? '选择攻击（待确认）' : blocked && !blockers.length ? '已被阻挡' : to ? '' : '攻击目标未知',
+      detail, attacking: true, blocking: false });
+    if (to && !hidden(card)) links.push({ from: { card: card.instanceId }, to, kind: 'attack', ...(blocked ? { suppressed: true } : {}) });
   }
   for (const card of blocking) {
     const ids = [...new Set(card.blockedAttackerIds ?? [])];
@@ -110,7 +115,7 @@ export function combatPresentation(state: GameState, localSeat: number, event?: 
       return [hidden(attacker) ? '已记录攻击者' : options.displayName?.(attacker) || attacker.name || `攻击者 ${labels.get(id)!.slice(1)}`];
     });
     const missing = ids.length - known.length;
-    const text = `阻挡 ${known.join(' / ') || '目标未知'}${missing ? ` + ${missing} 未知` : ''}`;
+    const text = `${card.blockState === 'BlockState_Declared' ? '选择阻挡（待确认）' : '阻挡'} ${known.join(' / ') || '目标未知'}${missing ? ` + ${missing} 未知` : ''}`;
     const previous = marks.get(card.instanceId);
     marks.set(card.instanceId, { text: previous?.text ? `${previous.text}；${text}` : text,
       detail: previous ? `${previous.detail}；${text}` : text, attacking: !!previous?.attacking, blocking: true });

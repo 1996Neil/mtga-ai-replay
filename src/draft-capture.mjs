@@ -1,10 +1,26 @@
 import { DatabaseSync } from 'node:sqlite';
-import { lstat, readFile } from 'node:fs/promises';
+import { lstat, readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { homedir } from 'node:os';
+const observationCache = new Map();
+const noCardNames = new Map(), projectionCaches = new WeakMap();
+export async function draftLogRevision(logDir = join(homedir(), '.seventeenlands')) {
+  let names;
+  try { names = (await readdir(logDir)).filter(name => /^seventeenlands\.log(?:\.|$)/.test(name)).sort(); }
+  catch (error) { if (error.code === 'ENOENT') return 'missing'; throw error; }
+  return JSON.stringify(await Promise.all(names.map(async name => {
+    try {
+      const info = await lstat(join(logDir, name), { bigint: true });
+      return [name, info.isFile() && !info.isSymbolicLink(), String(info.dev), String(info.ino), String(info.size), String(info.mtimeNs)];
+    } catch (error) { if (error.code === 'ENOENT') return [name, 'rotated']; throw error; }
+  })));
+}
 
 /** Tracker sessions are provisional capture segments, NEVER Course/match bindings.
  * Preserve all observations in SQLite; this display projection can be rebuilt. */
-export function projectDraftCaptures(observations, { cardNames = new Map(), gaps = 0 } = {}) {
+export function projectDraftCaptures(observations, { cardNames = noCardNames, gaps = 0, onProject } = {}) {
+  let cache = projectionCaches.get(cardNames);
+  if (!cache) { cache = new Map(); projectionCaches.set(cardNames, cache); }
   const segments = [], activeByEvent = new Map();
   const card = arena_id => ({ arena_id, name: cardNames.get(arena_id) ?? `Arena card ${arena_id}` });
   for (const observation of observations) {
@@ -30,6 +46,10 @@ export function projectDraftCaptures(observations, { cardNames = new Map(), gaps
     segment.picks.set(key, pick);
   }
   return segments.map(segment => {
+    const signature = JSON.stringify([gaps, segment.account_key, segment.event_id, segment.started_at,
+      [...segment.picks.values()].map(pick => [pick.pack_number, pick.pick_number, pick.logged_at, [...pick.packs], [...pick.selections], pick.observation_ids])]);
+    const cachedProjection = cache.get(segment.id);
+    if (cachedProjection?.signature === signature) { onProject?.({ built: 0, reused: 1 }); return cachedProjection.value; }
     let pool = [], prefixExact = gaps === 0, previous = null, packSize = null;
     const picks = [...segment.picks.values()].sort((a, b) => a.pack_number - b.pack_number || a.pick_number - b.pick_number).map(item => {
       const candidates = item.packs.size === 1 ? [...item.packs.values()][0] : [];
@@ -57,27 +77,56 @@ export function projectDraftCaptures(observations, { cardNames = new Map(), gaps
         pool_exact: prefixExact, complete: prefixExact, missing: [...new Set([...missing, ...(!prefixExact ? ['history_unverified'] : [])])],
         observation_ids: item.observation_ids };
     });
-    return { run_id: segment.id, account_key: segment.account_key, event_id: segment.event_id, event: segment.event_id,
+    const value = { run_id: segment.id, account_key: segment.account_key, event_id: segment.event_id, event: segment.event_id,
       started_at: segment.started_at, current_module: 'DraftCapture', status: 'incomplete',
       capture_source: '17lands-local-log', binding: 'unresolved', history_complete: false,
       course_wins: null, course_losses: null, replay_wins: 0, replay_losses: 0, score_verified: false,
       colors: [], colors_complete: false, card_pool: [], matches: [], picks };
+    if (cache.size >= 128 && !cache.has(segment.id)) cache.delete(cache.keys().next().value);
+    cache.set(segment.id, { signature, value }); onProject?.({ built: 1, reused: 0 });
+    return value;
   }).sort((a, b) => String(b.started_at).localeCompare(String(a.started_at)) || a.run_id.localeCompare(b.run_id));
 }
 
-export async function readDraftCapture({ dataDir }) {
+export async function readDraftCapture({ dataDir, metadataOnly = false, onRead }) {
   const path = join(dataDir, 'draft-capture.sqlite3');
-  try { const info = await lstat(path); if (!info.isFile() || info.isSymbolicLink()) throw new Error('Invalid draft capture store.'); }
+  let identity;
+  try { const info = await lstat(path); if (!info.isFile() || info.isSymbolicLink()) throw new Error('Invalid draft capture store.'); identity = `${info.dev}:${info.ino}`; }
   catch (error) { if (error.code === 'ENOENT') return { observations: [], gaps: 0, accounts: [], active_account: null }; throw error; }
   const db = new DatabaseSync(path, { readOnly: true });
   try {
     db.exec('BEGIN');
-    const observations = db.prepare('SELECT observation_id,body FROM observations ORDER BY seq').all()
-      .map(row => ({ observation_id: row.observation_id, ...JSON.parse(row.body) }));
-    const gaps = db.prepare('SELECT COUNT(*) AS n FROM gaps').get().n;
+    let observations = [], rows = [], incremental = false;
+    if (!metadataOnly) {
+      const revisionValue = db.prepare("SELECT value FROM meta WHERE key='observation_revision'").get()?.value;
+      const revision = /^\d+$/.test(revisionValue ?? '') ? Number(revisionValue) : null;
+      const last = db.prepare('SELECT COALESCE(MAX(seq),0) AS seq FROM observations').get().seq;
+      const previous = observationCache.get(path);
+      if (revision !== null && previous?.identity === identity && revision === previous.revision && last === previous.sequence) {
+        observations = previous.observations;
+        incremental = true;
+      } else if (revision !== null && previous?.identity === identity && previous.revision !== null &&
+        last > previous.sequence && revision > previous.revision) {
+        rows = db.prepare('SELECT seq,observation_id,body FROM observations WHERE seq>? ORDER BY seq').all(previous.sequence);
+        // Updates/deletions also bump the counter. Only a pure append can reuse
+        // old facts; a repair or replacement must re-read that altered source.
+        if (revision - previous.revision === rows.length) {
+          observations = [...previous.observations, ...rows.map(row => ({ observation_id: row.observation_id, ...JSON.parse(row.body) }))];
+          incremental = true;
+        }
+      }
+      if (!incremental) {
+        rows = db.prepare('SELECT observation_id,body FROM observations ORDER BY seq').all();
+        observations = rows.map(row => ({ observation_id: row.observation_id, ...JSON.parse(row.body) }));
+      }
+      if (observationCache.size >= 4 && !observationCache.has(path)) observationCache.delete(observationCache.keys().next().value);
+      observationCache.set(path, { identity, revision, sequence: last, observations });
+    }
+    const gaps = metadataOnly ? 0 : db.prepare('SELECT COUNT(*) AS n FROM gaps').get().n;
     const accounts = db.prepare('SELECT account_key,label FROM accounts ORDER BY label,account_key').all();
     const active_account = db.prepare("SELECT value FROM meta WHERE key='active_account'").get()?.value ?? null;
     db.exec('COMMIT');
+    onRead?.({ observation_rows: rows.length, metadata_only: metadataOnly, incremental });
     return { observations, gaps, accounts, active_account };
   } finally { db.close(); }
 }

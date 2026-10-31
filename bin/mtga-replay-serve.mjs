@@ -10,6 +10,6 @@ const { values } = parseArgs({ options: {
 const port = Number(values.port);
 if (!Number.isSafeInteger(port) || port < 0 || port > 65535) throw new Error('Invalid replay port.');
 const runtime = await startReplayServer({ port, dataDir: values['data-dir'], viewerDir: values['viewer-dir'],
-  observeLocalLogs: true, autoSyncReplays: true });
+  observeLocalLogs: true, autoSyncReplays: false });
 console.log(`Replay 2.0 ${runtime.url}`);
 for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, async () => { await runtime.close(); process.exit(0); });

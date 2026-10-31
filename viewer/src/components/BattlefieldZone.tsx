@@ -14,7 +14,8 @@ export function PermanentCard({ card, highlighted = false, combat, focusActive =
     <CardImage grpId={card.grpId} card={card} isTapped={card.isTapped} isAttacking={card.isAttacking}
       fallbackLabel="永久物" isToken={card.objectType === 'GameObjectType_Token'} power={card.power} toughness={card.toughness} />
     <div className="permanent-status">
-      {card.isAttacking && <span>↑ 攻击</span>}{card.isBlocking && <span>↘ 阻挡</span>}
+      {card.isAttacking && <span>{card.attackState === 'AttackState_Declared' ? '待确认攻击' : '↑ 攻击'}</span>}
+      {card.isBlocking && <span>{card.blockState === 'BlockState_Declared' ? '待确认阻挡' : '↘ 阻挡'}</span>}
       {card.objectType === 'GameObjectType_Token' && <span>衍生物</span>}
       {card.attachedTo != null && <span title={`结附于 #${card.attachedTo}`}>结附</span>}
       {!!Object.keys(card.counters).length && <span title={Object.entries(card.counters).map(([t,n])=>`${t} ×${n}`).join('、')}>

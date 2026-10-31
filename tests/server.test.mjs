@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { request } from 'node:http';
 import { EventEmitter } from 'node:events';
+import { DatabaseSync } from 'node:sqlite';
 import { mkdtemp, mkdir, writeFile, rm, symlink, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -77,6 +78,25 @@ test('rapid sync requests share one job, expose progress and structured partial 
   await finishedJob(url); assert.equal(calls, 2);
 });
 
+test('a replay arriving during sync schedules one automatic follow-up without another log change', async t => {
+  let releaseImport, releaseSync, calls = 0;
+  const importGate = new Promise(resolve => { releaseImport = resolve; });
+  const syncGate = new Promise(resolve => { releaseSync = resolve; });
+  const running = await setup(t, { observeLocalLogs: true, autoSyncReplays: true,
+    localHistoryOptions: { probe: async () => ({ input: 'unchanged', archive: 'unchanged' }),
+      workflow: async () => { await importGate; return { archive: { archived: 1 } }; } },
+    syncWorkflow: async () => { calls++; if (calls === 1) await syncGate; return { status: 'succeeded' }; } });
+  await syncPost(running.url);
+  assert.equal(calls, 1);
+  releaseImport();
+  for (let i = 0; i < 50 && running.localHistory.snapshot().status !== 'succeeded'; i++)
+    await new Promise(resolve => setTimeout(resolve, 5));
+  releaseSync();
+  for (let i = 0; i < 100 && calls < 2; i++) await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(calls, 2);
+  await finishedJob(running.url);
+});
+
 test('unexpected sync exceptions never expose raw credentials or local paths', async t => {
   const { url } = await setup(t, { syncWorkflow: async () => { throw new Error('ghp_SyntheticSecret /Users/synthetic/private.log'); } });
   await syncPost(url); const job = await finishedJob(url);
@@ -145,6 +165,7 @@ test('offline card image failure returns card text and never blocks replay endpo
   assert.equal(metadata.image_url, null);
   const failed = await fetch(running.url + 'api/cards/100/image');
   assert.equal(failed.status, 503);
+  assert.equal(failed.headers.get('cache-control'), 'no-store');
   assert.ok(Number(failed.headers.get('retry-after')) >= 1);
   assert.equal((await fetch(running.url + 'api/matches/latest')).status, 200);
   assert.equal(requests, 1); // Failed metadata is cached briefly, so playback does not retry every step.
@@ -169,12 +190,19 @@ test('public Scryfall metadata and DFC images are cached locally, preserving MIM
   const imageUrl = new URL(metadata.image_url, running.url);
   const image = await fetch(imageUrl);
   assert.equal(image.headers.get('content-type'), 'image/png');
+  assert.equal(image.headers.get('cache-control'), 'private, max-age=86400');
   assert.deepEqual(Buffer.from(await image.arrayBuffer()), png);
   assert.equal((await fetch(imageUrl)).headers.get('content-type'), 'image/png');
-  const cached = await fetch(running.url + 'api/cards/100').then(response => response.json());
+  const cachedResponse = await fetch(running.url + 'api/cards/100');
+  assert.equal(cachedResponse.headers.get('cache-control'), 'no-store');
+  const cached = await cachedResponse.json();
   assert.equal(cached.image_cached, true);
   assert.equal(requests.length, 2);
   assert.equal(requests.some(url => /synthetic-match|started_at|Jump_In/.test(url)), false);
+  const retry = await fetch(new URL('api/cards/100/image?retry=1', running.url));
+  assert.equal(retry.status, 200);
+  assert.equal(retry.headers.get('cache-control'), 'no-store');
+  assert.equal(requests.length, 3); // Explicit image recovery bypasses the local image cache.
 });
 
 test('Coach Context is a native JSON attachment with exact before hand, no future reveal, and missing-anchor 404', async (t) => {
@@ -213,15 +241,19 @@ test('Coach Context is a native JSON attachment with exact before hand, no futur
 
 test('collection API rejects foreign/parameterized actions and excludes concurrent replay publication', async t => {
  let reads=0,release;const gate=new Promise(resolve=>{release=resolve;});
- const {url}=await setup(t,{collectionUpdate:async()=>{reads++;await gate;return {local_updated:true,synced:true,summary:{card_kinds:3,total_quantity:9}};}});
+ const {url,dataDir}=await setup(t,{collectionUpdate:async()=>{reads++;await gate;return {local_updated:true,synced:true,summary:{card_kinds:3,total_quantity:9}};}});
+ const account='a'.repeat(64),catalog=new DatabaseSync(join(dataDir,'draft-capture.sqlite3'));
+ catalog.exec('CREATE TABLE accounts(account_key TEXT PRIMARY KEY,label TEXT); CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT); CREATE TABLE observations(seq INTEGER PRIMARY KEY,observation_id TEXT,body TEXT); CREATE TABLE gaps(gap_id TEXT PRIMARY KEY,reason TEXT);');
+ catalog.prepare('INSERT INTO accounts VALUES (?,?)').run(account,'Synthetic account');catalog.prepare('INSERT INTO meta VALUES (?,?)').run('active_account',account);catalog.close();
+ const path=`api/collection?account=${account}`;
  const headers={Origin:new URL(url).origin,'X-MTGA-Replay-Action':'collection-update','X-MTGA-Replay-Account-Confirmation':'unknown-account-reviewed'};
  for(const override of [{Origin:'https://foreign.invalid'},{'X-MTGA-Replay-Action':'wrong'}])assert.equal((await fetch(url+'api/collection',{method:'POST',headers:{...headers,...override}})).status,403);
  assert.equal((await fetch(url+'api/collection?path=/private',{method:'POST',headers})).status,400);
  assert.equal((await fetch(url+'api/collection',{method:'POST',headers,body:'{}'})).status,400);assert.equal(reads,0);
- const a=await fetch(url+'api/collection',{method:'POST',headers}).then(r=>r.json());
- const b=await fetch(url+'api/collection',{method:'POST',headers}).then(r=>r.json());assert.equal(a.id,b.id);
+ const a=await fetch(url+path,{method:'POST',headers}).then(r=>r.json());
+ const b=await fetch(url+path,{method:'POST',headers}).then(r=>r.json());assert.equal(a.id,b.id);
  assert.equal((await syncPost(url)).status,409);release();
- for(let i=0;i<100;i++){const job=await fetch(url+'api/collection').then(r=>r.json());if(job.status==='succeeded'){assert.equal(reads,1);return;}await new Promise(r=>setTimeout(r,10));}assert.fail('Collection did not finish');
+ for(let i=0;i<100;i++){const job=await fetch(url+path).then(r=>r.json());if(job.status==='succeeded'){assert.equal(reads,1);return;}await new Promise(r=>setTimeout(r,10));}assert.fail('Collection did not finish');
 });
 test('isolated replay providers never expose collection reads or uploads by default', async t => {
  let reads=0;const {url}=await setup(t,{replayProvider:{list:async()=>[],get:async()=>null,latest:async()=>null},collectionUpdate:async()=>{reads++;}});

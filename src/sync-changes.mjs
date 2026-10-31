@@ -2,21 +2,21 @@ import { validateBundleFiles, allowedPath, validateOutgoingCommit } from './sync
 
 /** Personal-repository upload mode. Validate only outgoing new/changed files;
  * old history belongs to the separate explicit audit, not every upload. */
-export async function validateSyncChanges(git, { branch, onValidation } = {}) {
+export async function validateSyncChanges(git, { branch, onValidation, checkedObjects = new Set() } = {}) {
   const started = performance.now();
   const paths = new Set(String(await git(['diff', '--cached', '--name-only', '-z', '--no-renames'])).split('\0').filter(Boolean));
   const base = String(await git(['for-each-ref', '--format=%(objectname)', `refs/remotes/origin/${branch}`])).trim();
   for (const path of paths) if (!allowedPath(path)) throw Error('Unexpected outgoing data path.');
   let bytes = 0, checked = 0;
-  const seen = new Set();
+  const seen = checkedObjects;
   async function inspect(path, mode, hash, stage = '0') {
     if (!allowedPath(path) || !['100644', '100755'].includes(mode) || stage !== '0' ||
         !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(hash)) throw Error('Invalid outgoing data file.');
     const identity = `${path}:${hash}`;
     if (seen.has(identity)) return;
-    seen.add(identity);
     const content = await git(['cat-file', 'blob', hash], 'buffer');
     validateBundleFiles(new Map([[path, content]]));
+    seen.add(identity);
     bytes += Buffer.byteLength(content); checked++;
   }
   const head = String(await git(['for-each-ref', '--format=%(objectname)', `refs/heads/${branch}`])).trim();

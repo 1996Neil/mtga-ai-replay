@@ -3,13 +3,28 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { archiveReplays, listReplays, getReplay, getLatestReplay, getArchivedCard, saveCoachNotes } from '../src/history.mjs';
+import { archiveReplays, listReplays, getReplay, getLatestReplay, getArchivedCard, saveCoachNotes, listReplaySummaries } from '../src/history.mjs';
 
 async function directory(t) {
   const path = await mkdtemp(join(tmpdir(), 'mtga-history-'));
   t.after(() => rm(path, { recursive: true, force: true }));
   return path;
 }
+
+test('explicit repair rejects a changed revision even when automatic extension would be valid', async t => {
+  const dataDir = await directory(t), previous = replay('strict-repair');
+  await archiveReplays([previous], { dataDir });
+  const [baseline] = await listReplaySummaries([previous.match.id], { dataDir });
+  await saveCoachNotes(previous.match.id, [{ anchor: 'T1-A1', text: 'Concurrent note must survive' }], { dataDir });
+  const richer = structuredClone(previous);
+  richer.games[0].replay_steps.push({ anchor: 'T1-A2', state: {} });
+  const result = await archiveReplays([richer], { dataDir, replaceRevision: baseline.replay_revision, strictReplaceRevision: true });
+  assert.equal(result.conflicts, 1); assert.equal(result.archived, 0);
+  assert.equal((await getReplay(previous.match.id, { dataDir })).games[0].replay_steps.length, 1);
+  assert.equal((await getReplay(previous.match.id, { dataDir })).coachNotes[0].text, 'Concurrent note must survive');
+  const [current] = await listReplaySummaries([previous.match.id], { dataDir });
+  assert.equal((await archiveReplays([richer], { dataDir, replaceRevision: current.replay_revision, strictReplaceRevision: true })).archived, 1);
+});
 function replay(id, day = 1) {
   return { schema_version: '1.1', perspective: { hidden_information: 'omitted' },
     match: { id, started_at: `2026-10-0${day}T12:00:00.000Z`, event: 'Jump In', event_id: 'Jump_In_2024', is_jump_in: true, result: 'Win' },

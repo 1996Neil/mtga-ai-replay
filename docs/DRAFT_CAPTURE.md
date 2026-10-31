@@ -85,13 +85,25 @@ a consistent observed prefix; `history_complete` always stays false. Any known
 capture gap conservatively invalidates prefix exactness. No terminal event or
 missing historical selection is invented.
 
+The display layer now separately corroborates complete captured pools against a
+unique recorded course and independently checks each archived main deck before
+showing linked matches. Account conflicts remain explicit and never rewrite
+capture ownership. See [binding evidence, limitations and checks](DRAFT_BINDING.md).
+
 ## Git protocol and compatibility
 
-`drafts/index.json` discovers independent account indexes at
+`drafts/index.json` (V2, with V1 read compatibility) discovers independent account indexes at
 `drafts/accounts/<account_key>/index.json`. Each account index binds immutable
 100-observation chunks at `objects/<sha256>.json` by exact SHA256, byte length
 and count. Indexes are mutable; chunks are immutable. Raw literals, original
 account IDs, names, machine paths and credentials are not part of the schema.
+
+V2 additionally binds each account's `bindings.json` by exact bytes, SHA256 and
+row count. These documents carry source-fingerprinted draft/course/match links
+and the exact verified published replay versions, or a specific pending state.
+Match upload completion refreshes them even without new draft observations.
+The Viewer consumes the same readback-verified documents. See
+[publication protocol and evidence](DRAFT_PUBLICATION.md).
 
 The publisher shares the existing upload lock, verified private repository,
 fixed service identity, complete-history validation and non-force Git transport.

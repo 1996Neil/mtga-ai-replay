@@ -1,6 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createTaskClient } from '../src/lib/taskClient.ts';
+test('collection update and upload retry retain the selected account on every request', async () => {
+  const account = 'a'.repeat(64), calls: { url: string; method: string }[] = [];
+  const request = (async (url, options) => {
+    calls.push({ url: String(url), method: options?.method ?? 'GET' });
+    return Response.json(options?.method === 'POST' ? { id: 'scoped', status: 'succeeded' } : { id: null, status: 'idle' });
+  }) as typeof fetch;
+  await createTaskClient('/api/collection', 'collection-update', request, async () => {}, account).run(() => {});
+  assert.deepEqual(calls.map(call => call.url), [`/api/collection?account=${account}`, `/api/collection?account=${account}`]);
+  calls.length = 0;
+  await createTaskClient('/api/collection', 'collection-update', request, async () => {}, account).run(() => {}, undefined, undefined, true);
+  assert.deepEqual(calls.map(call => call.url), [`/api/collection?account=${account}`, `/api/collection/sync?account=${account}`]);
+});
 test('reopen resumes server job with GET only, reconnects after transient failure',async()=>{
  const methods:string[]=[],connection:boolean[]=[];let calls=0;
  const request=(async(_url,options)=>{methods.push(options?.method??'GET');if(++calls===2)throw new Error('Disconnected');return new Response(JSON.stringify({id:'kept',status:calls<4?'running':'succeeded'}));}) as typeof fetch;
