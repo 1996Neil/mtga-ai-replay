@@ -6,6 +6,8 @@ import type { CombatLink } from './combatPresentation.ts';
  * Compare the unfiltered combat graph, so focus and blocked attackers cannot
  * bring a suppressed duplicate back. Independent stack chains stay intact. */
 export function withoutCombatDuplicates(ordinary: readonly Relationship[], combat: readonly CombatLink[]): Relationship[] {
-  const pairs = new Set(combat.filter(link => link.kind === 'attack').map(link => JSON.stringify([link.from, link.to])));
+  // A suppressed attack is no evidence of damage. An explicit trample damage
+  // event still gets its own target line even though that attacker was blocked.
+  const pairs = new Set(combat.filter(link => link.kind === 'attack' && !link.suppressed).map(link => JSON.stringify([link.from, link.to])));
   return ordinary.filter(link => link.kind !== 'target' || !pairs.has(JSON.stringify([link.from, link.to])));
 }

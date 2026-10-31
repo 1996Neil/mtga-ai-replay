@@ -82,7 +82,8 @@ export class PerspectiveState {
     const o = this.objects.get(id);
     const visibility = identityVisibility(o, this.zones, this.localSeat);
     if (visibility === 'hidden' || this.ended) return null;
-    return { name: names.get(o.grpId) ?? `Arena card ${o.grpId}`, arena_id: o.grpId, instance_id: id, visibility };
+    return { name: names.get(o.grpId) ?? `Arena card ${o.grpId}`, arena_id: o.grpId, instance_id: id,
+      logical_id: this.logicalIds?.get(id) ?? `C${id}`, visibility };
   }
   target(id, names) {
     if (this.players.has(id)) return { player: id === this.localSeat ? 'me' : 'opponent' };

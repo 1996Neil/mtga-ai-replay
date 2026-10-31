@@ -3,16 +3,22 @@ import { useReplayStore } from '../store/replayStore';
 import { NearbyActions } from './GameLog';
 import { actorLabelZh, phaseTextZh } from '../lib/display';
 import { TurnSlider } from './TurnSlider';
+import { observationGroup } from '../lib/observationGroups';
 const SPEEDS = [0.5, 1, 2, 4];
 export function ReplayControls({ analysis = false }: { analysis?: boolean }) {
   const s = useReplayStore(), match = s.currentMatch(), step = s.currentStep();
   const shown = s.viewBefore && step?.beforeGameState ? step.beforeGameState.turnInfo : step?.gameState.turnInfo;
   const total = match?.steps.length ?? 0, first = s.currentStepIndex <= 0, last = s.currentStepIndex >= total - 1;
+  const group = match ? observationGroup(match.steps, s.currentStepIndex) : null;
   return <footer className="replay-controls" aria-label="回放控制">
     <div className="replay-position"><div className="replay-position-title">{shown ? `${shown.turnNumber === 0 ? '起手与调度' : `第 ${shown.turnNumber} 回合 · ${actorLabelZh(shown.activePlayer)}`} · ${phaseTextZh(shown.phase, shown.step)}` : '正在读取回放'}</div>
       {match && <NearbyActions match={match} currentStepIndex={s.currentStepIndex} analysis={analysis} />}
       {analysis && <span className="replay-technical-position">{step?.anchor} · {s.currentStepIndex + 1} / {total} 个动作</span>}</div>
     <div className="control-button-row">
+      {group && group.steps.length > 1 && <div className="boundary-buttons" aria-label="此次结算局面">
+        <button type="button" disabled={!step?.beforeGameState} aria-pressed={s.viewBefore} onClick={() => { s.pause(); s.setViewBefore(true); }}>结算前</button>
+        <button type="button" aria-pressed={!s.viewBefore} onClick={() => { s.pause(); s.setViewBefore(false); }}>结算后</button>
+      </div>}
       <button className="standard-button" type="button" onClick={s.previousTurn} disabled={first} title="Shift + 左方向键">上一回合</button>
       <button className="standard-button" type="button" onClick={s.stepBackward} disabled={first} title="左方向键">上一步</button>
       <button className="standard-button play-button" type="button" onClick={s.togglePlay} aria-label={s.isPlaying ? '暂停' : '播放'}>{s.isPlaying ? 'Ⅱ 暂停' : '▶ 播放'}</button>

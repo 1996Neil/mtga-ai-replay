@@ -222,6 +222,10 @@ test('terminal lethal damage retains its previously public source but never newl
   assert.equal(JSON.stringify(replays).includes('2004'), false);
   assert.equal(events(replays[0]).some((event) => event.type === 'reveal'), false);
   assert.deepEqual(replays[0].games[0].result.life, { me: 6, opponent: 0 });
+  const last = replays[0].games[0].steps.at(-1);
+  assert.equal(last.event.type, 'game_over');
+  assert.equal(last.grouped_frame, true, 'lethal damage and terminal marker share the observed final frame');
+  assert.equal(replays[0].games[0].states[last.state_id].gameStateId, 20);
 });
 
 test('MatchCompleted freezes identities without GameOver while preserving known trailing damage', async () => {

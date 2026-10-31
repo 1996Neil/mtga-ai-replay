@@ -8,7 +8,7 @@ const copy = (value, fields) => Object.fromEntries(fields.filter(key => Object.h
 const CARD_FIELDS = ['name', 'display_name_zh', 'arena_id', 'instance_id', 'logical_id', 'visibility',
   'owner', 'controller', 'card_types', 'is_tapped', 'is_token', 'is_ability', 'power', 'toughness',
   'damage', 'damage_marked', 'has_summoning_sickness', 'is_copy', 'colors', 'is_attacking',
-  'attacking_target_id', 'is_blocking', 'blocked_attacker_ids', 'attached_to', 'attachments',
+  'attacking_target_id', 'is_blocking', 'blocked_attacker_ids', 'is_blocked', 'attack_state', 'block_state', 'attached_to', 'attachments',
   'type_line', 'mana_cost', 'keywords'];
 const RULE_FIELDS = ['arena_id', 'name', 'display_name_zh', 'mana_cost', 'type_line', 'oracle_text',
   'keywords', 'power', 'toughness', 'source', 'certainty', 'missing_fields', 'metadata_complete',
@@ -77,10 +77,13 @@ export function snapshotToLiveState(snapshot, { sessionId, matchId, gameId = '1'
     turn: board.turn ?? null, phase: board.phase ?? null, step: board.step ?? null,
     active_player: board.activePlayer ?? null, priority, board, rules: filteredRules,
     coverage: { dynamic_abilities: 'unknown', state_complete: stateComplete && !missing.some(item => !item.startsWith('rules:')), missing: [...new Set(missing)] },
-    committed_combat: { attackers: battlefield.filter(c => c.is_attacking).map(c => c.instance_id),
-      blockers: battlefield.filter(c => list(c.blocked_attacker_ids).length).map(c => ({ instance_id: c.instance_id, attacker_ids: [...c.blocked_attacker_ids] })),
+    committed_combat: { attackers: battlefield.filter(c => c.is_attacking && c.attack_state !== 'AttackState_Declared').map(c => c.instance_id),
+      blockers: battlefield.filter(c => c.block_state !== 'BlockState_Declared' && list(c.blocked_attacker_ids).length).map(c => ({ instance_id: c.instance_id, attacker_ids: [...c.blocked_attacker_ids] })),
       source: 'current_observed_snapshot' },
-    tentative: { known: false, attackers: null, blockers: null, targets: null, source: 'not_observed' },
+    tentative: { known: battlefield.some(c => c.attack_state === 'AttackState_Declared' || c.block_state === 'BlockState_Declared'),
+      attackers: battlefield.filter(c => c.attack_state === 'AttackState_Declared').map(c => c.instance_id),
+      blockers: battlefield.filter(c => c.block_state === 'BlockState_Declared').map(c => ({ instance_id: c.instance_id, attacker_ids: [...list(c.blocked_attacker_ids)] })),
+      targets: null, source: 'current_observed_snapshot' },
     offered_actions: offeredActions ? structuredClone(offeredActions) : null,
     terminal: Boolean(terminal), life_lost_this_turn: lifeLost };
 }

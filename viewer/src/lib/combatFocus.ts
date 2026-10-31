@@ -16,7 +16,7 @@ export function combatFocus(links: readonly CombatLink[], selected: number | nul
   }
   const blocked = new Set(links.filter(link => link.kind === 'block' && 'card' in link.to).map(link => (link.to as {card:number}).card));
   const visible = links.filter(link => {
-    if (link.kind === 'attack' && 'card' in link.from && blocked.has(link.from.card)) return false;
+    if (link.suppressed || (link.kind === 'attack' && 'card' in link.from && blocked.has(link.from.card))) return false;
     return !active || ('card' in link.from && link.from.card === selected) || ('card' in link.to && link.to.card === selected);
   });
   return { active, related, visible };
