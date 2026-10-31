@@ -21,6 +21,21 @@ replaced. Subsequent reads reuse the image. Targeted checks cover wrong/missing
 Arena IDs, stale JPEGs after metadata correction, offline behavior, and faces.
 No full test suite or bulk image scan/download is part of this change.
 
+Token correction (2026-10-31): Arena's token rows now resolve through the token
+sheet (`FRA` token collector 2 -> `TFRA` 2), even though Arena marks those rows
+as non-primary. The selected public card must have token/double-faced-token or
+emblem layout. Existing version/source cache rules apply unchanged, so an old
+same-name regular-card image is replaced on demand. No name search, extra
+background pass, UI or dependency is added. If the exact token printing cannot
+be matched, show text rather than guessing a different token or a regular card.
+Reciprocal token a/b faces are resolved independently of `IsPrimaryCard`; Arena
+marks both incubator faces non-primary. Unconfirmed links use text only.
+
+Verified on the local service: 106552, 106556 and 106558 now resolve to TFRA
+2/6/8 with token layouts and corrected images. Three cached token images
+completed together in 5 ms. Recovery/performance 20/20, related HTTP 2/2 and
+independent review passed; no bulk image download or full suite was run.
+
 Verified on this Mac: Last Gasp now uses printing
 `2381d123-d8c7-4822-98fe-b1c365beb5ed` (FRA 56), with verified catalog
 identity and a matching image source marker. The corrected JPEG is 86,400 bytes;

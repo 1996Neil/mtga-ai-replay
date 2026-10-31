@@ -47,11 +47,13 @@ function withIdentityStatus(metadata) {
     : metadata.image_identity_status === 'unverified' || metadata.source === 'local' ? 'unverified' : 'legacy_unverified' };
 }
 function matchesCatalog(metadata, identity) {
+  if (identity.unresolved) return false;
   const cached = metadata.image_identity;
   return metadata.image_identity_status === 'verified' && metadata.identity_schema === 1 &&
     cached?.lang === 'en' && cached.requestedId === identity.requestedId &&
     cached.primaryId === identity.primaryId && cached.faceIndex === identity.faceIndex &&
     cached.set === identity.set && cached.collector === identity.collector &&
+    Boolean(cached.isToken) === Boolean(identity.isToken) &&
     cached.printingId === metadata.scryfall_id;
 }
 function normalizeCard(card, id, local, selected, identityVerified) {
@@ -82,6 +84,9 @@ export async function getCardMetadata(arenaId, { dataDir = defaultDataDir(), loc
   if (pending.has(key)) return pending.get(key);
   const task = (async () => {
     const identity = await identityResolver?.(arenaId);
+    if (identity?.unresolved) return { ...local, arena_id: arenaId, name: local.name ?? `Arena card ${arenaId}`,
+      source: 'local', image_available: false, image_identity_status: 'unverified',
+      load_error: cardLoadError({ kind: 'identity_mismatch', stage: 'metadata' }) };
     const filename = cachePath(dataDir, arenaId, 'json');
     let previousSafeMetadata;
     try {

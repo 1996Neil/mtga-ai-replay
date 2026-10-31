@@ -4,7 +4,7 @@ import { mkdtemp, rm, mkdir, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getCardMetadata, getCardImage, cardImageRetryAfter, cardImageFailure, validImageBytes } from '../src/card-cache.mjs';
-import { selectPrintedFace } from '../src/card-image-identity.mjs';
+import { selectPrintedFace, resolveCatalogIdentity } from '../src/card-image-identity.mjs';
 import { getEnglishRuinsImage, verifiedEnglishRuinsImage } from '../src/card-image-fallback.mjs';
 const identity={requestedId:100,primaryId:100,faceIndex:0,set:'abc',collector:'1'};
 const card={id:'synthetic-print',oracle_id:'synthetic-oracle',lang:'en',arena_id:100,set:'abc',collector_number:'1',name:'Synthetic Card',layout:'normal',image_uris:{normal:'https://cards.scryfall.io/normal/front/synthetic.jpg'}};
@@ -122,4 +122,56 @@ test('a request timeout is reported distinctly from an HTTP error or absent card
  assert.equal(timeout.load_error.kind,'timeout');
  const absent=await getCardMetadata(100,{dataDir,refreshMetadata:true,fetchFn:async()=>new Response('',{status:404})});
  assert.equal(absent.load_error.kind,'not_found');assert.equal(absent.load_error.status,404);
+});
+test('non-primary Arena token rows resolve to the token sheet and reject regular-card layouts', () => {
+ const token = resolveCatalogIdentity({ GrpId:106552, ExpansionCode:'FRA', CollectorNumber:'2', CollectorSuffix:'',
+  IsPrimaryCard:0, IsToken:1, IsRebalanced:0, LinkedFaceGrpIds:'' });
+ assert.deepEqual(token,{requestedId:106552,primaryId:106552,faceIndex:0,set:'tfra',collector:'2',isToken:true});
+ const printing={...card,arena_id:undefined,set:'tfra',collector_number:'2',layout:'token',type_line:'Token Creature — Cat Soldier'};
+ assert.ok(selectPrintedFace(printing,token,{allowMissingArenaId:true}));
+ assert.equal(selectPrintedFace({...printing,layout:'normal'},token,{allowMissingArenaId:true}),null);
+ assert.equal(selectPrintedFace({...printing,set:'fra'},token,{allowMissingArenaId:true}),null);
+});
+test('same-name regular-card token cache is corrected once without a name search or bulk lookup', async t => {
+ const dataDir=await dir(t),root=join(dataDir,'cards');await mkdir(root);
+ await writeFile(join(root,'106552.json'),JSON.stringify({arena_id:106552,name:"Ajani's Pridemate",source:'scryfall',
+  cache_schema:2,rules_schema:1,scryfall_id:'wrong-regular-card',image_source:'https://cards.scryfall.io/wrong-regular.jpg'}));
+ await writeFile(join(root,'106552.jpg'),jpeg(1));
+ const token={requestedId:106552,primaryId:106552,faceIndex:0,set:'tfra',collector:'2',isToken:true};
+ const printing={...card,arena_id:undefined,id:'right-token',name:"Ajani's Pridemate",set:'tfra',collector_number:'2',
+  layout:'token',type_line:'Token Creature — Cat Soldier'};
+ const requests=[],correct=jpeg(9),options={dataDir,identityResolver:async()=>token,fetchFn:async url=>{
+  requests.push(url);return url.startsWith('https://api.')?Response.json(printing):
+   new Response(correct,{headers:{'Content-Type':'image/jpeg'}});
+ }};
+ const image=await getCardImage(106552,options);
+ assert.ok(image.data.equals(correct));
+ assert.deepEqual(requests,['https://api.scryfall.com/cards/tfra/2',printing.image_uris.normal]);
+ const metadata=await getCardMetadata(106552,{...options,fetchFn:async()=>assert.fail('verified token cache must be local')});
+ assert.equal(metadata.type_line,'Token Creature — Cat Soldier');assert.equal(metadata.image_identity.isToken,true);
+ assert.ok((await getCardImage(106552,{...options,fetchFn:async()=>assert.fail('cached token image must be local')})).data.equals(correct));
+});
+test('an unavailable token printing never falls back to guessing by shared name', async t => {
+ const dataDir=await dir(t),requests=[],token={...identity,set:'tabc',isToken:true};
+ const metadata=await getCardMetadata(100,{dataDir,local:{name:'Beast'},identityResolver:async()=>token,
+  fetchFn:async url=>{requests.push(url);return new Response('',{status:404});}});
+ assert.equal(metadata.image_source,undefined);
+ assert.deepEqual(requests,['https://api.scryfall.com/cards/tabc/1','https://api.scryfall.com/cards/arena/100']);
+});
+test('linked token faces use reciprocal suffixes even when both Arena rows are non-primary', async t => {
+ const front={GrpId:84616,ExpansionCode:'MOM',CollectorNumber:'16',CollectorSuffix:'a',IsPrimaryCard:0,IsToken:1,
+  LinkedFaceGrpIds:'84617'},back={...front,GrpId:84617,CollectorSuffix:'b',LinkedFaceGrpIds:'84616'};
+ const a=resolveCatalogIdentity(front,back),b=resolveCatalogIdentity(back,front);
+ assert.equal(a.set,'tmom');assert.equal(a.collector,'16');assert.equal(a.faceIndex,0);
+ assert.equal(b.primaryId,84616);assert.equal(b.collector,'16');assert.equal(b.faceIndex,1);
+ const printing={...card,arena_id:undefined,set:'tmom',collector_number:'16',layout:'double_faced_token',
+  card_faces:[{name:'Incubator',image_uris:{normal:'https://cards.scryfall.io/front.jpg'}},
+   {name:'Phyrexian',image_uris:{normal:'https://cards.scryfall.io/back.jpg'}}]};
+ assert.equal(selectPrintedFace(printing,a,{allowMissingArenaId:true}).identity.side,'front');
+ assert.equal(selectPrintedFace(printing,b,{allowMissingArenaId:true}).image,'https://cards.scryfall.io/back.jpg');
+ const unresolved=resolveCatalogIdentity(back,null),dataDir=await dir(t);
+ assert.equal(unresolved.unresolved,true);
+ const metadata=await getCardMetadata(84617,{dataDir,local:{name:'Phyrexian'},identityResolver:async()=>unresolved,
+  fetchFn:async()=>assert.fail('unresolved token face must not guess a printing')});
+ assert.equal(metadata.image_source,undefined);
 });
