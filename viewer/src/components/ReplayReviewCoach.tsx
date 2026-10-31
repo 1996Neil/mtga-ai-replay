@@ -19,8 +19,6 @@ type Review = { schema_version: string; match_id: string; game_number: number; s
 type Match = { matchId: string; gameNumber: number; steps: Array<{ anchor: string; gameState?: GameState; beforeGameState?: GameState }> };
 type Rect = { left: number; top: number; width: number; height: number };
 const bounded = (value: number, max: number) => Math.max(8, Math.min(Math.max(8, max), value));
-const displayDate = (value?: string | null) => value && Number.isFinite(Date.parse(value))
-  ? new Date(value).toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai' }) : '未知日期';
 
 function ReviewCardLabel({ english, id }: { english: string; id: number }) {
   const metadata = useCardImage(id);
@@ -36,7 +34,6 @@ export function ReplayReviewCoach({ match, currentStepIndex, viewBefore, onJump 
   const [canSync, setCanSync] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState('');
-  const [checkedAt, setCheckedAt] = useState<string | null>(null);
   const [open, setOpen] = useState(false), [folded, setFolded] = useState(false);
   const [selectedAnchor, setSelectedAnchor] = useState<string | null>(null);
   const [position, setPosition] = useState({ x: -1, y: 130 });
@@ -53,7 +50,7 @@ export function ReplayReviewCoach({ match, currentStepIndex, viewBefore, onJump 
     let timer: ReturnType<typeof setTimeout> | undefined;
     const update = (status: ReviewStatus, review: Review | null = null) =>
       setSnapshot({ matchId: id, gameNumber: game, steps: match.steps, status, review });
-    update('loading'); setCanSync(false); setError(''); setCheckedAt(null);
+    update('loading'); setCanSync(false); setError('');
     setSelectedAnchor(null); setGenerating(false); previousStep.current = null;
     async function read() {
       try {
@@ -62,7 +59,6 @@ export function ReplayReviewCoach({ match, currentStepIndex, viewBefore, onJump 
         const value = await res.json();
         if (controller.signal.aborted || ticket !== epoch.current) return;
         setCanSync(Boolean(value.can_sync));
-        setCheckedAt(typeof value.checked_at === 'string' ? value.checked_at : null);
         if (value.status === 'ready' && value.review?.match_id === id && value.review.game_number === game) {
           update('ready', value.review as Review); setGenerating(false); setOpen(true);
           setError(value.error ?? (value.offline ? '当前离线，显示上次校验的云端复盘。' : ''));
@@ -238,14 +234,12 @@ export function ReplayReviewCoach({ match, currentStepIndex, viewBefore, onJump 
           <div className="replay-review-meta"><span className={`severity-text-${reviewPresentation(selected).tone}`}>
             {reviewPresentation(selected).symbol} {reviewPresentation(selected).label}</span>
             <span>{selected.anchor} · 动作{selected.boundary === 'before' ? '前' : '后'}</span>
-            <span>置信度：{reviewPresentation(selected).confidence}</span></div>
-          <p className="replay-review-muted">AI 判断：{reviewPresentation(selected).judgment} · 不代表规则裁定</p>
+            </div>
           <h3>{selected.title}</h3>
           {selected.cards.length > 0 && <div className="replay-review-cards">{selected.cards.map(card =>
             <ReviewCardLabel key={card} english={card} id={reviewCardId(card, selectedObjects)} />)}</div>}
-          <p><b>观察：</b>{selected.observation}</p><p><b>建议：</b>{selected.suggestion}</p>
-          {selected.rationale && <p><b>原因：</b>{selected.rationale}</p>}
-          {selected.limitation && <p className="replay-review-muted">限制：{selected.limitation}</p>}
+          <p className="replay-review-muted">{selected.observation}</p><p>{selected.suggestion}</p>
+          {selected.rationale && selected.rationale !== selected.suggestion && <p>{selected.rationale}</p>}
           <nav className="replay-review-nav"><button type="button" onClick={() => changeSelected(-1)}>← 上一条</button>
             <button type="button" onClick={() => setSelectedAnchor(null)}>本局总结</button>
             <button type="button" onClick={() => changeSelected(1)}>下一条 →</button></nav>
@@ -255,7 +249,6 @@ export function ReplayReviewCoach({ match, currentStepIndex, viewBefore, onJump 
           <p>{review.summary.overview}</p>
           {review.summary.strengths.length > 0 && <div><b>✓ 值得保留</b><ul>{review.summary.strengths.map((s,i)=><li key={i}>{s}</li>)}</ul></div>}
           {review.summary.improvements.length > 0 && <div><b>↗ 后续重点</b><ul>{review.summary.improvements.map((s,i)=><li key={i}>{s}</li>)}</ul></div>}
-          {review.summary.limitations.length > 0 && <details><summary>分析边界</summary><ul>{review.summary.limitations.map((s,i)=><li key={i}>{s}</li>)}</ul></details>}
           <div className="replay-review-legend" aria-label="时间轴标记图例">
             {(['critical','major','normal'] as Importance[]).map(k=><span key={k} className={`severity-text-${k === 'normal' ? 'tip' : k}`}>{k === 'normal' ? 'i' : '◆'} {importanceLabel[k]}</span>)}
           </div>
@@ -263,7 +256,6 @@ export function ReplayReviewCoach({ match, currentStepIndex, viewBefore, onJump 
         </>}
         {review && <button type="button" disabled={generating || !canSync} onClick={syncCloudReview}>检查/同步云端复盘</button>}
         {error && <p className="replay-review-error" role="alert">{error}</p>}
-        {state === 'ready' && <small className="replay-review-footnote">{review?.source} · {displayDate(review?.created_at)}{checkedAt ? ` · 上次校验 ${displayDate(checkedAt)}` : ''} · AI 建议不是确定的合法行动证明。</small>}
       </div>}
     </section>, document.body)}
     {!!markerButtons.length && (track ?
