@@ -144,6 +144,33 @@ class CaptureTests(unittest.TestCase):
         self.assertEqual(rows[0]['account_key'], rows[1]['account_key'])
         self.assertIsNone(rows[2]['account_key'])
 
+    def test_arena_log_reset_drops_previous_account_before_delayed_identity(self):
+        self.path.write_bytes(self.login(1) + line())
+        self.capture()
+        with self.path.open('ab') as f:
+            f.write(b'20261024 010204.123,INFO,tracker,Starting from beginning of file as file is smaller than before (previous = 5300154; current = 0)\n' +
+                    line('pick', [11]))
+        self.capture()
+        with self.path.open('ab') as f:
+            f.write(self.login(2) + line('pick', [12]))
+        self.capture()
+        rows = [json.loads(row[0]) for row in self.rows()]
+        self.assertIsNotNone(rows[0]['account_key'])
+        self.assertIsNone(rows[1]['account_key'])
+        self.assertIsNotNone(rows[2]['account_key'])
+        self.assertNotEqual(rows[0]['account_key'], rows[2]['account_key'])
+        self.assertEqual(self.capture()['added'], 0)
+
+    def test_reset_does_not_restore_departed_identity_or_survive_bootstrap(self):
+        reset = b'20261024 010204.123,INFO,tracker,Starting from beginning of file as file is smaller than before (previous = 8; current = 0)\n'
+        reconnect = b'20261024 010205.123,INFO,tracker,Reconnected - restoring prior user info\n'
+        self.path.write_bytes(self.login(1) + reset + reconnect + line())
+        self.assertEqual(self.capture(start_now=True)['observations'], 0)
+        with self.path.open('ab') as f:
+            f.write(line('pick', [11]))
+        self.capture()
+        self.assertIsNone(json.loads(self.rows()[0][0])['account_key'])
+
     def test_bootstrap_snapshot_does_not_skip_concurrent_append(self):
         self.path.write_bytes(self.login(1) + line())
         original = c.os.fstat

@@ -26,7 +26,8 @@ export function parseDraftLinks(path, text) {
     doc.schema !== 'MTGA_DRAFT_BINDINGS_V1' || doc.account_key !== account || !Array.isArray(doc.runs) || doc.runs.length > 10000) fail();
   const allSources = new Set();
   for (const row of doc.runs) {
-    if (!exact(row, ['run_id', 'sources', 'event_id', 'status', 'reason', 'course', 'matches', 'pending_match_ids']) ||
+    if (!exact(row, ['run_id', 'sources', 'event_id', 'status', 'reason', 'course', 'matches', 'pending_match_ids',
+      ...(Object.hasOwn(row, 'ownership') ? ['ownership'] : [])]) ||
       !RUN.test(row.run_id) || !list(row.sources, 1000, s => exact(s, ['run_id', 'sha256']) && RUN.test(s.run_id) && SHA.test(s.sha256)) ||
       !row.sources.length || row.sources[0].run_id !== row.run_id ||
       !/^[A-Za-z][A-Za-z0-9_-]{1,120}$/.test(row.event_id) || !['linked', 'pending'].includes(row.status) ||
@@ -35,7 +36,7 @@ export function parseDraftLinks(path, text) {
     for (const source of row.sources) { if (allSources.has(source.run_id)) fail(); allSources.add(source.run_id); }
     if (row.status === 'pending') {
       if (!['incomplete_picks', 'missing_course', 'ambiguous_courses', 'missing_matches', 'awaiting_match_upload', 'evidence_unavailable'].includes(row.reason) ||
-        row.course !== null || row.matches.length) fail();
+        row.course !== null || row.matches.length || Object.hasOwn(row, 'ownership')) fail();
       continue;
     }
     if (row.reason !== null || !row.matches.length || !exact(row.course, ['run_id', 'card_ids', 'wins', 'losses', 'module']) ||
@@ -47,13 +48,15 @@ export function parseDraftLinks(path, text) {
     const matchIds = new Set();
     for (const match of row.matches) {
       if (!exact(match, ['id', 'account_key', 'started_at', 'result', 'game_count', 'path', 'content_hash',
-        'coach_sha256', 'source_commit', 'local_revision', 'nonbasic_deck', 'total_cards']) ||
+        'coach_sha256', 'source_commit', 'local_revision', 'nonbasic_deck', 'total_cards',
+        ...(Object.hasOwn(match, 'relation_hash') ? ['relation_hash'] : [])]) ||
         !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(match.id) || matchIds.has(match.id) ||
         !(match.account_key === null || SHA.test(match.account_key)) ||
         typeof match.started_at !== 'string' || !Number.isFinite(Date.parse(match.started_at)) || new Date(match.started_at).toISOString() !== match.started_at ||
         ![null, 'Win', 'Loss', 'Draw'].includes(match.result) || !(match.game_count === null || positive(match.game_count)) ||
         !/^matches\/[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(match.path) || !SHA.test(match.content_hash) ||
         !SHA.test(match.coach_sha256) || !COMMIT.test(match.source_commit) || !SHA.test(match.local_revision) ||
+        (Object.hasOwn(match, 'relation_hash') && !SHA.test(match.relation_hash)) ||
         !positive(match.total_cards) || match.total_cards < 30 || match.total_cards > 250 ||
         !list(match.nonbasic_deck, 250, c => exact(c, ['arena_id', 'quantity']) && positive(c.arena_id) && positive(c.quantity)) ||
         match.nonbasic_deck.length < 8 || !unique(match.nonbasic_deck.map(c => c.arena_id))) fail();
@@ -65,6 +68,10 @@ export function parseDraftLinks(path, text) {
       if (copies < 12 || copies > match.total_cards || row.pending_match_ids.includes(match.id)) fail();
       matchIds.add(match.id);
     }
+    if (Object.hasOwn(row, 'ownership') && (!exact(row.ownership, ['account_key', 'method']) ||
+      !SHA.test(row.ownership.account_key) || row.ownership.account_key === account ||
+      row.ownership.method !== 'verified_pool_and_match_identity' ||
+      row.matches.some(match => match.account_key !== row.ownership.account_key))) fail();
   }
   return doc;
 }

@@ -138,7 +138,11 @@ def capture(log_dir, data_dir, before_commit=None, start_now=False):
                     message = parts[3] if len(parts) == 4 and parts[1] == b'INFO' else b''
                     message = re.sub(b'Human draft [^:]*pack[^:]*: ', b'Draft pack: ', message)
                     message = re.sub(b'Human draft [^:]*pick[^:]*: ', b'Draft pick: ', message)
-                    # Tracker logs account transitions before emitting draft observations.
+                    # Identity can arrive only when the first match starts, after a
+                    # whole draft. A new Arena log must not inherit the old login.
+                    if message.startswith(b'Starting from beginning of file'):
+                        account, departed = None, None
+                        continue
                     if message.startswith(b'Updating user info: '):
                         try:
                             info_value = ast.literal_eval(message.decode('utf-8')[len('Updating user info: '):].strip())
