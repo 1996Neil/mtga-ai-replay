@@ -43,6 +43,10 @@ test('sparse local cleanup keeps published old data online and later new uploads
   const next = await bundle({ id: 'new-after-cleanup', started: recent() });
   await enqueueCoachBundle(next, h.options); await syncCoachBundles({ ...h.options, fastSync: true });
   assert.ok((JSON.parse(await h.published('index.json'))).matches.some(row => row.match_id === next.summary.match_id));
+  const sparseAdds = h.control.calls.filter(call => call.file === 'git' && call.args.includes('add') && call.args.includes('--sparse'));
+  for (const call of sparseAdds) assert.ok(call.args.includes('--'), 'sparse staging keeps explicit path separation');
+  assert.ok(h.control.calls.some(call => call.file === 'git' && call.args.includes('--version')),
+    'sparse checkout staging checks the installed Git capability');
 });
 test('expired data from a failed outgoing push cannot hitchhike on a later recent upload', async t => {
   const h = await harness(t);

@@ -538,7 +538,13 @@ async function publishPending(state, dataDir, options) {
       catch (error) { if (error.code !== 'ENOENT') throw error; }
       await atomicWrite(target, text);
     }
-    await git(['add', '--', ...writes.keys()]);
+    // Retention keeps old history sparse. New, validated match files may be
+    // outside that checkout without authorizing any other path for staging.
+    const sparse = String(await git(['config', '--get', '--default', 'false', 'core.sparseCheckout'])).trim() === 'true';
+    const version = sparse ? String(await git(['--version'])).match(/git version (\d+)\.(\d+)/) : null;
+    // Older Git already permits these paths and does not support --sparse.
+    const explicitSparse = sparse && version && (Number(version[1]) > 2 || Number(version[1]) === 2 && Number(version[2]) >= 34);
+    await git(['add', ...(explicitSparse ? ['--sparse'] : []), '--', ...writes.keys()]);
     await assertStagedSyncOwnership(git, 'coach');
     if (!options.deferFullHistoryValidation) await validate();
     if (String(await git(['diff', '--cached', '--name-only'])).trim()) {
