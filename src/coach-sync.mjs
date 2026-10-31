@@ -8,7 +8,7 @@ import { createGitBatch } from './git-batch.mjs';
 import { mkdir, readFile, writeFile, rename, open, rm, lstat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import { defaultDataDir, isReplayExcluded } from './history.mjs';
+import { defaultDataDir, isReplayExcluded, listReplaySummaries } from './history.mjs';
 import { isTutorialMatch } from './replay-policy.mjs';
 import { serializeCoachJson } from './coach-bundle.mjs';
 import { validateBundleFiles, validateStagedRepository, validateSyncHistoryApproval, isCollectionSyncPath, isCoachSyncPath, createSyncValidationSession } from './sync-security.mjs';
@@ -356,6 +356,31 @@ export async function assertStagedSyncOwnership(git, namespace, accountPathAllow
   if (paths.some(path => !allowed(path) || (accountPathAllowed && !accountPathAllowed(path)))) fail('SYNC_FOREIGN_STAGE', 'Another namespace or account has staged changes; no commit was created.');
 }
 
+async function assertScopedPublication(state, options, dataDir) {
+  if (options.allowedMatchIds === undefined) return;
+  const ids = options.allowedMatchIds;
+  if (!Array.isArray(ids) || !ids.length || ids.length > 1000 ||
+    ids.some(id => typeof id !== 'string' || !id || id.length > 200) || new Set(ids).size !== ids.length)
+    fail('SYNC_SCOPE', 'A nonempty set of match IDs is required for scoped publication.');
+  const allowed = new Set(ids);
+  if (state.pending.some(item => !allowed.has(item.match_id)))
+    fail('SYNC_FOREIGN_PENDING', 'Other matches entered the upload queue; scoped publication was not started.');
+  for (const name of ['expectedPendingContentHashes', 'expectedReplayRevisions']) {
+    const map = options[name];
+    if (map !== undefined && (!map || Array.isArray(map) || typeof map !== 'object' ||
+      Object.keys(map).length !== ids.length || ids.some(id => !SHA.test(map[id] ?? ''))))
+      fail('SYNC_SCOPE', 'Scoped publication requires exact expected versions.');
+  }
+  if (options.expectedPendingContentHashes &&
+    state.pending.some(item => item.content_hash !== options.expectedPendingContentHashes[item.match_id]))
+    fail('SYNC_PENDING_CHANGED', 'A queued replay changed; scoped publication was not started.');
+  if (options.expectedReplayRevisions) {
+    const current = new Map((await listReplaySummaries(ids, { dataDir })).map(match => [match.id, match.replay_revision]));
+    if (ids.some(id => current.get(id) !== options.expectedReplayRevisions[id]))
+      fail('SYNC_INPUT_CHANGED', 'A local replay changed; scoped publication was not started.');
+  }
+}
+
 // Narrow shared boundary for the independent collection command. Its state and
 // serialization remain separate while the data checkout and lock are shared.
 export { locked as withCoachSyncLock, runner as coachSyncRunner, privateRepository as verifyPrivateSyncRepository,
@@ -537,6 +562,7 @@ async function publishPending(state, dataDir, options) {
   await verifyRemote(git, finalMeta.nameWithOwner);
   await assertOutgoingSyncOwnership(git, branch, 'coach', Boolean(finalMeta.defaultBranchRef?.name));
   const remoteCount = meta.defaultBranchRef?.name ? Number(String(await git(['rev-list', '--count', `origin/${branch}..${revision}`])).trim()) : 1;
+  await assertScopedPublication(state, options, dataDir);
   options.onProgress?.({ phase: 'uploading', checkpoint: { commit: revision,
     destination_hash: createHash('sha256').update(`${state.repository}:${branch}`).digest('hex') } });
   let pushError;
@@ -570,6 +596,7 @@ export async function syncCoachBundles(options = {}) {
   const dataDir = options.dataDir ?? defaultDataDir();
   return locked(dataDir, async () => {
     const state = await readState(dataDir);
+    await assertScopedPublication(state, options, dataDir);
     const settings = await readReplaySettings(dataDir);
     state.pending = state.pending.filter(item => replayInRetention(item, settings));
     await saveState(dataDir, state);

@@ -336,7 +336,8 @@ test('private sync publishes full byte-identical latest/history, ordered index a
   const h = await harness(t), first = await bundle();
   await configureCoachSync(REPOSITORY, h.options);
   assert.deepEqual(await enqueueCoachBundle(first, h.options), { queued: true, pending: 1 });
-  const result = await syncCoachBundles(h.options);
+  const result = await syncCoachBundles({ ...h.options, allowedMatchIds: [first.summary.match_id],
+    expectedPendingContentHashes: { [first.summary.match_id]: first.contentHash } });
   assert.equal(result.synced, true); assert.equal(result.committed, 1); assert.equal(await h.commits(), 1);
   assert.equal((await execute('git', ['remote', 'get-url', 'origin'], { cwd: h.checkout, env })).stdout.trim(), REMOTE_URL);
   for (const name of FILES) {

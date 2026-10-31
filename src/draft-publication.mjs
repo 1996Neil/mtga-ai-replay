@@ -9,13 +9,14 @@ import { draftSourceFingerprint, draftLinkPath, linkText, linkDigest, parseDraft
 import { serializeCoachJson, buildCoachBundle } from './coach-bundle.mjs';
 import { readSyncCache, syncDigest } from './sync-cache.mjs';
 import { atomicSyncWrite, safeSyncOutputParents } from './coach-sync.mjs';
+import { draftOwnershipPath, readDraftOwnershipCorrections, draftOwnershipCorrection } from './draft-ownership.mjs';
 
 const SHA = /^[a-f0-9]{64}$/;
 const basic = name => /^(?:Snow-Covered )?(?:Plains|Island|Swamp|Mountain|Forest|Wastes)$/.test(name ?? '');
 const fail = () => { throw Error('Draft publication evidence is invalid.'); };
 let rulesPromise;
 function publicationRules() {
-  rulesPromise ??= Promise.all(['draft-publication.mjs', 'draft-binding.mjs', 'draft-link-contract.mjs', 'coach-bundle.mjs']
+  rulesPromise ??= Promise.all(['draft-publication.mjs', 'draft-binding.mjs', 'draft-link-contract.mjs', 'draft-ownership.mjs', 'coach-bundle.mjs']
     .map(path => readFile(new URL(path, import.meta.url)))).then(parts => linkDigest(Buffer.concat(parts)));
   return rulesPromise;
 }
@@ -86,6 +87,33 @@ export async function readPublishedDraftMatch(git, revision, entry) {
 }
 
 export async function buildPublishedDraftLinks(snapshot, { dataDir, git, revision, work = {} }) {
+  const ownershipCorrections = await readDraftOwnershipCorrections(dataDir);
+  let priorCorrections;
+  const restoredCorrections = () => priorCorrections ??= (async () => {
+    // An explicit correction survives restore/retry without a machine-local ledger.
+    const corrections = [];
+    if (!String(await git(['ls-tree', '--name-only', revision, '--', 'drafts/index.json'])).trim())
+      return { corrections };
+    const read = async path => {
+      const size = Number(String(await git(['cat-file', '-s', `${revision}:${path}`])).trim());
+      if (!Number.isSafeInteger(size) || size < 1 || size > 4 * 1024 * 1024) fail();
+      const text = String(await git(['show', `${revision}:${path}`]));
+      if (Buffer.byteLength(text) !== size) fail();
+      return text;
+    };
+    const root = parseDraftBackup('drafts/index.json', await read('drafts/index.json'));
+    for (const account of root.accounts) {
+      if (!account.bindings) continue;
+      const text = await read(account.bindings.path);
+      if (linkDigest(text) !== account.bindings.sha256 || Buffer.byteLength(text) !== account.bindings.bytes) fail();
+      const doc = parseDraftLinks(account.bindings.path, text);
+      if (doc.runs.length !== account.bindings.runs) fail();
+      for (const row of doc.runs) if (row.ownership) corrections.push({
+        sources: row.sources, source_account_key: account.account_key, account_key: row.ownership.account_key,
+      });
+    }
+    return { corrections };
+  })();
   const captures = capturesInBackup(snapshot, work), history = await listReplays({ dataDir, limit: null });
   const rawCourses = await loadDraftCourses(dataDir, history);
   const relevantCourses = new Set([...captures.values()].flatMap(runs =>
@@ -185,11 +213,11 @@ export async function buildPublishedDraftLinks(snapshot, { dataDir, git, revisio
     const originals = new Map(sourceRuns.map(run => [run.run_id, run]));
     const localRuns = new Map(bindDraftCaptures(sourceRuns, localCourses).flatMap(run =>
       (run.capture_run_ids ?? [run.run_id]).map(id => [id, run])));
-    const runs = bindDraftCaptures(sourceRuns, remoteCourses).map(run => {
+    const runs = await Promise.all(bindDraftCaptures(sourceRuns, remoteCourses).map(async run => {
       const local = localRuns.get(run.run_id), matched = run.binding === 'matched_pool';
       const missing = (local?.matches ?? []).map(match => match.id).filter(id => !run.matches.some(match => match.id === id));
       const sourceIds = run.capture_run_ids ?? [run.run_id];
-      return {
+      const row = {
         run_id: run.run_id, sources: sourceIds.map(id => ({ run_id: id, sha256: draftSourceFingerprint(originals.get(id)) })),
         event_id: run.event_id, status: matched ? 'linked' : 'pending',
         reason: matched ? null : missing.length ? 'awaiting_match_upload' : run.binding_reason,
@@ -205,7 +233,11 @@ export async function buildPublishedDraftLinks(snapshot, { dataDir, git, revisio
             total_cards: deck.reduce((sum, card) => sum + (card.quantity ?? 1), 0) };
         }) : [], pending_match_ids: missing.sort(),
       };
-    });
+      const ownership = draftOwnershipCorrection(row, account, ownershipCorrections) ??
+        (matched && run.binding_account_status === 'conflict'
+          ? draftOwnershipCorrection(row, account, await restoredCorrections()) : null);
+      return ownership ? { ...row, ownership } : row;
+    }));
     const doc = { schema: 'MTGA_DRAFT_BINDINGS_V1', account_key: account, runs };
     parseDraftLinks(draftLinkPath(account), linkText(doc)); validateDraftLinkSources(doc, sourceRuns);
     documents.set(account, doc);
@@ -221,7 +253,7 @@ export async function buildPublishedDraftLinks(snapshot, { dataDir, git, revisio
 export async function draftBindingInputKey(dataDir) {
   const values = [];
   for (const relative of ['draft-capture.sqlite3', 'replays.sqlite3', 'replays.sqlite3-wal', 'replay-ingest.sqlite3', 'replay-ingest.sqlite3-wal',
-    'draft-runs.sqlite3', 'draft-runs.sqlite3-wal', 'coach-sync/state.json', 'replay-coach-generation-cache.json']) {
+    'draft-runs.sqlite3', 'draft-runs.sqlite3-wal', 'coach-sync/state.json', 'replay-coach-generation-cache.json', draftOwnershipPath]) {
     try { const stat = await lstat(join(dataDir, relative), { bigint: true }); values.push([relative, String(stat.size), String(stat.mtimeNs)]); }
     catch (error) { if (error.code !== 'ENOENT') throw error; values.push([relative, null]); }
   }
@@ -274,10 +306,13 @@ export async function readPublishedDraftLinks(captures, { dataDir, history }) {
       const scoreVerified = !row.pending_match_ids.length && matches.length === row.matches.length && matches.every(match => ['Win', 'Loss', 'Draw'].includes(match.result)) &&
         row.course.wins === wins && row.course.losses === losses;
       const names = new Map(run.picks.flatMap(pick => pick.candidates).map(card => [card.arena_id, card.name]));
-      output.push({ ...run, binding: 'matched_pool', binding_method: 'exact_card_pool', binding_reason: null,
+      const owner = row.ownership?.account_key ?? run.account_key;
+      output.push({ ...run, account_key: owner,
+        ...(row.ownership ? { capture_account_key: run.account_key, ownership_corrected: true } : {}),
+        binding: 'matched_pool', binding_method: 'exact_card_pool', binding_reason: null,
         binding_publication: saved.revision, bound_run_id: row.course.run_id, binding_card_count: row.course.card_ids.length,
         binding_pending_matches: row.pending_match_ids.length + row.matches.length - matches.length,
-        binding_account_key: matchAccount, binding_account_status: matchAccount ? matchAccount === run.account_key ? 'matched' : 'conflict' : 'unknown',
+        binding_account_key: matchAccount, binding_account_status: matchAccount ? matchAccount === owner ? 'matched' : 'conflict' : 'unknown',
         capture_run_ids: row.sources.map(source => source.run_id), current_module: row.course.module,
         card_pool: row.course.card_ids.map(arena_id => ({ arena_id, name: names.get(arena_id) ?? `Arena card ${arena_id}` })),
         course_wins: row.course.wins, course_losses: row.course.losses, replay_wins: wins, replay_losses: losses,

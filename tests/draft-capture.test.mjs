@@ -16,7 +16,7 @@ const observation = (kind, p, n, card_ids) => ({ observation_id: (++seq).toStrin
 
 test('Python capture atomicity, rotation, malformed inputs and restart suite', async () => {
   const result = await run('python3', [fileURLToPath(new URL('./draft-capture-python.py', import.meta.url))]);
-  assert.match(result.stderr, /Ran 14 tests/);
+  assert.match(result.stderr, /Ran 16 tests/);
   assert.match(result.stderr, /OK/);
 });
 

@@ -26,7 +26,8 @@ export function parseDraftLinks(path, text) {
     doc.schema !== 'MTGA_DRAFT_BINDINGS_V1' || doc.account_key !== account || !Array.isArray(doc.runs) || doc.runs.length > 10000) fail();
   const allSources = new Set();
   for (const row of doc.runs) {
-    if (!exact(row, ['run_id', 'sources', 'event_id', 'status', 'reason', 'course', 'matches', 'pending_match_ids']) ||
+    if (!exact(row, ['run_id', 'sources', 'event_id', 'status', 'reason', 'course', 'matches', 'pending_match_ids',
+      ...(Object.hasOwn(row, 'ownership') ? ['ownership'] : [])]) ||
       !RUN.test(row.run_id) || !list(row.sources, 1000, s => exact(s, ['run_id', 'sha256']) && RUN.test(s.run_id) && SHA.test(s.sha256)) ||
       !row.sources.length || row.sources[0].run_id !== row.run_id ||
       !/^[A-Za-z][A-Za-z0-9_-]{1,120}$/.test(row.event_id) || !['linked', 'pending'].includes(row.status) ||
@@ -35,7 +36,7 @@ export function parseDraftLinks(path, text) {
     for (const source of row.sources) { if (allSources.has(source.run_id)) fail(); allSources.add(source.run_id); }
     if (row.status === 'pending') {
       if (!['incomplete_picks', 'missing_course', 'ambiguous_courses', 'missing_matches', 'awaiting_match_upload', 'evidence_unavailable'].includes(row.reason) ||
-        row.course !== null || row.matches.length) fail();
+        row.course !== null || row.matches.length || Object.hasOwn(row, 'ownership')) fail();
       continue;
     }
     if (row.reason !== null || !row.matches.length || !exact(row.course, ['run_id', 'card_ids', 'wins', 'losses', 'module']) ||
@@ -65,6 +66,10 @@ export function parseDraftLinks(path, text) {
       if (copies < 12 || copies > match.total_cards || row.pending_match_ids.includes(match.id)) fail();
       matchIds.add(match.id);
     }
+    if (Object.hasOwn(row, 'ownership') && (!exact(row.ownership, ['account_key', 'method']) ||
+      !SHA.test(row.ownership.account_key) || row.ownership.account_key === account ||
+      row.ownership.method !== 'verified_pool_and_match_identity' ||
+      row.matches.some(match => match.account_key !== row.ownership.account_key))) fail();
   }
   return doc;
 }

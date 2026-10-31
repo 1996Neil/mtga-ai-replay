@@ -18,6 +18,7 @@ import { attachDraftBindings } from '../src/draft-backup.mjs';
 import { draftBindingInputKey, buildPublishedDraftLinks } from '../src/draft-publication.mjs';
 import { createDraftBackup } from '../src/draft-backup.mjs';
 import { syncDigest } from '../src/sync-cache.mjs';
+import { draftOwnershipPath, readDraftOwnershipCorrections, planDraftOwnershipCorrections } from '../src/draft-ownership.mjs';
 const execute = promisify(execFile);
 const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' };
 const repository = 'synthetic-owner/private-drafts', remote = `https://github.com/${repository}.git`;
@@ -84,7 +85,7 @@ async function harness(t) {
   return { root, dataDir, bare, append, control, options, remoteIndex };
 }
 
-async function linkedFixture(h, { multipart = false } = {}) {
+async function linkedFixture(h, { multipart = false, owner = A } = {}) {
   const pool = [], observations = []; let sequence = 0;
   for (const pack of [1, 2, 3]) {
     const cards = Array.from({ length: 14 }, (_, i) => pack * 100 + i);
@@ -95,7 +96,7 @@ async function linkedFixture(h, { multipart = false } = {}) {
     }
   }
   h.append(observations);
-  const replay = { match: { id: 'draft-match', account_key: A, event_id: 'QuickDraft_SYNTHETIC', event: 'QuickDraft_SYNTHETIC',
+  const replay = { match: { id: 'draft-match', account_key: owner, event_id: 'QuickDraft_SYNTHETIC', event: 'QuickDraft_SYNTHETIC',
     result: 'Win', started_at: new Date().toISOString() }, games: [{ game_number: 1, states: {}, steps: [], turns: [] }],
     deck: [...pool.slice(0, 23).map(arena_id => ({ arena_id, name: `Synthetic ${arena_id}`, quantity: 1 })),
       { arena_id: 9999, name: 'Forest', quantity: 17 }] };
@@ -128,6 +129,47 @@ async function linkedFixture(h, { multipart = false } = {}) {
   };
   return { publishMatch, replay, path, bundle };
 }
+
+test('explicit verified ownership correction preserves immutable capture lineage and restores under the match account', async t => {
+  const h = await harness(t), fixture = await linkedFixture(h, { owner: B });
+  await fixture.publishMatch();
+  await syncDraftCapture(h.options);
+  const source = await listCapturedDraftRuns({ dataDir: h.dataDir });
+  const history = await listReplays({ dataDir: h.dataDir, limit: null });
+  const original = await readPublishedDraftLinks(source, { dataDir: h.dataDir, history });
+  assert.equal(original[0].binding_account_status, 'conflict');
+  const before = await createDraftBackup({ dataDir: h.dataDir });
+  const saved = JSON.parse(await readFile(join(h.dataDir, 'draft-sync/published-bindings.json'), 'utf8'));
+  const previous = await readDraftOwnershipCorrections(h.dataDir);
+  const correction = planDraftOwnershipCorrections(original, saved.documents, [original[0].run_id], previous);
+  await writeFile(join(h.dataDir, draftOwnershipPath), serializeDraft(correction));
+  // A queued repair alone cannot reclassify anything before verified publication.
+  assert.equal((await readPublishedDraftLinks(source, { dataDir: h.dataDir, history }))[0].account_key, A);
+  const published = await syncDraftCapture(h.options);
+  assert.equal(published.verified, true);
+  assert.deepEqual((await createDraftBackup({ dataDir: h.dataDir })).files, before.files);
+  const restored = await readPublishedDraftLinks(source, { dataDir: h.dataDir, history });
+  assert.equal(restored[0].account_key, B);
+  assert.equal(restored[0].capture_account_key, A);
+  assert.equal(restored[0].binding_account_status, 'matched');
+  assert.equal(restored[0].ownership_corrected, true);
+  const remote = await h.remoteIndex();
+  const text = (await execute('git', ['--git-dir', h.bare, 'show', `HEAD:${remote.accounts[0].bindings.path}`], { env })).stdout;
+  const doc = parseDraftBackup(remote.accounts[0].bindings.path, text);
+  assert.equal(doc.runs[0].ownership.account_key, B);
+  // Restore depends on published evidence, not a machine-local ledger.
+  await rm(join(h.dataDir, draftOwnershipPath));
+  assert.equal((await readPublishedDraftLinks(source, { dataDir: h.dataDir, history }))[0].account_key, B);
+  const retry = await syncDraftCapture(h.options);
+  assert.equal(retry.revision, published.revision, 'restoring without a local ledger must not undo a published correction');
+  const malformed = structuredClone(doc);
+  malformed.runs[0].ownership.account_key = 'c'.repeat(64);
+  assert.throws(() => parseDraftBackup(remote.accounts[0].bindings.path, serializeDraft(malformed)));
+  // Missing current match evidence cannot retain the corrected owner.
+  const pending = await readPublishedDraftLinks(source, { dataDir: h.dataDir, history: [] });
+  assert.equal(pending[0].binding, 'unresolved');
+  assert.equal(pending[0].account_key, A);
+});
 
 test('upload includes pending associations, completes after match upload without new picks, reads back and restores without course DB', async t => {
   const h = await harness(t), fixture = await linkedFixture(h);
