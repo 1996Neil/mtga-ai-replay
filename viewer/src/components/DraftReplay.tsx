@@ -170,8 +170,11 @@ function DraftSession({ run, accountKey, onOpenMatch }: { run: DraftRun; account
           {(run.capture_run_ids?.length ?? 0) > 1 && ` 已合并 ${run.capture_run_ids!.length} 段重复采集。`}</p>
         {!run.score_verified && <p className="draft-pool-caution">战绩按已归档对战统计，赛事总战绩尚未核验。</p>}
         {!!run.binding_pending_matches && <p className="draft-pool-caution">另有 {run.binding_pending_matches} 场等待对战上传或版本核对，完成后自动补全。</p>}
-        {run.binding_account_status !== 'matched' && <p className="draft-pool-caution">
-          {run.binding_account_status === 'conflict' ? '选牌与对战的账号记录不一致；关联保留，账号归属未改写。打开对战时会切换到对战所属账号。' : '牌池关系已核对，但账号归属仍不完整。'}
+          {run.binding_account_status !== 'matched' && <p className="draft-pool-caution">
+          {run.binding_account_status === 'conflict' ? '选牌与对战的账号记录不一致；关联保留，账号归属未改写。打开对战时会切换到对战所属账号。'
+            : run.binding_account_status === 'unknown' && run.ownership_corrected ? '牌池与对战已核对；源日志没有账号字段，已依据对战身份归入当前账号。'
+            : run.binding_account_status === 'unknown' ? '牌池与对战已核对；选牌来源账号未在日志中确认，当前保留在未分类记录。'
+            : '牌池关系已核对，但账号归属仍不完整。'}
         </p>}
         <details className="draft-linked-matches"><summary>查看关联对战 · {run.matches.length} 场</summary>
           {run.matches.map(match => <button type="button" key={match.id} disabled={!onOpenMatch}
