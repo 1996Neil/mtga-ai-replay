@@ -39,6 +39,41 @@ test('exact printing lookup accepts a missing public Arena ID but rejects an exp
  assert.equal(selectPrintedFace(withoutArena,identity),null);
  assert.equal(selectPrintedFace({...withoutArena,arena_id:999},identity,{allowMissingArenaId:true}),null);
 });
+test('Arena fallback accepts Scryfall basic-land suffix aliases only with the matching Arena ID', async t => {
+ const dataDir=await dir(t), fallback={...card,collector_number:'1a'};
+ const requests=[];
+ const result=await getCardMetadata(100,{dataDir,identityResolver:async()=>identity,fetchFn:async url=>{
+  requests.push(url);
+  return url.endsWith('/abc/1') ? new Response('',{status:404}) : Response.json(fallback);
+ }});
+ assert.deepEqual(requests,['https://api.scryfall.com/cards/abc/1','https://api.scryfall.com/cards/arena/100']);
+ assert.equal(result.image_identity_status,'verified');
+ assert.equal(selectPrintedFace(fallback,identity),null);
+ assert.ok(selectPrintedFace(fallback,identity,{allowArenaIdAlias:true}));
+ assert.equal(selectPrintedFace({...fallback,arena_id:999},identity,{allowArenaIdAlias:true}),null);
+});
+test('Arena ID fallback repairs a same-number Scryfall printing collision', async t => {
+ const dataDir=await dir(t), localIdentity={...identity,collector:'9',requestedId:105,primaryId:105};
+ const wrong={...card,arena_id:999,name:'Island',collector_number:'9'};
+ const fallback={...card,arena_id:105,name:'Forest',collector_number:'9a'};
+ const requests=[];
+ const result=await getCardMetadata(105,{dataDir,identityResolver:async()=>localIdentity,fetchFn:async url=>{
+  requests.push(url);
+  return url.endsWith('/abc/9') ? Response.json(wrong) : Response.json(fallback);
+ }});
+ assert.deepEqual(requests,['https://api.scryfall.com/cards/abc/9','https://api.scryfall.com/cards/arena/105']);
+ assert.equal(result.source,'scryfall');
+ assert.equal(result.name,'Forest');
+ assert.equal(result.image_identity_status,'verified');
+});
+test('an exact Arena ID can verify an intentionally non-English printing', async t => {
+ const dataDir=await dir(t), phyrexian={...card,lang:'ph',name:'Plains'};
+ const result=await getCardMetadata(100,{dataDir,identityResolver:async()=>identity,fetchFn:async()=>Response.json(phyrexian)});
+ assert.equal(result.image_identity_status,'verified');
+ assert.equal(result.image_identity.lang,'ph');
+ assert.ok(selectPrintedFace(phyrexian,identity,{allowNonEnglish:true}));
+ assert.equal(selectPrintedFace({...phyrexian,arena_id:999},identity,{allowNonEnglish:true}),null);
+});
 test('a wrong legacy JPEG is replaced lazily, then the verified image is reused offline', async t => {
  const dataDir=await dir(t), root=join(dataDir,'cards');
  await mkdir(root);await writeFile(join(root,'100.json'),JSON.stringify({arena_id:100,name:card.name,
