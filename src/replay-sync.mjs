@@ -13,12 +13,13 @@ const active = new Map();
 export function syncReplays(options = {}) {
   const dataDir = options.dataDir ?? defaultDataDir();
   if (active.has(dataDir)) return active.get(dataDir);
-  const work = withReplayOperation(dataDir, () => run({ ...options, dataDir }), { exclusive: false }).finally(() => active.delete(dataDir));
+  const work = withReplayOperation(dataDir, () => run({ waitForSync: true, ...options, dataDir }), { exclusive: false }).finally(() => active.delete(dataDir));
   active.set(dataDir, work); return work;
 }
 async function run({ dataDir, onProgress, publisher = syncCoachCatalog, remoteImport = replayWorker, draftPublisher, ...options }) {
   const publishDrafts = draftPublisher ?? (options.runCommand ? options => syncDraftCapture({ ...options, automatic: true }) :
-    () => replayWorker('draft-publication', { dataDir }));
+    () => replayWorker('draft-publication', { dataDir, waitForSync: options.waitForSync,
+      syncWaitTimeoutMs: options.syncWaitTimeoutMs }, { onProgress }));
   const started = performance.now(), settings = await readReplaySettings(dataDir);
   // One-time migration: queued replays become locally visible even when offline.
   const outbox = join(dataDir, 'replay-outbox');

@@ -14,7 +14,7 @@ import { CollectionUpdateButton } from './components/CollectionUpdateButton';
 import { integrityMessages } from './lib/integrity';
 import { ReplayReviewCoach } from './components/ReplayReviewCoach';
 import { DraftReplay } from './components/DraftReplay';
-import { visibleDraftRuns, draftBindingLabel } from './lib/draftReplay';
+import { draftHistoryRuns, draftBindingLabel } from './lib/draftReplay';
 
 import { formatMatchTime as when, formatEventName, draftRunStatusLabel, draftRunScoreMessage } from './lib/historyPresentation';
 const COLOR_LABELS: Record<string, string> = { W: '白', U: '蓝', B: '黑', R: '红', G: '绿' };
@@ -23,7 +23,7 @@ export function App() {
   const [history, setHistory] = useState<HistoryMatch[]>([]), [loading, setLoading] = useState(true), [error, setError] = useState('');
   const [draftData, setDraftData] = useState<{ account: string; runs: DraftRun[] }>({ account: 'unassigned', runs: [] });
   const [account, setAccount] = useState('unassigned');
-  const draftRuns = draftData.account === account ? visibleDraftRuns(draftData.runs) : [];
+  const draftRuns = draftData.account === account ? draftHistoryRuns(draftData.runs) : [];
   const [accounts, setAccounts] = useState<{ account_key: string; label: string }[]>([]);
   const accountChosen = useRef(false);
   const [draftError, setDraftError] = useState('');
@@ -247,7 +247,7 @@ export function App() {
             </span>
           </summary>
           {!run.capture_source && draftRunScoreMessage(run) && <p className="draft-run-warning">{draftRunScoreMessage(run)}</p>}
-          <button type="button" className="draft-open-button" onClick={() => openDraft(run.run_id)}>打开选牌回看 · {run.picks.length} 手 →</button>
+          {run.picks.length > 0 && <button type="button" className="draft-open-button" onClick={() => openDraft(run.run_id)}>打开选牌回看 · {run.picks.length} 手 →</button>}
           {run.picks.length > 0 && <details className="draft-picks"><summary>逐手记录 · {run.picks.length} 手 · {run.picks.filter(pick => pick.complete).length} 手连续有据</summary>
             <ol>{run.picks.map(pick => <li key={pick.pack_number + '-' + pick.pick_number} className={pick.complete ? 'complete' : 'incomplete'}>
               <strong>Pack {pick.pack_number} · Pick {pick.pick_number}</strong><time>{when(pick.picked_at ?? '')}</time>
@@ -263,18 +263,19 @@ export function App() {
           {run.card_pool.length > 0 && <details className="draft-pool"><summary>赛事牌池快照 · {run.card_pool.length} 张</summary>
             <ol>{run.card_pool.map((card, index) => <li key={card.arena_id + '-' + index}>{card.name}</li>)}</ol>
           </details>}
-          <div className="draft-run-matches">{run.matches.map(item => <button type="button" className="history-item" key={item.id}
+          <div className="draft-run-matches">{run.matches.map(item => <button type="button" className={'history-item ' + (!draftView && match?.matchId === item.id ? 'selected' : '')} key={item.id}
+            aria-current={!draftView && match?.matchId === item.id ? 'true' : undefined}
             aria-label={when(item.started_at) + ' · ' + (item.result ?? '结果未知')}
             onClick={() => openDraftMatch(item.id, item.account_key ?? run.binding_account_key ?? account)}>
             <span className="history-row-top"><span className="history-date">{when(item.started_at)}</span><span className="history-event" title={run.event}>{formatEventName(run.event)}</span></span>
-            <span className="history-row-bottom"><span className="history-row-context">{item.game_count ? item.game_count + ' 局' : '局数未知'}</span>
+            <span className="history-row-bottom"><span className="history-row-context">{!draftView && match?.matchId === item.id && <span className="history-current">正在回放 · </span>}{item.game_count ? item.game_count + ' 局' : '局数未知'}</span>
               <strong>{item.result === 'Win' ? '胜' : item.result === 'Loss' ? '负' : '结果未知'}</strong></span></button>)}
           </div>
         </details>)}</section>}
         <details className="all-matches"><summary>全部比赛 · {history.length}</summary>
-          {history.map(item => <button type="button" key={item.id} aria-label={when(item.startedAt) + ' · ' + formatEventName(item.event) + ' · ' + (item.result === 'Win' ? '胜' : item.result === 'Loss' ? '负' : item.result)} className={'history-item ' + (match?.matchId === item.id ? 'selected' : '')} onClick={() => { setDraftView(false); loadMatch(item.id); if (historyPicker.current) historyPicker.current.open = false; }}>
+          {history.map(item => <button type="button" key={item.id} aria-current={!draftView && match?.matchId === item.id ? 'true' : undefined} aria-label={when(item.startedAt) + ' · ' + formatEventName(item.event) + ' · ' + (item.result === 'Win' ? '胜' : item.result === 'Loss' ? '负' : item.result)} className={'history-item ' + (!draftView && match?.matchId === item.id ? 'selected' : '')} onClick={() => { setDraftView(false); loadMatch(item.id); if (historyPicker.current) historyPicker.current.open = false; }}>
             <span className="history-row-top"><span className="history-date">{when(item.startedAt)}</span><span className="history-event" title={item.event}>{formatEventName(item.event)}</span></span>
-            <span className="history-row-bottom"><span className="history-row-context">{item.gameCount ? item.gameCount + ' 局' : '局数未知'}</span><strong>{item.result === 'Win' ? '胜' : item.result === 'Loss' ? '负' : item.result}</strong></span>
+            <span className="history-row-bottom"><span className="history-row-context">{!draftView && match?.matchId === item.id && <span className="history-current">正在回放 · </span>}{item.gameCount ? item.gameCount + ' 局' : '局数未知'}</span><strong>{item.result === 'Win' ? '胜' : item.result === 'Loss' ? '负' : item.result}</strong></span>
           </button>)}
         </details>
       </div></details>

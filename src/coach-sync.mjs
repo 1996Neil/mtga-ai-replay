@@ -8,6 +8,7 @@ import { createGitBatch } from './git-batch.mjs';
 import { mkdir, readFile, writeFile, rename, open, rm, lstat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
+import { setTimeout as pause } from 'node:timers/promises';
 import { defaultDataDir, isReplayExcluded, listReplaySummaries } from './history.mjs';
 import { isTutorialMatch } from './replay-policy.mjs';
 import { serializeCoachJson } from './coach-bundle.mjs';
@@ -92,24 +93,43 @@ async function readState(dataDir) {
 }
 const saveState = (dataDir, state) => atomicWrite(locations(dataDir).state, serializeCoachJson(state));
 
-async function locked(dataDir, callback) {
+async function locked(dataDir, callback, options = {}) {
   const { root } = locations(dataDir); await mkdir(root, { recursive: true, mode: 0o700 });
   await safeDirectory(root);
   const path = join(root, 'sync.lock'), recovery = join(root, 'recovery.lock');
-  await rejectRecoveryInProgress(recovery);
-  let handle;
-  try { handle = await open(path, 'wx', 0o600); }
-  catch (error) {
-    if (error.code !== 'EEXIST') throw error;
-    const pid = await readSyncLockPid(path);
-    if (pid && isDeadPid(pid)) fail('SYNC_LOCK_STALE', 'A stale MTGA sync lock was retained. Recover explicitly with mtga-gpt-collection status --recover-sync-lock.');
-    fail('SYNC_BUSY', 'Another MTGA data sync is running or its lock is incomplete; retry when it finishes.');
+  const wait = options.waitForSync === true, timeout = options.syncWaitTimeoutMs ?? 300_000;
+  if (wait && (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > 300_000))
+    fail('SYNC_WAIT_OPTIONS', 'Sync waiting must have a bounded timeout.');
+  const deadline = performance.now() + timeout;
+  let handle, waiting = false, interval = 250;
+  while (!handle) {
+    options.signal?.throwIfAborted();
+    if (waiting && performance.now() >= deadline) fail('SYNC_WAIT_TIMEOUT', '等待其他同步超时；本地记录已保留，请稍后重试。');
+    await rejectRecoveryInProgress(recovery);
+    try { handle = await open(path, 'wx', 0o600); }
+    catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+      let pid;
+      try { pid = await readSyncLockPid(path); }
+      catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+      if (pid && isDeadPid(pid)) fail('SYNC_LOCK_STALE', 'A stale MTGA sync lock was retained. Recover explicitly with mtga-gpt-collection status --recover-sync-lock.');
+      if (!wait || !pid) fail('SYNC_BUSY', 'Another MTGA data sync is running or its lock is incomplete; retry when it finishes.');
+      const remaining = deadline - performance.now();
+      if (remaining <= 0) fail('SYNC_WAIT_TIMEOUT', '等待其他同步超时；本地记录已保留，请稍后重试。');
+      if (!waiting) { waiting = true; options.onProgress?.({ phase: 'waiting' }); }
+      // Only contenders poll this one small lock. No timer survives acquisition
+      // and no callback, Git operation or replay scan is retried here.
+      await pause(Math.min(interval, remaining), undefined, { signal: options.signal });
+      interval = Math.min(interval * 2, 1000);
+    }
   }
   try {
     // A recovery may have started after the first check. Own this new inode,
     // then stop before any callback if the recovery gate is now present.
     await rejectRecoveryInProgress(recovery);
     await handle.writeFile(String(process.pid));
+    options.signal?.throwIfAborted();
+    if (waiting) options.onProgress?.({ phase: 'comparing' });
     return await callback();
   } finally { await removeOwnedLock(path, handle); }
 }
@@ -266,7 +286,7 @@ export async function enqueueCoachBundle(bundle, options = {}) {
     const item = { match_id: id, started_at: bundle.summary.started_at, history_key: bundle.historyKey, content_hash: bundle.contentHash };
     state.pending = [...state.pending.filter(value => value.match_id !== id), item];
     await saveState(dataDir, state); return { queued: true, pending: state.pending.length };
-  });
+  }, options);
 }
 
 async function safeDirectory(path) {
@@ -473,7 +493,7 @@ export async function getPublishedCoachIndex(options = {}) {
     }]));
     await saveState(dataDir, state);
     return { source: 'remote', index, commit, pending: state.pending, destination_hash:createHash('sha256').update(`${state.repository}:${branch}`).digest('hex') };
-  });
+  }, options);
 }
 async function publishPending(state, dataDir, options) {
   const run = runner(options); options.onProgress?.({ phase: 'remote' });
@@ -618,5 +638,5 @@ export async function syncCoachBundles(options = {}) {
         ...(error.code === 'SYNC_PUSH_TIMEOUT' || error.code === 'SYNC_PUSH_FAILED' ? { remote_outcome: 'unverified' } : {}) };
       await saveState(dataDir, state); throw error;
     }
-  });
+  }, options);
 }

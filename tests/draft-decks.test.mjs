@@ -121,11 +121,23 @@ test('read-only deck extraction supports all observed versions and preserves act
   await assert.rejects(readDraftDeckComparison(run, { dataDir, accountKey: 'c'.repeat(64) }));
   const otherAccount = { ...run, binding_account_status: 'conflict' };
   assert.equal((await readDraftDeckComparison(otherAccount, { dataDir, accountKey: account })).versions.length, 0);
+  const corrected = { ...run, binding_account_status: 'unknown', ownership_corrected: true,
+    binding_method: 'exact_card_pool', binding_account_key: account, bound_run_id: 'd'.repeat(32) };
+  assert.equal((await readDraftDeckComparison(corrected, { dataDir, accountKey: account })).versions.length, 3);
+  for (const unverified of [
+    { ...corrected, ownership_corrected: false },
+    { ...corrected, binding_account_key: 'c'.repeat(64) },
+    { ...corrected, binding_method: 'ambiguous' },
+    { ...corrected, bound_run_id: null },
+    { ...corrected, binding_account_status: 'conflict' },
+  ]) assert.equal((await readDraftDeckComparison(unverified, { dataDir, accountKey: account })).versions.length, 0);
   const edit = new DatabaseSync(join(dataDir, 'replays.sqlite3'));
   edit.prepare('UPDATE replays SET summary_json=? WHERE match_id=?').run(JSON.stringify({ account_key: 'c'.repeat(64), result: 'Loss' }), 'm2');
   edit.close();
   const scoped = await readDraftDeckComparison(run, { dataDir, accountKey: account });
   assert.ok(scoped.versions.every(version => version.matches.every(match => match.id !== 'm2')));
+  const correctedScoped = await readDraftDeckComparison(corrected, { dataDir, accountKey: account });
+  assert.ok(correctedScoped.versions.every(version => version.matches.every(match => match.id !== 'm2')));
 });
 test('HTTP deck comparison is scoped to an actual observed draft and current account', async t => {
   const dataDir = await mkdtemp(join(tmpdir(), 'mtga-draft-deck-http-'));

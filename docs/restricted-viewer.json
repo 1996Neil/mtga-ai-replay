@@ -78,7 +78,7 @@
     },
     {
       "path": "viewer/src/index.css",
-      "sha256": "fcede2d6d152b68608c2117f880dbedc9e461fa0d3694f6eb44a077ac5f7b6fa"
+      "sha256": "38d05d121ac61d2562b4d683e98fa68c005e9d18bbead1d3f85e258620f02ffc"
     }
   ],
   "ui_interaction_update": "User-authorized private UI review, push and PR merge on 2026-10-15; original inclusion declaration is preserved; no claim of public redistribution rights."

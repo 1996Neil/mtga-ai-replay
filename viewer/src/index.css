@@ -107,8 +107,13 @@ a{
   border-radius:4px}
 .history-item strong{
   margin-left:auto}
-.history-item.selected,.history-item:hover{
+.history-item:hover{
   background:#384140}
+.history-item.selected{
+  background:#344a43;
+  box-shadow:inset 3px 0 #a9d9bc}
+.history-item.selected:hover{background:#3b554b}
+.history-current{color:#c9eed7;font-weight:600}
 .app-workspace{
   flex:1;
   display:flex;
