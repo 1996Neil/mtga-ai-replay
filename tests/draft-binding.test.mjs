@@ -7,6 +7,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { completeDraftPool, bindDraftCaptures, recentDraftCourses, mergeDraftCourse, verifyDraftCourseMatches } from '../src/draft-binding.mjs';
 import { archiveReplays } from '../src/history.mjs';
 import { startReplayServer } from '../src/server.mjs';
+import { linkText, linkDigest } from '../src/draft-link-contract.mjs';
+import { saveDraftRunIndex } from '../src/draft-runs.mjs';
 
 const A = 'a'.repeat(64), B = 'b'.repeat(64), event = 'QuickDraft_SYNTHETIC';
 const card = arena_id => ({ arena_id, name: `Synthetic ${arena_id}` });
@@ -156,4 +158,59 @@ test('HTTP exposes matched course, score and match links without rewriting captu
   assert.equal(result[0].account_key, A);
   const empty = await fetch(server.url + 'api/draft-runs?account=' + B).then(r => r.json());
   assert.deepEqual(empty, []);
+});
+
+test('an older published snapshot cannot hide new local courses or their later matches', async t => {
+  const options = await fixture(t), deck = [...completeDraftPool(expandedCapture()).slice(0, 23).map(id => ({ ...card(id), quantity: 1 })),
+    { arena_id: 99999, name: 'Forest', quantity: 17 }];
+  const replay = (id, time) => ({ match: { id, event_id: event, account_key: A, started_at: time, result: 'Win' }, games: [], deck });
+  await archiveReplays([replay('match-one', '2026-10-30T03:00:00Z')], options);
+  await mkdir(join(options.dataDir, 'draft-sync'));
+  const index = { schema: 'MTGA_DRAFT_ACCOUNTS_V2', accounts: [] }, content_hash = linkDigest(linkText(index)), revision = 'a'.repeat(40);
+  await writeFile(join(options.dataDir, 'draft-sync/published-bindings.json'), JSON.stringify({
+    schema: 'MTGA_PUBLISHED_DRAFT_BINDINGS_V1', revision, content_hash, index, documents: {} }));
+  await writeFile(join(options.dataDir, 'draft-sync/published.json'), JSON.stringify({
+    verified: true, revision, content_hash, observation_ids: [] }));
+  const server = await startReplayServer({ ...options, writeInfo: false, observeLocalLogs: false,
+    enableReplaySync: false, enableCollection: false, displayNamesZh: new Map(), cardNames: new Map([[10, 'Synthetic']]) });
+  t.after(() => server.close());
+  const read = account => fetch(server.url + 'api/draft-runs?account=' + account).then(r => r.json());
+  const first = await read(A);
+  assert.equal(first.length, 1); assert.deepEqual(first[0].matches.map(m => m.id), ['match-one']);
+  assert.deepEqual(first[0].picks, []);
+  assert.deepEqual(await read(B), []);
+  const warm = server.workCounters();
+  for (let i = 0; i < 3; i++) await read(A);
+  assert.deepEqual(server.workCounters(), warm, 'idle reads reuse the composed catalog');
+  const db = new DatabaseSync(join(options.dataDir, 'replay-ingest.sqlite3'));
+  db.prepare('INSERT INTO records(match_id,json) VALUES (?,?)').run('match-two', JSON.stringify({
+    matchGameRoomStateChangedEvent: { gameRoomInfo: { gameRoomConfig: {
+      matchId: 'match-two', reservedPlayers: [{ systemSeatId: 1, eventId: event }] } } } }));
+  db.prepare('INSERT INTO records(match_id,json) VALUES (?,?)').run(null, JSON.stringify({
+    greToClientEvent: { greToClientMessages: [{ type: 'GREMessageType_ConnectResp', systemSeatIds: [1] }] } }));
+  db.close();
+  await archiveReplays([replay('match-two', '2026-10-30T04:00:00Z')], options);
+  const next = await read(A);
+  assert.equal(next.length, 1);
+  assert.deepEqual(next[0].matches.map(m => m.id), ['match-one', 'match-two']);
+  assert.equal(server.workCounters().draft_loads, warm.draft_loads + 1);
+  await read(A);
+  assert.equal(server.workCounters().draft_loads, warm.draft_loads + 1, 'retry does not recompose an unchanged course');
+});
+
+test('a pool retained outside recent logs still prevents an ambiguous new match link', async t => {
+  const options = await fixture(t);
+  const pool = completeDraftPool(expandedCapture()).map(card);
+  await saveDraftRunIndex([{ ...course('f'.repeat(32)), started_at: '2026-10-29T00:00:00Z',
+    colors: [], colors_complete: false, card_pool: pool, matches: [] }], options);
+  await archiveReplays([{ match: { id: 'match-one', event_id: event, account_key: A,
+    started_at: '2026-10-30T03:00:00Z', result: 'Win' }, games: [],
+    deck: [...pool.slice(0, 23).map(card => ({ ...card, quantity: 1 })), { arena_id: 99999, name: 'Forest', quantity: 17 }] }], options);
+  const server = await startReplayServer({ ...options, observeLocalLogs: false, writeInfo: false,
+    enableReplaySync: false, enableCollection: false, displayNamesZh: new Map(), cardNames: new Map([[10, 'Synthetic']]) });
+  t.after(() => server.close());
+  const runs = await fetch(server.url + 'api/draft-runs?account=' + A).then(response => response.json());
+  assert.ok(!runs.some(run => run.matches.some(match => match.id === 'match-one')),
+    'a second saved pool makes the recent course insufficient to prove the assignment');
+  assert.equal((await fetch(server.url + 'api/matches?account=' + A).then(response => response.json())).length, 1);
 });

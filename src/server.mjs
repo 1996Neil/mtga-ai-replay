@@ -2,6 +2,7 @@ import { filterAccount, validAccountKey } from './account-scope.mjs';
 import { listCapturedDraftRuns, listUnknownDraftRuns, readDraftCapture } from './draft-capture.mjs';
 import { listDraftRuns, withDraftRunLandColors } from './draft-runs.mjs';
 import { bindDraftCaptures, recentDraftCourses, mergeDraftCourse, verifyDraftCourseMatches } from './draft-binding.mjs';
+import { mergeDraftDisplayRuns } from './draft-display.mjs';
 import { readPublishedDraftLinks, cachedDraftDecks } from './draft-publication.mjs';
 import { discoverCardDatabase, loadCardLandColors, loadCardNames } from './cards.mjs';
 import { createTaskJournal } from './task-journal.mjs';
@@ -110,10 +111,27 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
     let publishedCaptures;
     try { publishedCaptures = await readPublishedDraftLinks(sourceCaptures, { dataDir, history }); }
     catch { publishedCaptures = sourceCaptures.map(run => ({ ...run, binding: 'unresolved', binding_reason: 'evidence_unavailable' })); }
-    let bindingUnavailable = false;
-    if (publishedCaptures === null) try {
-      for (const run of await recentDraftCourses(history, { dataDir, cache: draftBindingCache }))
-        knownCourses.set(run.run_id, mergeDraftCourse(knownCourses.get(run.run_id), run));
+    let bindingUnavailable = false, verifiedRecent = [];
+    try {
+      const recent = await recentDraftCourses(history, { dataDir, cache: draftBindingCache });
+      if (recent.length) {
+        // Keep saved pools in the uniqueness check even after their log rotates
+        // out. Only recent candidate members need deck reads.
+        const candidates = new Map([...knownCourses].map(([id, course]) => [id, { ...course, matches: [] }]));
+        for (const course of recent) {
+          const previous = knownCourses.get(course.run_id);
+          candidates.set(course.run_id, { ...course, card_pool: previous?.card_pool.length > course.card_pool.length
+            ? previous.card_pool : course.card_pool });
+        }
+        const decks = await cachedDraftDecks(dataDir, history);
+        const missing = [...new Set(recent.flatMap(run => run.matches.map(match => match.id)))].filter(id => !decks.has(id));
+        if (missing.length) for (const [id, deck] of await listReplayDecks(missing, { dataDir, cache: draftDeckCache })) decks.set(id, deck);
+        const recentIds = new Set(recent.map(course => course.run_id));
+        verifiedRecent = verifyDraftCourseMatches([...candidates.values()], decks, ownership)
+          .filter(course => recentIds.has(course.run_id));
+        for (const run of verifiedRecent.filter(run => run.matches.length))
+          knownCourses.set(run.run_id, mergeDraftCourse(knownCourses.get(run.run_id), run));
+      }
     } catch { bindingUnavailable = true; } // Saved picks remain readable while derived evidence is unavailable.
     const rawCourses = [...knownCourses.values()].map(run => {
       const keys = new Set(run.matches.map(match => ownership.get(match.id)));
@@ -126,13 +144,7 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
     }
     let unknownRuns = localUnknown;
     if (unknownRuns.length) try {
-      const courses = await recentDraftCourses(history, { dataDir, cache: draftBindingCache });
-      const owners = new Map(history.map(item => [item.id, item.account_key]));
-      const decks = await cachedDraftDecks(dataDir, history);
-      const missingDecks = courses.flatMap(course => course.matches.map(match => match.id)).filter(id => !decks.has(id));
-      if (missingDecks.length) for (const [id, deck] of await listReplayDecks(missingDecks, { dataDir, cache: draftDeckCache })) decks.set(id, deck);
-      const verifiedCourses = verifyDraftCourseMatches(courses, decks, owners);
-      unknownRuns = bindDraftCaptures(unknownRuns, verifiedCourses).map(run =>
+      unknownRuns = bindDraftCaptures(unknownRuns, verifiedRecent).map(run =>
         run.binding === 'matched_pool' && validAccountKey(run.binding_account_key)
           ? { ...run, account_key: run.binding_account_key, capture_account_key: null,
             ownership_corrected: true, binding_account_status: 'unknown' }
@@ -140,8 +152,7 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
     } catch { /* Unknown local picks remain visible even when local match evidence is unavailable. */ }
     const captures = (publishedCaptures ?? legacyCaptures)
       .map(run => bindingUnavailable && run.binding_reason === 'missing_course' ? { ...run, binding_reason: 'evidence_unavailable' } : run);
-    const attached = new Set(captures.filter(run => run.binding === 'matched_pool' && run.binding_account_status === 'matched').map(run => run.bound_run_id));
-    const runs = [...rawCourses.filter(run => !attached.has(run.run_id)), ...captures, ...unknownRuns];
+    const runs = mergeDraftDisplayRuns(rawCourses, [...captures, ...unknownRuns], ownership);
     if (!runs.length) return runs;
     const colorRuns = runs.filter(run => run.picks.length);
     if (!colorRuns.length) return runs;

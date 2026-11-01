@@ -46,7 +46,7 @@ test('old backend failure is actionable; aborted polling stops without another r
 });
 
 test('preparation, safety and actual upload remain distinct; existing updates have an explicit count', () => {
- for (const [phase,label] of [['publishing','正在准备发布…'],['security','正在检查安全…'],['remote','正在核对远端…'],['cards','正在补齐卡牌…'],['uploading','正在上传…']]) {
+ for (const [phase,label] of [['waiting','等待其他同步完成…'],['publishing','正在准备发布…'],['security','正在检查安全…'],['remote','正在核对远端…'],['cards','正在补齐卡牌…'],['uploading','正在上传…']]) {
   assert.equal(syncButtonLabel({id:'job',status:'running',progress:{phase,completed:1,total:1}}),label);
  }
  assert.equal(syncButtonLabel({id:'job',status:'running',progress:{phase:'generating',completed:1,total:1}}),'正在准备 1/1…');

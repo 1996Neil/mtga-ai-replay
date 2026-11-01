@@ -21,15 +21,24 @@ export function draftBindingLabel(run: DraftRun): string {
 }
 
 /** Sources arrive in separate batches. Compare instants, including UTC offsets. */
-export function visibleDraftRuns(runs: DraftRun[]): DraftRun[] {
+function sortDraftRuns(runs: DraftRun[]): DraftRun[] {
   const timestamp = (run: DraftRun) => {
     const value = Date.parse(run.started_at ?? '');
     return Number.isFinite(value) ? value : -Infinity;
   };
-  return runs.filter(run => orderedDraftPicks(run.picks).length > 0).sort((a, b) => {
+  return runs.slice().sort((a, b) => {
     const left = timestamp(a), right = timestamp(b);
     return left === right ? a.run_id.localeCompare(b.run_id) : left > right ? -1 : 1;
   });
+}
+
+/** Pick navigation requires observations; match history only requires matches. */
+export function visibleDraftRuns(runs: DraftRun[]): DraftRun[] {
+  return sortDraftRuns(runs.filter(run => orderedDraftPicks(run.picks).length > 0));
+}
+
+export function draftHistoryRuns(runs: DraftRun[]): DraftRun[] {
+  return sortDraftRuns(runs.filter(run => orderedDraftPicks(run.picks).length > 0 || run.matches.length > 0));
 }
 
 export const draftPickKey = (pick: Pick<DraftPick, 'pack_number' | 'pick_number'>) =>

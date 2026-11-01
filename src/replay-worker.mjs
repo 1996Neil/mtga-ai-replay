@@ -1,10 +1,19 @@
 import { Worker, parentPort, workerData } from 'node:worker_threads';
 
-export function replayWorker(operation, options) {
+export function replayWorker(operation, options, { onProgress } = {}) {
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL(import.meta.url), { workerData: { operation, options }, execArgv: [] });
     let settled = false;
-    worker.once('message', message => {
+    worker.on('message', message => {
+      if (settled) return;
+      if (message.progress) {
+        if (operation === 'draft-publication' && ['waiting', 'comparing', 'remote'].includes(message.progress.phase)) {
+          // These phases are observation only, never publication checkpoints.
+          // A display failure must not interrupt or relabel a remote write.
+          try { onProgress?.({ phase: message.progress.phase }); } catch {}
+        }
+        return;
+      }
       settled = true;
       message.error ? reject(Error(message.error)) : resolve(message.result);
     });
@@ -19,7 +28,8 @@ if (parentPort && workerData) {
     if (operation === 'ingest') result = await (await import('./incremental-replay-import.mjs')).importIncrementalReplays(options);
     else if (operation === 'retention') result = await (await import('./replay-retention.mjs')).cleanReplayRetention(options);
     else if (operation === 'remote') result = await (await import('./replay-remote.mjs')).importRemoteReplays(options);
-    else if (operation === 'draft-publication') result = await (await import('./draft-sync.mjs')).syncDraftCapture({ ...options, automatic: true });
+    else if (operation === 'draft-publication') result = await (await import('./draft-sync.mjs')).syncDraftCapture({
+      ...options, automatic: true, onProgress: progress => parentPort.postMessage({ progress: { phase: progress.phase } }) });
     else throw Error('Unknown replay operation');
     parentPort.postMessage({ result });
   } catch {
