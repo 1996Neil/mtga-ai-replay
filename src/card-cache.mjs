@@ -42,7 +42,8 @@ async function atomicWrite(path, value) {
   await rename(temporary, path);
 }
 function withIdentityStatus(metadata) {
-  const verified = metadata.image_identity_status === 'verified' && metadata.identity_schema === 1 && metadata.image_identity?.lang === 'en';
+  const verified = metadata.image_identity_status === 'verified' && metadata.identity_schema === 1
+    && typeof metadata.image_identity?.lang === 'string' && metadata.image_identity.lang.length > 0;
   return { ...metadata, image_identity_status: verified ? 'verified'
     : metadata.image_identity_status === 'unverified' || metadata.source === 'local' ? 'unverified' : 'legacy_unverified' };
 }
@@ -50,7 +51,7 @@ function matchesCatalog(metadata, identity) {
   if (identity.unresolved) return false;
   const cached = metadata.image_identity;
   return metadata.image_identity_status === 'verified' && metadata.identity_schema === 1 &&
-    cached?.lang === 'en' && cached.requestedId === identity.requestedId &&
+    typeof cached?.lang === 'string' && cached.lang.length > 0 && cached.requestedId === identity.requestedId &&
     cached.primaryId === identity.primaryId && cached.faceIndex === identity.faceIndex &&
     cached.set === identity.set && cached.collector === identity.collector &&
     Boolean(cached.isToken) === Boolean(identity.isToken) &&
@@ -104,22 +105,41 @@ export async function getCardMetadata(arenaId, { dataDir = defaultDataDir(), loc
       await mkdir(join(dataDir, 'cards'), { recursive: true, mode: 0o700 });
       let card, selected, namedLookup = false, retryAfter = 0, loadError;
       try {
-        let printingLookup = Boolean(identity);
+        let printingLookup = Boolean(identity), arenaLookup = false, result;
         let response = await request(identity
           ? `https://api.scryfall.com/cards/${encodeURIComponent(identity.set)}/${encodeURIComponent(identity.collector)}`
           : `https://api.scryfall.com/cards/arena/${arenaId}`, fetchFn);
-        if (response.status === 404 && identity) {
+        if (response.ok) {
+          result = await response.json();
+          selected = selectPrintedFace(result, identity, {
+            allowMissingArenaId: printingLookup,
+            allowArenaIdAlias: arenaLookup,
+            allowNonEnglish: Boolean(identity && (printingLookup || arenaLookup)),
+          });
+        }
+        // A set/collector lookup can resolve to another printing that shares
+        // the same public number. Recheck by Arena ID before reporting a
+        // mismatch; this is what disambiguates ANA 9 (Island vs Forest).
+        if (identity && (response.status === 404 || response.ok && !selected)) {
           printingLookup = false;
+          arenaLookup = true;
           response = await request(`https://api.scryfall.com/cards/arena/${identity.primaryId}`, fetchFn);
+          if (response.ok) {
+            result = await response.json();
+            selected = selectPrintedFace(result, identity, {
+              allowMissingArenaId: printingLookup,
+              allowArenaIdAlias: arenaLookup,
+              allowNonEnglish: true,
+            });
+          }
         }
         if (response.status === 404 && !identity && local.name && !/^Arena card \d+$/.test(local.name)) {
           namedLookup = true;
           response = await request(`https://api.scryfall.com/cards/named?exact=${encodeURIComponent(local.name)}`, fetchFn);
+          if (response.ok) result = await response.json();
         }
         if (!response.ok) { retryAfter = retryDeadline(response); loadError = cardLoadError({ response, stage: 'metadata' }); }
         if (response.ok) {
-          const result = await response.json();
-          selected = selectPrintedFace(result, identity, { allowMissingArenaId: printingLookup });
           if ((!identity || selected) && (!namedLookup || result.name === local.name || result.card_faces?.some(face => face.name === local.name))) card = result;
           else loadError = cardLoadError({ kind: 'identity_mismatch', stage: 'metadata' });
         }
