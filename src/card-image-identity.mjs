@@ -62,17 +62,34 @@ export function createCardIdentityResolver({ discover = discoverCardDatabase } =
 
 const separateFaces = new Set(['transform', 'modal_dfc', 'double_faced_token', 'reversible_card']);
 const sharedFaces = new Set(['prepare', 'adventure', 'split', 'aftermath', 'flip']);
-export function selectPrintedFace(card, identity, { allowMissingArenaId = false } = {}) {
+export function selectPrintedFace(card, identity, {
+  allowMissingArenaId = false,
+  allowArenaIdAlias = false,
+  allowNonEnglish = false,
+} = {}) {
   if (!identity || identity.unresolved) return null;
   const arenaMatches = card.arena_id === identity.primaryId || allowMissingArenaId && card.arena_id == null;
-  if (card.lang !== 'en' || !arenaMatches || card.set?.toLowerCase() !== identity.set
-    || card.collector_number !== identity.collector || !card.id || !card.name) return null;
+  const exactArenaMatch = card.arena_id === identity.primaryId;
+  // Scryfall appends an `a`/`b` suffix to a few Arena-only catalog numbers
+  // (for example ANA 1 -> 1a). An explicit Arena ID is the authoritative
+  // identity for that fallback response, so accept only this narrow alias.
+  const collectorMatches = card.collector_number === identity.collector
+    || exactArenaMatch && allowArenaIdAlias
+      && [ `${identity.collector}a`, `${identity.collector}b` ].includes(card.collector_number);
+  // Some Arena printings are intentionally non-English (currently the
+  // Phyrexian basic lands). Their exact Arena ID still proves the printing;
+  // a printing lookup without that ID must remain English-only.
+  const phyrexianBasic = card.lang === 'ph'
+    && ['Plains', 'Island', 'Swamp', 'Mountain', 'Forest'].includes(card.name);
+  const languageMatches = card.lang === 'en' || allowNonEnglish && exactArenaMatch && phyrexianBasic;
+  if (!languageMatches || !arenaMatches || card.set?.toLowerCase() !== identity.set
+    || !collectorMatches || !card.id || !card.name) return null;
   if (identity.isToken && !['token', 'double_faced_token', 'emblem'].includes(card.layout)) return null;
   const face = identity.faceIndex ? card.card_faces?.[identity.faceIndex] : card.card_faces?.[0] ?? card;
   if (!face || (identity.faceIndex && !separateFaces.has(card.layout) && !sharedFaces.has(card.layout))) return null;
   const side = separateFaces.has(card.layout) && identity.faceIndex ? 'back' : 'front';
   const image = separateFaces.has(card.layout) ? card.card_faces?.[identity.faceIndex]?.image_uris?.normal
     : card.image_uris?.normal ?? card.card_faces?.[0]?.image_uris?.normal;
-  return { face, image, identity: { ...identity, side, lang: 'en', printingId: card.id,
+  return { face, image, identity: { ...identity, side, lang: card.lang, printingId: card.id,
     oracleId: card.oracle_id, name: card.name, faceName: identity.faceIndex ? face.name : card.card_faces?.[0]?.name ?? card.name, layout: card.layout } };
 }
