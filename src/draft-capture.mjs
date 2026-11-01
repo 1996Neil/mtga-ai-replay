@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { lstat, readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { validAccountKey } from './account-scope.mjs';
 const observationCache = new Map();
 const noCardNames = new Map(), projectionCaches = new WeakMap();
 export async function draftLogRevision(logDir = join(homedir(), '.seventeenlands')) {
@@ -142,4 +143,18 @@ export async function listCapturedDraftRuns(options) {
     }
   } catch { /* Unpublished observations remain only in the transmission queue. */ }
   return projectDraftCaptures(confirmed, { ...options, gaps });
+}
+
+/** Local-only unknown-owner projection. It is intentionally outside Git
+ * publication, but must remain visible in the unassigned Viewer account. */
+export async function listUnknownDraftRuns(options) {
+  const { observations, gaps } = await readDraftCapture(options);
+  let confirmed = new Set();
+  try {
+    const receipt = JSON.parse(await readFile(join(options.dataDir, 'draft-sync/published.json'), 'utf8'));
+    if (receipt.verified && /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(receipt.revision))
+      confirmed = new Set(receipt.observation_ids);
+  } catch { /* No verified publication yet. */ }
+  const unknown = observations.filter(item => !validAccountKey(item.account_key) && !confirmed.has(item.observation_id));
+  return projectDraftCaptures(unknown, { ...options, gaps });
 }

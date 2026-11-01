@@ -234,6 +234,7 @@ export function normalizeDraftRuns(raw: unknown): DraftRun[] {
     binding_pending_matches: Number.isSafeInteger(item.binding_pending_matches) && item.binding_pending_matches >= 0 ? item.binding_pending_matches : undefined,
     binding_account_status: ['matched', 'conflict', 'unknown'].includes(item.binding_account_status) ? item.binding_account_status : undefined,
     binding_account_key: typeof item.binding_account_key === 'string' && /^[a-f0-9]{64}$/.test(item.binding_account_key) ? item.binding_account_key : undefined,
+    ownership_corrected: item.ownership_corrected === true,
     capture_run_ids: Array.isArray(item.capture_run_ids) ? item.capture_run_ids.filter((id: unknown) => typeof id === 'string' && /^[a-f0-9]{32}$/.test(id)) : undefined,
     current_module: typeof item.current_module === 'string' ? item.current_module : null,
     started_at: typeof item.started_at === 'string' ? item.started_at : null,
