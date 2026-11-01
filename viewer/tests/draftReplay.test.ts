@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { DraftPick, DraftRun } from '../src/types/game.ts';
-import { countedDraftPool, draftPickIndex, draftPickKey, draftPickWarning, draftPoolIsPartial, orderedDraftPicks, visibleDraftRuns, draftBindingLabel, selectedCardManaValue, selectedCardColumns } from '../src/lib/draftReplay.ts';
+import { countedDraftPool, draftPickIndex, draftPickKey, draftPickWarning, draftPoolIsPartial, orderedDraftPicks, visibleDraftRuns, draftHistoryRuns, draftBindingLabel, selectedCardManaValue, selectedCardColumns } from '../src/lib/draftReplay.ts';
 
 const a = { arena_id: 1, name: 'A' }, b = { arena_id: 2, name: 'B' };
 test('selected cards sort printed front-face mana costs left to right and retain duplicate copies', () => {
@@ -59,6 +59,16 @@ test('navigation sorts actual observations without filling missing hands or chan
   // A poll inserting an earlier record preserves the selected pack/pick identity.
   assert.equal(draftPickIndex(orderedDraftPicks([...input, pick(1, 2)]), '1-3'), 2);
   assert.equal(draftPickIndex([], '1-1'), 0);
+});
+
+test('match history retains course-only runs while pick navigation remains limited to actual picks', () => {
+  const course = { run_id: 'course', started_at: '2026-10-30T10:00:00Z', picks: [], matches: [{ id: 'saved-match' }] } as DraftRun;
+  const capture = { run_id: 'picks', started_at: '2026-10-30T09:00:00Z', picks: [pick(1, 1)], matches: [] } as DraftRun;
+  const empty = { run_id: 'empty', started_at: '2026-10-31T10:00:00Z', picks: [], matches: [] } as unknown as DraftRun;
+  const input = [capture, empty, course];
+  assert.deepEqual(draftHistoryRuns(input).map(run => run.run_id), ['course', 'picks']);
+  assert.deepEqual(visibleDraftRuns(input).map(run => run.run_id), ['picks']);
+  assert.deepEqual(input.map(run => run.run_id), ['picks', 'empty', 'course']);
 });
 
 test('pool display preserves duplicate quantities and never invents extra cards', () => {

@@ -183,7 +183,11 @@ export async function readDraftDeckComparison(run, { dataDir, accountKey, displa
       db = new DatabaseSync(dbPath, { readOnly: true });
       db.exec('BEGIN');
     } catch (error) { if (error.code !== 'ENOENT') throw error; }
-    if (db && run.binding === 'matched_pool' && run.binding_account_status === 'matched') {
+    const accountVerified = run.binding_account_status === 'matched' ||
+      run.binding_account_status === 'unknown' && run.ownership_corrected === true &&
+      run.binding_method === 'exact_card_pool' && run.binding_account_key === accountKey &&
+      /^[a-f0-9]{32}$/.test(run.bound_run_id ?? '');
+    if (db && run.binding === 'matched_pool' && accountVerified) {
       const query = db.prepare(`SELECT started_at, summary_json, json_extract(replay_json,'$.deck') AS deck
         FROM replays WHERE match_id=?`);
       for (const match of run.matches) {

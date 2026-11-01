@@ -20,6 +20,10 @@
   explicit separate workflows, never startup, polling or ordinary replay reads.
 - Verify idle, one-record change and retry with bounded synthetic work counts;
   do not scan the user's whole archive to prove a local change.
+- When authoring game reviews, generate the offline decision audit and complete
+  its ledger before selecting comments. Check the ledger against the exact
+  final report; missing reveal candidates remain unresolved. Follow
+  `docs/GAME_REVIEW_AUDIT.md`. Coverage checks do not certify strategy.
 
 # UI scope
 

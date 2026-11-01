@@ -13,6 +13,7 @@ export type SyncJob = TaskJob<SyncResult>;
 export function syncButtonLabel(job: SyncJob) {
   if(job.status==='needs_recovery')return '回放任务需要核对';
   if (job.status === 'running') {
+    if (job.progress?.phase === 'waiting') return '等待其他同步完成…';
     if (job.progress?.phase === 'comparing') return '正在比较变化…';
     if (job.progress?.phase === 'downloading') return '正在同步线上回放…';
     if (job.progress?.phase === 'publishing') return '正在准备发布…';
