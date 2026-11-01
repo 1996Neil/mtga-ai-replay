@@ -166,5 +166,5 @@ export async function syncDraftCapture(options = {}) {
     options.onWork?.(work);
     return { synced: true, ...receipt, remote_checked: true, work,
       input_changed: initialInputKey !== await draftBindingInputKey(dataDir) };
-  });
+  }, options);
 }

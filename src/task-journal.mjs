@@ -14,7 +14,7 @@ export function createTaskJournal(dataDir) {
   }
   const db=new DatabaseSync(path);chmodSync(path,0o600); db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=1000; CREATE TABLE IF NOT EXISTS task (kind TEXT PRIMARY KEY, value TEXT NOT NULL);');
   const read=db.prepare('SELECT value FROM task WHERE kind=?'),write=db.prepare('INSERT INTO task(kind,value) VALUES (?,?) ON CONFLICT(kind) DO UPDATE SET value=excluded.value');
-  const phases=new Set(['reading','uploading','scanning','comparing','cards','generating','remote','publishing','security','reconciling','downloading']);
+  const phases=new Set(['reading','uploading','scanning','comparing','cards','generating','remote','publishing','security','reconciling','downloading','waiting']);
   const statuses=new Set(['idle','running','succeeded','partial','failed','needs_recovery']);
   function sanitize(job) {
     if(job.id!==null&&!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(job.id??''))throw Error('Invalid task identity');

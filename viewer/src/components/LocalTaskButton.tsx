@@ -62,7 +62,7 @@ export function LocalTaskButton<Result>({ path, action, capability, label, descr
       {lost ? <p>页面连接中断，后台任务状态暂时未知。正在重新连接；关闭页面不会取消后台任务。</p> : <p>{running ? `${label(job)} 已用 ${Math.floor((job.elapsed_ms ?? 0) / 1000)} 秒。可以关闭页面，重开后查看结果。` : describe(job)}</p>}
       {requestError && <p>{requestError}</p>}
       {job.error && <p>{job.error}</p>}
-      {job.progress?.timings_ms && <details><summary>各阶段耗时</summary><p>{Object.entries(job.progress.timings_ms).map(([phase, ms]) => `${({ security: '安全检查', cards: '补齐卡牌', generating: '生成文件', remote: '核对远端', uploading: '上传', publishing: '准备发布', scanning: '扫描', comparing: '比较' } as Record<string,string>)[phase] ?? phase} ${Math.round(ms / 1000)}秒`).join(' · ')}</p></details>}
+      {job.progress?.timings_ms && <details><summary>各阶段耗时</summary><p>{Object.entries(job.progress.timings_ms).map(([phase, ms]) => `${({ waiting: '等待同步通道', security: '安全检查', cards: '补齐卡牌', generating: '生成文件', remote: '核对远端', uploading: '上传', publishing: '准备发布', scanning: '扫描', comparing: '比较' } as Record<string,string>)[phase] ?? phase} ${Math.round(ms / 1000)}秒`).join(' · ')}</p></details>}
       {job.status==='needs_recovery'&&capability==='replay-sync'&&<button type="button" className="standard-button" disabled={starting||lost} onClick={()=>void reconcile()}>核对已发布回放</button>}
       {extra?.(job)}
       {job.notification?.attempted && <p className="task-note">{job.notification.accepted ? '已提交系统通知；是否显示由 macOS 通知设置决定。' : '系统通知未能提交；此处保留完成结果。'}</p>}
