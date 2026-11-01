@@ -74,7 +74,10 @@ test('real collector output reaches HTTP without a match or legacy database, pub
   assert.equal((await readDraftCapture({ dataDir })).observations.length, 2);
   const server = await startReplayServer({ dataDir, viewerDir, observeLocalLogs: false, displayNamesZh: new Map(), cardNames: new Map([[11, 'Synthetic card']]) });
   t.after(() => server.close());
-  assert.deepEqual(await fetch(server.url + 'api/draft-runs').then(r => r.json()), []);
+  const localUnknown = await fetch(server.url + 'api/draft-runs').then(r => r.json());
+  assert.equal(localUnknown.length, 1);
+  assert.equal(localUnknown[0].account_key, null);
+  assert.equal(localUnknown[0].binding_reason, 'incomplete_picks');
   await mkdir(join(dataDir, 'draft-sync'));
   const ids = (await readDraftCapture({ dataDir })).observations.map(item => item.observation_id);
   await writeFile(join(dataDir, 'draft-sync/published.json'), JSON.stringify({ verified: true,
