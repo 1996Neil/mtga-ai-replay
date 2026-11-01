@@ -42,8 +42,11 @@ Current behavior:
   exact archive transaction revision, not a later readback.
 - Ingestion and sync overlap without blocking the button on parsing. Retention
   cleanup is exclusive. SQLite writes are short transactions; replacement uses
-  a revision comparison. The optional automatic-sync mode remains available
-  to other callers, but the desktop entry point disables it.
+  a revision comparison. The desktop Replay launcher enables automatic-sync mode:
+  a successful local import queues a separate asynchronous remote publication,
+  while the local archive remains immediately readable. The
+  optional automatic-sync mode remains available to other callers, and the
+  desktop entry point enables it.
 - Settings remain unlimited until the user saves a policy. Cleanup runs when
   saved and at most daily during later startup/hourly checks. It never creates a
   remote deletion. Git sparse checkout removes expired working files while

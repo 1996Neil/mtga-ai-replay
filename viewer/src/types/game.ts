@@ -172,6 +172,7 @@ export interface DraftRun {
   binding_pending_matches?: number;
   binding_account_status?: 'matched' | 'conflict' | 'unknown';
   binding_account_key?: string;
+  ownership_corrected?: boolean;
   capture_run_ids?: string[];
   run_id: string;
   event_id: string;

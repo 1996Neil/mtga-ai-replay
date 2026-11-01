@@ -5,7 +5,11 @@ export type DraftCard = DraftPick['candidates'][number];
 export function draftBindingLabel(run: DraftRun): string {
   if (!run.capture_source) return `归档 ${run.replay_wins}胜 ${run.replay_losses}负`;
   if (run.binding === 'matched_pool') return run.binding_account_status === 'conflict'
-    ? '对战已关联 · 账号待核对' : `已关联 · ${run.score_verified ? '' : '归档 '}${run.replay_wins}胜 ${run.replay_losses}负`;
+    ? '对战已关联 · 账号待核对' : run.binding_account_status === 'unknown'
+      ? run.ownership_corrected
+        ? `已关联 · 账号由对战核实 · ${run.score_verified ? '' : '归档 '}${run.replay_wins}胜 ${run.replay_losses}负`
+        : `已关联 · 账号待识别 · ${run.score_verified ? '' : '归档 '}${run.replay_wins}胜 ${run.replay_losses}负`
+      : `已关联 · ${run.score_verified ? '' : '归档 '}${run.replay_wins}胜 ${run.replay_losses}负`;
   return ({
     incomplete_picks: '选牌不完整 · 暂不能核对',
     missing_course: '暂未找到对应赛事',
