@@ -29,7 +29,10 @@
     "draft:capture": "node bin/mtga-draft-capture.mjs",
     "draft:watch": "node bin/mtga-draft-capture.mjs --watch",
     "draft:sync": "node bin/mtga-draft-sync.mjs",
-    "draft:install": "node tools/draft-capture/install.mjs"
+    "draft:install": "node tools/draft-capture/install.mjs",
+    "names:sync": "node tools/sync-card-names.mjs --apply",
+    "names:check": "node tools/sync-card-names.mjs --check",
+    "build:prepare": "npm run names:sync && node --test tests/card-names-bundle.test.mjs"
   },
   "engines": {
     "node": ">=24"

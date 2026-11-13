@@ -6,6 +6,7 @@ import { mkdtemp, mkdir, writeFile, readFile, rm, symlink } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { createHash } from 'node:crypto';
+import { gzipSync } from 'node:zlib';
 import { materializeViewer } from '../scripts/materialize-viewer.mjs';
 
 test('release policy excludes runtime data and credential-shaped content while scanning Viewer sources', () => {
@@ -18,6 +19,16 @@ test('release policy excludes runtime data and credential-shaped content while s
   assert.deepEqual(inspectRecord('src/example.mjs', Buffer.from(secretLike)), ['credential-shaped value']);
   assert.deepEqual(inspectRecord('tests/example.test.mjs', Buffer.from('ghp_SYNTHETIC_SUPER_SECRET')), []);
   assert.deepEqual(inspectRecord('src/example.mjs', Buffer.from('ghp_SYNTHETIC_SUPER_SECRET')), ['credential-shaped value']);
+});
+test('release scan permits only a valid pinned names-only gzip asset', () => {
+  const path = 'src/card-names/cards.jsonl.gz';
+  assert.equal(forbiddenPath(path), false);
+  const row = Buffer.from(JSON.stringify({ grp_id: 6873, en: 'Crash of Rhinos', zh: '猛进犀群' }) + '\n');
+  assert.deepEqual(inspectRecord(path, gzipSync(row)), []);
+  assert.deepEqual(inspectRecord(path, Buffer.from('not gzip')), ['invalid card-names gzip']);
+  assert.deepEqual(inspectRecord(path, gzipSync(Buffer.from('not jsonl'))), ['invalid card-names JSONL']);
+  const secret = Buffer.from(JSON.stringify({ grp_id: 1, en: 'ghp_' + 'A'.repeat(32), zh: 'X' }) + '\n');
+  assert.deepEqual(inspectRecord(path, gzipSync(secret)), ['credential-shaped value']);
 });
 test('release scan refuses shallow or unknown Git history', () => {
   assert.equal(assertCompleteHistory('false'), true);

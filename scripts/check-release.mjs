@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
+import { gunzipSync } from 'node:zlib';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const viewerManifest = JSON.parse(await readFile(new URL('../docs/restricted-viewer.json', import.meta.url), 'utf8'));
@@ -28,11 +29,10 @@ export function verifyViewerManifest(records, manifest = viewerManifest) {
   }
   return seen.size;
 }
-export function inspectRecord(path, bytes) {
+const CARD_NAMES_GZ = 'src/card-names/cards.jsonl.gz';
+
+function textIssues(path, text) {
   const issues = [];
-  if (forbiddenPath(path)) issues.push('forbidden path');
-  if (bytes.includes(0)) issues.push('binary content');
-  const text = bytes.toString('utf8');
   const tokenPattern = /\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|eyJ[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,})\b/g;
   for (const match of text.matchAll(tokenPattern)) {
     if (!(path.startsWith('tests/') && /synthetic|sentinel/i.test(match[0]))) issues.push('credential-shaped value');
@@ -44,6 +44,37 @@ export function inspectRecord(path, bytes) {
     if (!(path === 'tests/sync-security.test.mjs' && (next === "'" || next === '"'))) issues.push('private key');
   }
   if (/\/Users\/neil(?:\/|\b)|1996Neil\/mtga-replay-coach|Neil#[0-9]+/.test(text)) issues.push('personal machine/account binding');
+  return issues;
+}
+
+function validCardNamesJsonl(text) {
+  const lines = text.split('\n').filter(line => line.trim());
+  if (!lines.length) return false;
+  try {
+    for (const line of lines) {
+      const row = JSON.parse(line);
+      if (!Number.isInteger(row.grp_id) || row.grp_id <= 0) return false;
+      if (typeof row.en !== 'string' || !('zh' in row)) return false;
+    }
+  } catch { return false; }
+  return true;
+}
+
+export function inspectRecord(path, bytes) {
+  if (path === CARD_NAMES_GZ) {
+    // The pinned names-only release is a deliberate binary asset. It is not
+    // arbitrary binary: require gzip + the expected JSONL shape, then scan the
+    // decompressed text for the same credential/path patterns as source files.
+    if (bytes.length < 2 || bytes[0] !== 0x1f || bytes[1] !== 0x8b) return ['invalid card-names gzip'];
+    let text;
+    try { text = gunzipSync(bytes).toString('utf8'); } catch { return ['invalid card-names gzip']; }
+    if (!validCardNamesJsonl(text)) return ['invalid card-names JSONL'];
+    return [...new Set(textIssues(path, text))];
+  }
+  const issues = [];
+  if (forbiddenPath(path)) issues.push('forbidden path');
+  if (bytes.includes(0)) issues.push('binary content');
+  issues.push(...textIssues(path, bytes.toString('utf8')));
   return [...new Set(issues)];
 }
 const git = args => spawnSync('git', args, { cwd: root, encoding: 'buffer', maxBuffer: 64 * 1024 * 1024 });
