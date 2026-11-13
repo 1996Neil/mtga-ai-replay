@@ -69,3 +69,26 @@ calls this maintenance path.
 
 New imports always retain an explicit GameOver step, including when lethal
 damage or other final actions share that observation.
+
+## Canceled tentative casts
+
+A cast can be announced and then canceled before it is committed; Arena answers
+with a full-state resync that restores the card's pre-cast object in its source
+zone. That cast was never played, so it is not a replay action: the parser drops
+the tentative action, and the frame that carried only it, when the resync proves
+the rollback. The evidence is the archived snapshots themselves (spell on the
+stack in one frame, back in the local hand with an empty stack in the next).
+
+Archives written before this interpretation keep their old rows until an explicit
+repair:
+
+```sh
+node bin/mtga-replay-cast-repair.mjs --match MATCH_ID          # preview
+node bin/mtga-replay-cast-repair.mjs --match MATCH_ID --apply  # one match
+```
+
+The repair removes only the canceled cast rows and their events, keeps every
+other anchor, state and comment, writes a private backup under the data
+directory's `backups/replay-cast-repair/`, and refuses a changed archive
+revision. Matches outside local retention are preserved by the archive policy.
+No remote write runs; a later sync publishes the changed matches as updates.
