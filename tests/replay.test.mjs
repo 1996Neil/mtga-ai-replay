@@ -309,3 +309,83 @@ test('event sequence belongs to its match and is independent of preceding log ba
   assert.ok(events(alone).length > 0);
   assert.deepEqual(batch, alone);
 });
+
+test('a cast rolled back by a full-state resync never becomes a replay action', async () => {
+  // The player announces Lightning Bolt, then cancels while it is still
+  // tentative. Arena answers with a full state where the bolt is back in hand.
+  const rolledBack = gre(5, {
+    type: 'GameStateType_Full',
+    turnInfo: { turnNumber: 1, activePlayer: 2, phase: 'Phase_Main1' },
+    zones: [zone(20, 'Battlefield', 0, [202]), zone(21, 'Stack', 0), zone(31, 'Hand', 1, [201]),
+      zone(32, 'Hand', 2, [101, 102, 103, 104, 105, 106, 107]), zone(33, 'Library', 1), zone(34, 'Library', 2),
+      zone(35, 'Graveyard', 1), zone(36, 'Graveyard', 2), zone(37, 'Exile', 1)],
+    gameObjects: [
+      ...Array.from({ length: 7 }, (_, i) => object(101 + i, 1001 + i, 2, 32, { visibility: 'Visibility_Private', viewers: [2] })),
+      object(201, 2001, 1, 31, { visibility: 'Visibility_Private', viewers: [1] }), object(202, 2002, 1, 20),
+    ],
+  });
+  const records = [start(), initial(), turnOne(), gre(4, {
+    turnInfo: { turnNumber: 1, activePlayer: 2, phase: 'Phase_Main1' },
+    gameObjects: [object(102, 1002, 2, 21)], zones: [zone(21, 'Stack', 0, [102]), zone(32, 'Hand', 2, [101, 103, 104, 105, 106, 107])],
+    annotations: [annotation(1, 'CastSpell', [102], 32, 21)],
+  }), rolledBack, ...finish()];
+  const { replays } = await buildReplays(records, names);
+  const replay = replays[0], actions = events(replay);
+  assert.equal(actions.filter(event => event.type === 'cast').length, 0);
+  assert.equal(replay.games[0].steps.some(step => step.event?.type === 'cast'), false);
+  // The frame that only carried the tentative cast keeps its snapshot but no row.
+  assert.equal(replay.games[0].steps.some(step => step.state_id === 'S3'), false);
+});
+
+test('repair retires the anchor of a canceled cast but keeps every other anchor', async () => {
+  const { preserveReplayAnchors } = await import('../src/replay-repair.mjs');
+  const previous = {
+    match: { id: 'synthetic-repair-match', account_key: 'a'.repeat(64) },
+    games: [{ game_number: 1, result: { outcome: 'Win' },
+      states: { S1: { gameStateId: 11 }, S2: { gameStateId: 12 } },
+      steps: [
+        { anchor: 'T1-A1', turn: 1, state_id: 'S1', event: { type: 'cast', card: { arena_id: 1002, instance_id: 102 }, targets: [] }, coachNotes: [] },
+        { anchor: 'T1-A2', turn: 1, state_id: 'S2', event: { type: 'state', details: 'Hand updated' }, coachNotes: [] },
+      ] }],
+  };
+  const candidate = structuredClone(previous);
+  candidate.games[0].steps = [structuredClone(previous.games[0].steps[1])];
+  candidate.games[0].canceled = [{ state_id: 'S1', arena_id: 1002, actor: 'me' }];
+  const repaired = preserveReplayAnchors(candidate, previous);
+  assert.equal(repaired.games[0].steps.length, 1);
+  assert.equal(repaired.games[0].steps[0].anchor, 'T1-A2');
+  assert.equal(repaired.games[0].canceled, undefined);
+});
+
+test('surgical cast cleanup drops only archived canceled-cast rows', async () => {
+  const { canceledCastSteps, dropCanceledCasts } = await import('../src/replay-cast-repair.mjs');
+  const game = { game_number: 1,
+    states: {
+      S1: { stack: [], players: { me: { hand: [] } } },
+      S2: { stack: [{ arena_id: 1002 }], players: { me: { hand: [] } } },
+      S3: { stack: [], players: { me: { hand: [{ arena_id: 1002 }] } } },
+      S4: { stack: [], players: { me: { hand: [] } } },
+      S5: { stack: [{ arena_id: 1004 }], players: { me: { hand: [] } } },
+      S6: { stack: [], players: { me: { hand: [] } } },
+    },
+    steps: [
+      { anchor: 'T1-A1', state_id: 'S1', event: { type: 'land' } },
+      { anchor: 'T1-A2', state_id: 'S2', event: { type: 'cast', card: { arena_id: 1002 } } },
+      { anchor: 'T1-A3', state_id: 'S3', event: { type: 'state' } },
+      { anchor: 'T1-A4', state_id: 'S4', event: { type: 'phase' } },
+      { anchor: 'T1-A5', state_id: 'S5', event: { type: 'cast', card: { arena_id: 1004 } } },
+      { anchor: 'T1-A6', state_id: 'S6', event: { type: 'enters', card: { arena_id: 1004 } } },
+    ],
+    turns: [{ turn_number: 1, events: [
+      { anchor: 'T1-A1', type: 'land' }, { anchor: 'T1-A2', type: 'cast', card: { arena_id: 1002 } },
+      { anchor: 'T1-A3', type: 'state' }, { anchor: 'T1-A4', type: 'phase' },
+      { anchor: 'T1-A5', type: 'cast', card: { arena_id: 1004 } }, { anchor: 'T1-A6', type: 'enters', card: { arena_id: 1004 } },
+    ] }] };
+  assert.deepEqual(canceledCastSteps(game).map(step => step.anchor), ['T1-A2']);
+  const { replay, removed } = dropCanceledCasts({ games: [game] });
+  assert.deepEqual(removed.map(item => item.anchor), ['T1-A2']);
+  assert.deepEqual(replay.games[0].steps.map(step => step.anchor), ['T1-A1', 'T1-A3', 'T1-A4', 'T1-A5', 'T1-A6']);
+  assert.deepEqual(replay.games[0].turns[0].events.map(event => event.anchor), ['T1-A1', 'T1-A3', 'T1-A4', 'T1-A5', 'T1-A6']);
+  // A committed cast whose spell resolves is never treated as canceled.
+  assert.deepEqual(dropCanceledCasts(replay).removed, []);
+});
