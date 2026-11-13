@@ -29,10 +29,10 @@ async function database(path, name) {
 test('bundled names work without an installed Chinese client', async (t) => {
   const home = await temporary(t);
   const names = await loadDisplayNames({ home });
-  assert.equal(names.size, 27236);
+  assert.equal(names.size, 27720);
   assert.equal(names.get(6873), '猛进犀群');
   assert.equal(names.get(106931), '月主教米凯耶');
-  assert.equal(names.has(107793), false);
+  assert.equal(names.get(107793), '后继迭代');
 });
 
 test('installed game localization overrides bundled ids', async (t) => {
@@ -48,8 +48,8 @@ test('bundled loader and fingerprint are stable', async () => {
   const first = await loadBundledChineseDisplayNames();
   const second = await loadBundledChineseDisplayNames();
   assert.equal(first, second);
-  assert.equal(first.size, 27236);
+  assert.equal(first.size, 27720);
   const fingerprint = await bundledCardNamesFingerprint();
-  assert.match(fingerprint, /^2026\.64\.50-r5:[a-f0-9]{64}$/);
+  assert.match(fingerprint, /^2026\.65\.0-r1:[a-f0-9]{64}$/);
   assert.equal(fingerprint, await bundledCardNamesFingerprint());
 });

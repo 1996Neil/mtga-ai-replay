@@ -1,37 +1,37 @@
 {
   "schema": "MTGA_CARD_NAMES_V1",
   "schema_version": 1,
-  "data_version": "2026.64.50-r5",
-  "base_version": "2026.64.50",
-  "revision": 5,
-  "generated_at": "2026-11-13T05:45:39+00:00",
+  "data_version": "2026.65.0-r1",
+  "base_version": "2026.65.0",
+  "revision": 1,
+  "generated_at": "2026-11-13T07:19:39+00:00",
   "counts": {
-    "rows": 27244,
-    "with_zh": 27236,
-    "missing_zh": 8,
-    "unique_grp_ids": 27244,
+    "rows": 27720,
+    "with_zh": 27720,
+    "missing_zh": 0,
+    "unique_grp_ids": 27720,
     "by_name_source": {
-      "registry": 27115,
-      "17lands-snapshot": 121,
-      "none": 8
+      "registry": 27252,
+      "mtgch-zhs": 468
     },
-    "tokens": 1314,
-    "primary": 20260
+    "tokens": 1342,
+    "primary": 20614
   },
   "sources": [
     {
       "name": "maintenance-registry",
-      "run_id": "2026.64.50_20261021T054034265920Z",
-      "sha256": "293b84770a9d0f1098eb8e244158f691244768d76cf8b0ee07148721a34bb9aa",
-      "rows": 27180
+      "run_id": "2026.65.0_20261107T052725452543Z",
+      "sha256": "6b3b1bfac444fd3cf069e113a5f90cd380ed8c917391cdf840ce9725c79063b8",
+      "rows": 27720
     },
     {
-      "name": "17lands-snapshot",
-      "sha256": "f672c28b57b5e582c5810611fa3a310b7d2b966aeabba1d16e0c92c363272787",
-      "rows": 25923,
-      "names_filled": 57,
-      "rows_added": 64,
-      "note": "2026-11-07 top-up snapshot; not a complete game-build baseline"
+      "name": "mtgch-zhs",
+      "sha256": "6c5eb8384f40c4893c4bbdd6f5f806627e21306e1ca95becb07acf8f0f19a280",
+      "rows": 468,
+      "names_filled": 468,
+      "rows_added": 0,
+      "note": "大学院废墟 community Simplified Chinese names; matched by set+collector with exact English equality",
+      "url": "https://mtgch.com"
     }
   ],
   "fields": [
@@ -53,12 +53,12 @@
   ],
   "files": {
     "cards.jsonl": {
-      "bytes": 9187862,
-      "sha256": "791a6581b49a48de0acb7386bbcdb52537e4ed0fd668eb3330553f3843135e96"
+      "bytes": 9352288,
+      "sha256": "47a1560c736ce549a43629bc5cedb941f0e2fd4e81c578180a9a4e2d3dbe3331"
     },
     "cards.jsonl.gz": {
-      "bytes": 923807,
-      "sha256": "4252e364c69712d78d4ee848a33a95bbb1dd628975dcdb435632d5b6b4040b0a"
+      "bytes": 942683,
+      "sha256": "f763d13ff327cfdd42ad82bb1d5bcf4238557a83f79e72b7a0e1ad6fa6810ce0"
     }
   },
   "notes": "Names-only projection: card titles and identity keys only. No rules text, flavor text, UI strings, source evidence, or raw game files. Rows added from the 17Lands snapshot are a top-up, not a complete game-build baseline.",

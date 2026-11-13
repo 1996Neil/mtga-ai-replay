@@ -3,7 +3,7 @@
 `cards.jsonl.gz` + `manifest.json` are a pinned names-only copy of:
 
 - https://github.com/1996Neil/mtga-card-names
-- release `data-2026.64.50-r5`
+- release `data-2026.65.0-r1`
 - schema `MTGA_CARD_NAMES_V1`
 
 Replay2 uses this bundle so Chinese display names work even when MTGA has no
