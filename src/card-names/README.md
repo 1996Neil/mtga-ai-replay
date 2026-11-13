@@ -22,6 +22,14 @@ npm run build:prepare   # names:sync + bundle contract test
 checkout. Run it before packaging so the built artifact contains the pinned data;
 commit the result if the source tree is the release artifact.
 
+Offline update (already-downloaded release assets):
+
+```bash
+node tools/sync-card-names.mjs \
+  --input /path/to/cards.jsonl.gz \
+  --manifest /path/to/manifest.json --apply
+```
+
 `RELEASE.json` is the pin; the sync tool verifies manifest and gzip hashes before
 writing. Do not hand-edit `cards.jsonl.gz` or `manifest.json`.
 

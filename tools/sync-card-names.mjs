@@ -67,6 +67,7 @@ async function download(url, expected) {
 async function main() {
   const apply = process.argv.includes('--apply');
   const inputIndex = process.argv.indexOf('--input');
+  const manifestIndex = process.argv.indexOf('--manifest');
   const pin = await releasePin();
   const base = `https://github.com/${pin.package}/releases/download/${pin.release}`;
 
@@ -79,7 +80,9 @@ async function main() {
     const path = process.argv[inputIndex + 1];
     if (!path) throw new Error('--input requires a path');
     gz = await readFile(path);
-    manifestBytes = await readFile(new URL('manifest.json', DIR));
+    const localManifest = manifestIndex >= 0 ? process.argv[manifestIndex + 1] : null;
+    if (manifestIndex >= 0 && !localManifest) throw new Error('--manifest requires a path');
+    manifestBytes = localManifest ? await readFile(localManifest) : await readFile(new URL('manifest.json', DIR));
   } else if (apply) {
     manifestBytes = await download(`${base}/manifest.json`, pin.manifest_sha256);
     gz = await download(`${base}/cards.jsonl.gz`, pin.cards_jsonl_gz_sha256);
