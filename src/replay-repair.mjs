@@ -33,6 +33,10 @@ export function preserveReplayAnchors(candidate, previous) {
     }
     const used = new Set(), assigned = new Map(), maximum = new Map();
     const unmatched = [];
+    // A canceled tentative cast is announced and then rolled back by a
+    // full-state resync; the rebuild drops it, so its archived anchor retires
+    // instead of blocking the repair.
+    const canceled = new Set((game.canceled ?? []).map(item => `${item.state_id}:${item.arena_id}`));
     for (const step of old.steps ?? []) {
       const number = Number(step.anchor?.match(/-A(\d+)$/)?.[1] ?? 0);
       maximum.set(step.turn, Math.max(maximum.get(step.turn) ?? 0, number));
@@ -49,6 +53,7 @@ export function preserveReplayAnchors(candidate, previous) {
     // actions have claimed their candidates, so a tentative row cannot steal
     // the final committed action's anchor.
     for (const step of unmatched) {
+      if (canceled.has(`${step.state_id}:${step.event?.card?.arena_id}`)) continue;
       if (!discardableEvent(step.event?.type)) throw new Error(`Repair cannot preserve archived anchor ${step.anchor}.`);
       const next = game.steps.find(value => !assigned.has(value) && eventKey(value.event) === eventKey(step.event));
       if (next) assigned.set(next, step);
@@ -72,6 +77,8 @@ export function preserveReplayAnchors(candidate, previous) {
       }
       if (step.event?.sequence) step.event.anchor = step.anchor;
     }
+    // Repair evidence only; it must not enter the archived replay.
+    delete game.canceled;
     // A truncated source must never replace the complete archive.
     const states = new Set(Object.values(game.states).map(state => state.gameStateId));
     if (Object.values(old.states ?? {}).some(state => !states.has(state.gameStateId)) ||
@@ -110,7 +117,7 @@ export async function repairArchivedReplay(matchId, { dataDir = defaultDataDir()
     for (const child of Object.values(value)) if (child && typeof child === 'object') collect(child);
   }
   collect(previous);
-  const { replays } = await buildReplays(records, names, { counterNames });
+  const { replays } = await buildReplays(records, names, { counterNames, recordCanceled: true });
   const rebuilt = replays.find(replay => replay.match.id === matchId);
   if (!rebuilt) throw new Error('The retained source cannot rebuild this match.');
   // Compare and preview the exact representation that the archive will store,

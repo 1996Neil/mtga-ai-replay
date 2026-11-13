@@ -22,10 +22,35 @@ function initialGame(number) {
     turns: [], states: {}, steps: [], _frames: [], result: { outcome: null, reason: 'unknown', life: { me: null, opponent: null } }, warnings: [] };
 }
 
-export async function buildReplays(records, names = new Map(), { counterNames = new Map() } = {}) {
+export async function buildReplays(records, names = new Map(), { counterNames = new Map(), recordCanceled = false } = {}) {
   const meta = indexMatchMetadata(records), states = new Map(), games = new Map(), sanitized = [];
   const actionEvents = new Map(), seenStates = new Set(), seenAnnotations = new Set(), ephemeralCombatFrames = new Set(); let currentId;
   const sequences = new Map();
+  // A cast can be announced and then rolled back by a full-state resync (the
+  // player canceled before the spell was committed). The rollback restores the
+  // card's pre-cast object in its source zone, so a tentative cast is dropped
+  // when the next full state proves it never left that zone.
+  const castRollback = new WeakMap(), discardedFrames = new WeakMap();
+  function discardRolledBackCasts(game, frameId, state) {
+    const stack = [...state.zones.values()].find(zone => zone.type === 'ZoneType_Stack');
+    for (const turn of game.turns) {
+      const kept = turn.events.filter(event => {
+        if (event.state_id !== frameId || event.type !== 'cast') return true;
+        const rollback = castRollback.get(event);
+        if (!rollback) return true;
+        const object = state.objects.get(rollback.originId) ?? state.objects.get(event.card?.instance_id);
+        if (!object || object.zoneId !== rollback.sourceZone) return true;
+        if ((stack?.objectInstanceIds ?? []).includes(object.instanceId)) return true;
+        if (recordCanceled) (game.canceled ??= []).push({ state_id: frameId, arena_id: event.card?.arena_id ?? null, actor: event.actor ?? null });
+        return false;
+      });
+      if (kept.length !== turn.events.length) {
+        turn.events = kept;
+        if (!discardedFrames.has(game)) discardedFrames.set(game, new Set());
+        discardedFrames.get(game).add(frameId);
+      }
+    }
+  }
   function gameFor(id, number) {
     const key = `${id}:${number}`;
     if (!games.has(key)) games.set(key, initialGame(number));
@@ -109,7 +134,11 @@ export async function buildReplays(records, names = new Map(), { counterNames = 
       const objectsBefore = new Map(state.objects);
       const actorsBefore = new Map([...state.objects.keys()].map(id => [id, state.actor(id)]));
       const wasPreGame = !state.turn.turnNumber;
+      const previousFrame = state.currentFrame;
       state.apply(rawGsm);
+      // A full-state resync can roll back a cast the player canceled while it
+      // was still tentative. Only an explicit resync is treated as proof.
+      if (rawGsm.type === 'GameStateType_Full' && previousFrame) discardRolledBackCasts(game, previousFrame.id, state);
       // Objects sometimes vanish in the same message as sacrifice/destroy. The
       // transition may still name an identity already visible before that event.
       for (const a of rawGsm.annotations ?? []) if (has(a, 'ObjectIdChanged')) {
@@ -182,7 +211,13 @@ export async function buildReplays(records, names = new Map(), { counterNames = 
               } else if (category === 'CastSpell' || category === 'ActivateAbility' || category === 'TriggerAbility') {
                 const types = { CastSpell: 'cast', ActivateAbility: 'activate', TriggerAbility: 'trigger' };
                 const event = push(state, game, { type: types[category], actor, ...(card ? { card } : {}), targets: [] });
-                if (event) actionEvents.set(`${key}:${category}:${id}`, event);
+                if (event) {
+                  actionEvents.set(`${key}:${category}:${id}`, event);
+                  // Remember the pre-cast object and source zone so a later full
+                  // state can prove whether this cast was rolled back.
+                  const origin = rawGsm.annotations?.find(b => has(b, 'ObjectIdChanged') && detail(b, 'new_id') === id);
+                  castRollback.set(event, { originId: origin ? detail(origin, 'orig_id') : id, sourceZone: detail(a, 'zone_src') });
+                }
               } else {
                 const types = { PlayLand: 'land', Sacrifice: 'sacrifice', Destroy: 'destroy', Exile: 'exile', Discard: 'discard', Mill: 'mill', Return: 'return', Put: 'zone_change',
                   SBA_Damage: 'dies', SBA_ZeroToughness: 'dies', SBA_Deathtouch: 'dies',
@@ -308,6 +343,9 @@ export async function buildReplays(records, names = new Map(), { counterNames = 
       const perTurn = new Map();
       for (const frame of game._frames) {
         let frameEvents = events.filter(event => event.state_id === frame.id);
+        // A frame whose only action was a rolled-back cast keeps its state
+        // snapshot but no timeline row.
+        if (!frameEvents.length && discardedFrames.get(game)?.has(frame.id)) continue;
         const after = game.states[frame.id], before = game.states[frame.before_id];
         if (!frameEvents.length && !frame.terminal) {
           if (!frame.meaningful) continue;
