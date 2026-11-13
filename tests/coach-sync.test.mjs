@@ -107,13 +107,14 @@ async function harness(t) {
   t.after(() => rm(directory, { recursive: true, force: true }));
   const dataDir = join(directory, 'local-data'), bare = join(directory, 'remote.git');
   await execute('git', ['init', '--bare', '-b', 'main', bare], { env });
-  const control = { visibility: 'PRIVATE', offline: false, unavailableGh: false, rejectPush: false, losePushResponse: false,
+  const control = { visibility: 'PRIVATE', offline: false, unavailableGh: false, ghFailures: 0, rejectPush: false, losePushResponse: false,
     pushFailure: null, calls: [], visibilityChecks: 0, publicAtCheck: Infinity, gitEnv: {}, beforeGit: null };
   const runCommand = async (file, args, { cwd, encoding = 'utf8', env: commandEnv = {}, input, timeout } = {}) => {
     control.calls.push({ file, args: [...args], timeout });
     if (file === 'gh') {
       assert.deepEqual(args.slice(0, 3), ['repo', 'view', REPOSITORY]);
       control.visibilityChecks++;
+      if (control.ghFailures > 0) { control.ghFailures--; throw new Error('network error ghp_SyntheticSecretMustNotEscape /Users/synthetic/private.log'); }
       if (control.unavailableGh) throw new Error('network error ghp_SyntheticSecretMustNotEscape /Users/synthetic/private.log');
       let defaultBranchRef = null;
       try { await execute('git', ['--git-dir', bare, 'rev-parse', '--verify', 'HEAD'], { env }); defaultBranchRef = { name: 'main' }; } catch { /* Empty remote. */ }
@@ -988,4 +989,17 @@ test('warm catalog with no candidates refuses newly fetched unsafe history befor
   assert.equal(h.control.calls.slice(calls).some(call=>call.args.includes('push')||call.args.includes('commit')),false);
   assert.equal(await h.commits(),remoteCount);
   assert.equal((await getCoachSyncStatus({...h.options,verify:false})).pending,0);
+});
+
+test('a transient GitHub verification failure is retried instead of aborting the upload', async t => {
+  const h = await harness(t), value = await bundle();
+  await configureCoachSync(REPOSITORY, h.options);
+  await enqueueCoachBundle(value, h.options);
+  // One read-only verification call fails right after the push; the retry
+  // confirms the same repository and the upload is not repeated.
+  h.control.ghFailures = 1;
+  const result = await syncCoachBundles(h.options);
+  assert.equal(result.synced, true);
+  assert.equal(h.control.calls.filter(call => call.file === 'git' && call.args.includes('push')).length, 1);
+  assert.ok(h.control.calls.filter(call => call.file === 'gh').length >= 4);
 });

@@ -217,11 +217,22 @@ function runner(options) {
     }
   };
 }
+const GH_REPOSITORY_ATTEMPTS = 3;
 async function privateRepository(repository, run) {
   if (!REPOSITORY.test(repository ?? '')) fail('SYNC_REPOSITORY', 'Repository must be in owner/name form.');
-  let meta;
-  try { meta = JSON.parse(await run('gh', ['repo', 'view', repository, '--json', 'nameWithOwner,visibility,url,defaultBranchRef'])); }
-  catch (error) { if (error instanceof CoachSyncError) throw error; fail('GITHUB_UNAVAILABLE', 'GitHub repository verification failed.'); }
+  // This read-only verification can hit a transient proxy/API blip right after
+  // a push. Retry it briefly instead of reporting an unverifiable publication.
+  let meta, lastError;
+  for (let attempt = 0; attempt < GH_REPOSITORY_ATTEMPTS; attempt++) {
+    try {
+      meta = JSON.parse(await run('gh', ['repo', 'view', repository, '--json', 'nameWithOwner,visibility,url,defaultBranchRef']));
+      break;
+    } catch (error) {
+      lastError = error;
+      if (attempt < GH_REPOSITORY_ATTEMPTS - 1) await new Promise(done => setTimeout(done, 500 * (attempt + 1)));
+    }
+  }
+  if (!meta) { if (lastError instanceof CoachSyncError) throw lastError; fail('GITHUB_UNAVAILABLE', 'GitHub repository verification failed.'); }
   if (meta.visibility !== 'PRIVATE') fail('SYNC_NOT_PRIVATE', 'Upload blocked: the GitHub repository is not PRIVATE.');
   if (String(meta.nameWithOwner).toLowerCase() !== repository.toLowerCase() || meta.url !== `https://github.com/${meta.nameWithOwner}`) fail('SYNC_REPOSITORY', 'GitHub repository identity could not be verified.');
   if (meta.defaultBranchRef?.name && !/^[A-Za-z0-9_.\/-]+$/.test(meta.defaultBranchRef.name)) fail('SYNC_BRANCH', 'GitHub default branch is unsupported.');
