@@ -1,10 +1,15 @@
 import { homedir } from 'node:os';
-import { readdir, realpath, stat } from 'node:fs/promises';
+import { readdir, readFile, realpath, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { createHash } from 'node:crypto';
+import { gunzipSync } from 'node:zlib';
 import { arenaDataDirectories } from './discovery.mjs';
 
 const OPTIONAL_ERRORS = new Set(['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM']);
 const CHINESE_BASICS = ['树林', '山脉', '海岛', '平原', '沼泽'];
+const BUNDLED_GZ = new URL('./card-names/cards.jsonl.gz', import.meta.url);
+const BUNDLED_MANIFEST = new URL('./card-names/manifest.json', import.meta.url);
+let bundledNamesPromise, bundledFingerprintPromise;
 
 function plainText(value) {
   const entities = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
@@ -15,6 +20,45 @@ function plainText(value) {
     }
     return entities[entity.toLowerCase()] ?? match;
   }).trim();
+}
+
+/** Names-only release bundled at build time; empty when the optional asset is absent. */
+export async function loadBundledChineseDisplayNames() {
+  if (!bundledNamesPromise) bundledNamesPromise = (async () => {
+    const names = new Map();
+    try {
+      const manifest = JSON.parse(await readFile(BUNDLED_MANIFEST, 'utf8'));
+      if (manifest?.schema !== 'MTGA_CARD_NAMES_V1') return names;
+      const rows = gunzipSync(await readFile(BUNDLED_GZ)).toString('utf8').split('\n');
+      for (const line of rows) {
+        if (!line.trim()) continue;
+        const row = JSON.parse(line);
+        const id = Number(row.grp_id);
+        if (!Number.isSafeInteger(id) || id <= 0 || typeof row.zh !== 'string') continue;
+        if (!/\p{Script=Han}/u.test(row.zh) || /[\p{Script=Hiragana}\p{Script=Katakana}]/u.test(row.zh)) continue;
+        names.set(id, row.zh);
+      }
+    } catch {
+      // Bundled names are optional; installed game data can still supply them.
+      return names;
+    }
+    return names;
+  })();
+  return bundledNamesPromise;
+}
+
+/** Stable hash of the bundled manifest + gzip; used by sync-cache receipts. */
+export async function bundledCardNamesFingerprint() {
+  if (!bundledFingerprintPromise) bundledFingerprintPromise = (async () => {
+    try {
+      const [manifest, gz] = await Promise.all([readFile(BUNDLED_MANIFEST), readFile(BUNDLED_GZ)]);
+      const version = JSON.parse(manifest.toString('utf8')).data_version ?? 'unknown';
+      return `${version}:${createHash('sha256').update(manifest).update(gz).digest('hex')}`;
+    } catch {
+      return 'missing';
+    }
+  })();
+  return bundledFingerprintPromise;
 }
 
 function localizationTable(database) {
@@ -88,7 +132,17 @@ export async function discoverDisplayNameDatabase(options = {}) {
   return (await discoverInstalledNames(options)).path;
 }
 
-/** Discover and load once when the local server starts; retain the map in memory. */
+/**
+ * Bundled names first, installed game DB overrides. The override keeps a
+ * modded client's current strings authoritative for ids it still carries.
+ */
+export async function loadDisplayNames(options = {}) {
+  const bundled = await loadBundledChineseDisplayNames();
+  const installed = (await discoverInstalledNames(options)).names;
+  return new Map([...bundled, ...installed]);
+}
+
+/** Legacy name: now includes the bundled names-only release. */
 export async function loadInstalledChineseDisplayNames(options = {}) {
-  return (await discoverInstalledNames(options)).names;
+  return loadDisplayNames(options);
 }

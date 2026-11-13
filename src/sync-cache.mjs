@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { open, stat, lstat, readFile, readdir, writeFile, rename, mkdir, rm } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { discoverDisplayNameDatabase } from './display-names.mjs';
+import { bundledCardNamesFingerprint, discoverDisplayNameDatabase } from './display-names.mjs';
 import { coachCardMetadataIds } from './coach-cards.mjs';
 
 export const syncDigest = value => createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
@@ -84,8 +84,10 @@ export async function coachInputFingerprint(replay, { dataDir, cardDb, displayNa
   const displayDb = displayNamesZh ? null : await discoverDisplayNameDatabase();
   const coreFiles = await fingerprints([cardDb, displayDb].filter(Boolean).flatMap(path => [path, path + '-wal']));
   const rules = await syncRulesFingerprint();
+  const bundledNames = await bundledCardNamesFingerprint();
   if (!coreFiles || !rules) return null;
-  const core = syncDigest([replay, coreFiles, rules, displayNamesZh ? [...displayNamesZh].sort((a, b) => a[0] - b[0]) : null]);
+  const core = syncDigest([replay, coreFiles, rules, bundledNames,
+    displayNamesZh ? [...displayNamesZh].sort((a, b) => a[0] - b[0]) : null]);
   const ids = await coachCardMetadataIds(replay, { cardDb });
   if (!ids) return null;
   // Include absent dependency files as well: a later metadata arrival must

@@ -1,0 +1,66 @@
+{
+  "schema": "MTGA_CARD_NAMES_V1",
+  "schema_version": 1,
+  "data_version": "2026.64.50-r5",
+  "base_version": "2026.64.50",
+  "revision": 5,
+  "generated_at": "2026-11-13T05:45:39+00:00",
+  "counts": {
+    "rows": 27244,
+    "with_zh": 27236,
+    "missing_zh": 8,
+    "unique_grp_ids": 27244,
+    "by_name_source": {
+      "registry": 27115,
+      "17lands-snapshot": 121,
+      "none": 8
+    },
+    "tokens": 1314,
+    "primary": 20260
+  },
+  "sources": [
+    {
+      "name": "maintenance-registry",
+      "run_id": "2026.64.50_20261021T054034265920Z",
+      "sha256": "293b84770a9d0f1098eb8e244158f691244768d76cf8b0ee07148721a34bb9aa",
+      "rows": 27180
+    },
+    {
+      "name": "17lands-snapshot",
+      "sha256": "f672c28b57b5e582c5810611fa3a310b7d2b966aeabba1d16e0c92c363272787",
+      "rows": 25923,
+      "names_filled": 57,
+      "rows_added": 64,
+      "note": "2026-11-07 top-up snapshot; not a complete game-build baseline"
+    }
+  ],
+  "fields": [
+    "grp_id",
+    "title_id",
+    "set",
+    "collector_number",
+    "is_primary",
+    "is_token",
+    "is_rebalanced",
+    "face_type",
+    "en",
+    "zh",
+    "display_enabled",
+    "deck_import_enabled",
+    "source",
+    "status",
+    "name_source"
+  ],
+  "files": {
+    "cards.jsonl": {
+      "bytes": 9187862,
+      "sha256": "791a6581b49a48de0acb7386bbcdb52537e4ed0fd668eb3330553f3843135e96"
+    },
+    "cards.jsonl.gz": {
+      "bytes": 923807,
+      "sha256": "4252e364c69712d78d4ee848a33a95bbb1dd628975dcdb435632d5b6b4040b0a"
+    }
+  },
+  "notes": "Names-only projection: card titles and identity keys only. No rules text, flavor text, UI strings, source evidence, or raw game files. Rows added from the 17Lands snapshot are a top-up, not a complete game-build baseline.",
+  "notice": "Card names and localized text belong to their respective rights holders. This is a derived fan index, not an official Wizards of the Coast product, and it does not grant redistribution rights. See DATA-NOTICE.md."
+}
