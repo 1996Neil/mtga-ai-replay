@@ -492,7 +492,40 @@ export async function getPublishedCoachIndex(options = {}) {
       history_key: item.history_key, content_hash: item.content_hash, started_at: item.started_at,
     }]));
     await saveState(dataDir, state);
-    return { source: 'remote', index, commit, pending: state.pending, destination_hash:createHash('sha256').update(`${state.repository}:${branch}`).digest('hex') };
+    return { source: 'remote', index, commit, branch, pending: state.pending,
+      destination_hash:createHash('sha256').update(`${state.repository}:${branch}`).digest('hex') };
+  }, options);
+}
+
+/** A publication checkpoint may already be an ancestor of the verified remote
+ * branch when another writer (for example the draft publisher) pushed on top
+ * of it. Content-addressed matches and the destination hash are checked first;
+ * this only proves the commit itself is in the published history. */
+export async function assertPublishedCheckpointCommit(commit, { dataDir = defaultDataDir(), branch, ...options } = {}) {
+  if (!/^[0-9a-f]{40,64}$/.test(commit ?? '') || typeof branch !== 'string' || !/^[A-Za-z0-9_.\/-]+$/.test(branch))
+    fail('SYNC_REMOTE_VERIFY', 'A verified remote branch is required.');
+  const run = runner({ dataDir, ...options });
+  try { await run('git', ['merge-base', '--is-ancestor', commit, `origin/${branch}`], { cwd: locations(dataDir).repo }); }
+  catch { fail('SYNC_REMOTE_VERIFY', 'The publication checkpoint is not in the verified remote branch.'); }
+}
+
+/** Move queued replays that the verified remote index already contains out of
+ * the pending queue. Anything not proven published stays queued. */
+export async function settlePublishedPending({ dataDir = defaultDataDir(), index, ...options } = {}) {
+  const published = new Map((index?.matches ?? []).map(item => [item.match_id, item.content_hash]));
+  return locked(dataDir, async () => {
+    const state = await readState(dataDir), kept = [];
+    let settled = 0;
+    for (const item of state.pending) {
+      if (published.get(item.match_id) !== item.content_hash) { kept.push(item); continue; }
+      state.synced[item.match_id] = { content_hash: item.content_hash, history_key: item.history_key, started_at: item.started_at };
+      settled++;
+    }
+    if (!settled) return { settled };
+    state.pending = kept;
+    if (!kept.length) state.last_error = null;
+    await saveState(dataDir, state);
+    return { settled };
   }, options);
 }
 async function publishPending(state, dataDir, options) {
