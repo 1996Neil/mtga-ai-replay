@@ -62,6 +62,8 @@ export async function syncCoachCatalog(options = {}) {
   try { return await runCatalog({...options,computePool:pool}); } finally { await pool?.close(); }
 }
 async function runCatalog(options) {
+  // Remote-index preflight always checks history before receipts or generation.
+  // Only per-bundle publication defers repeated scans to its final pinned SHA.
   const settings = { ...options, dataDir: options.dataDir ?? defaultDataDir(), validationSession: createSyncValidationSession(),
     deferFullHistoryValidation: true };
   const local = await listReplays({ dataDir: settings.dataDir, limit: null });

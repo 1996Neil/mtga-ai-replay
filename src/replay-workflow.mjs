@@ -1,7 +1,9 @@
 import { discoverLogs } from './discovery.mjs';
-import { discoverCardDatabase, loadCardNames, loadCounterNames } from './cards.mjs';
+import { discoverCardDatabase, loadCardNames, loadCardLandColors, loadCounterNames } from './cards.mjs';
 import { readRecords } from './log-reader.mjs';
 import { buildReplays } from './replay.mjs';
+import { buildDraftRunIndex, saveDraftRunIndex } from './draft-runs.mjs';
+import { buildDraftPickIndex } from './draft-picks.mjs';
 import { archiveReplays, defaultDataDir, listReplays, getLatestReplay } from './history.mjs';
 import { syncCoachCatalog } from './coach-catalog-sync.mjs';
 import { getCoachSyncStatus, syncErrorMessage } from './coach-sync.mjs';
@@ -24,12 +26,19 @@ export async function importReplayLogs({ dataDir = defaultDataDir(), logPath, lo
   const importable = replays.filter(r => (all || r.match.is_jump_in) && r.games.some(g => g.steps?.length));
   if (!database) for (const replay of importable) replay.warnings.push('No local card database found; names use Arena IDs.');
   const archive = importable.length ? await archiveReplays(importable, { dataDir }) : { archived: 0, preserved: 0 };
+  let draftRunIndex = null;
+  if (records.length) {
+    const history = await listReplays({ dataDir, limit: null });
+    const draftRuns = buildDraftRunIndex(records, history, { cardNames: names, cardLandColors: await loadCardLandColors(database) });
+    const draftPicks = buildDraftPickIndex(records, { cardNames: names });
+    draftRunIndex = await saveDraftRunIndex(draftRuns, { dataDir, picks: draftPicks });
+  }
   const hasGameRecords = records.some(r => r.greToClientEvent);
   if (input && input === await importInputFingerprint(paths, database, all)) {
     const fingerprint = await archiveFingerprint(dataDir);
     if (fingerprint) await writeSyncCache(dataDir, 'replay-import-cache.json', { input, archive: fingerprint, detailed, hasGameRecords });
   }
-  return { paths, detailed, hasGameRecords, database, archive, cached: false };
+  return { paths, detailed, hasGameRecords, database, archive, draftRunIndex, cached: false };
 }
 
 /** Explicit Viewer upload: publish the current archive through the exact CLI

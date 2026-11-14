@@ -72,7 +72,8 @@ export async function importInputFingerprint(paths, database, all) {
   return files && rules ? syncDigest([files, all, rules]) : null;
 }
 export async function archiveFingerprint(dataDir) {
-  const values = await fingerprints([join(dataDir, 'replays.sqlite3'), join(dataDir, 'replays.sqlite3-wal')]);
+  const values = await fingerprints(['replays.sqlite3', 'replays.sqlite3-wal',
+    'draft-runs.sqlite3', 'draft-runs.sqlite3-wal'].map(name => join(dataDir, name)));
   // Read-only SQLite opens may create/remove an empty WAL. It carries no
   // archive changes; content hashing still detects every actual frame/write.
   return values ? syncDigest(values.map(([path, value]) => [path,

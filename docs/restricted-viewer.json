@@ -74,11 +74,11 @@
     },
     {
       "path": "viewer/src/types/game.ts",
-      "sha256": "0083d994eadf7e94cd86373cbadda8fad2e32d63b8ccc014b6b076a1dd600caa"
+      "sha256": "89514f0dc81c3fc47332ee6c8eaaa62d08af294a7a724a4d15c582bdb8951718"
     },
     {
       "path": "viewer/src/index.css",
-      "sha256": "58d0eeb7dfeab3210b46a4535a10cba2cb85a2b18820c185f87e9e663b7e816d"
+      "sha256": "f23924942d39868a989acfc60ecb3afddeeb7e8b1e86299358b8bda96325ece6"
     }
   ]
 }
