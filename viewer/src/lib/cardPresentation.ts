@@ -13,9 +13,10 @@ export function printedCardStats(metadata?: { source?: string; power?: string; t
 }
 
 /** Readability stays fixed; additional cards overlap or scroll instead of becoming smaller. */
-export function handFanLayout(count: number, availableWidth: number) {
-  const cardWidth = 128;
+export function handFanLayout(count: number, availableWidth: number, options: { overlap?: boolean; cardWidth?: number } = {}) {
+  const cardWidth = options.cardWidth ?? 128;
   const usableWidth = Math.max(cardWidth, availableWidth - 32);
-  const stride = count <= 1 ? cardWidth : Math.min(cardWidth + 14, Math.max(28, (usableWidth - cardWidth) / (count - 1)));
+  const stride = count <= 1 ? cardWidth : options.overlap === false ? cardWidth + 14
+    : Math.min(cardWidth + 14, Math.max(28, (usableWidth - cardWidth) / (count - 1)));
   return { cardWidth, stride, width: count ? cardWidth + (count - 1) * stride : 0 };
 }
