@@ -1,9 +1,8 @@
 {
   "name": "mtga-gpt-replay",
   "version": "0.3.1",
-  "private": true,
   "type": "module",
-  "description": "Private MTGA AI replay source development repository",
+  "description": "Open-source MTGA replay and Live Coach source",
   "bin": {
     "mtga-gpt-replay": "bin/mtga-gpt-replay.mjs",
     "mtga-gpt-collection": "bin/mtga-gpt-collection.mjs"

@@ -23,7 +23,7 @@ Subsequent scoped history-approval safeguards are also preserved: legacy data
 history needs an explicit local approval bound to repository, branch, commit and
 file hashes. No history approval record or existing data history is uploaded here.
 
-**Private PR #3 includes 19 existing adapted Viewer files under explicit user authorization for review.** Their hashes and upstream revision remain recorded in [restricted-viewer.json](docs/restricted-viewer.json), and attribution is preserved in [viewer/ATTRIBUTION.md](viewer/ATTRIBUTION.md). The inspected upstream revision has no declared code license; this private inclusion does not claim an upstream license or grant public redistribution rights. The repository remains private. The macOS icon is excluded.
+**The repository is public, but 19 existing adapted Viewer files have a separate rights boundary.** Their hashes and upstream revision remain recorded in [restricted-viewer.json](docs/restricted-viewer.json), and attribution is preserved in [viewer/ATTRIBUTION.md](viewer/ATTRIBUTION.md). The inspected upstream revision has no declared code license; the MIT license in [LICENSE](LICENSE) does not grant public redistribution rights for those files. The macOS icon is excluded.
 
 ## Linux development
 
@@ -80,9 +80,17 @@ No raw Player.log, personal SQLite history, credentials, cookies, tokens, accoun
 configuration, audio, card collection/cache, acceptance logs or upstream artwork
 is included. Third-party notices and dependency locks are preserved.
 
+## License and reuse
+
+Original Replay source code is released under the MIT License in [LICENSE](LICENSE).
+Third-party dependencies, bundled card names, and the adapted Viewer files have
+separate notices and may require additional permission. Read
+[THIRD_PARTY.md](docs/THIRD_PARTY.md) and [viewer/ATTRIBUTION.md](viewer/ATTRIBUTION.md)
+before redistributing those portions.
+
 ## Replay 2.0 task and collection review
 
-The review branch adds server-owned task reconnection, completion notification attempts and an explicit collection update button. See [review evidence and limits](docs/REPLAY2_SYNC_REVIEW.md) and [Pro review prompt](docs/PRO_REVIEW_PROMPT.md). No real upload performance improvement is claimed. The included adapted Viewer sources remain hash-checked by the release scan; private inclusion does not claim upstream licensing or public redistribution rights.
+The review branch adds server-owned task reconnection, completion notification attempts and an explicit collection update button. See [review evidence and limits](docs/REPLAY2_SYNC_REVIEW.md) and [Pro review prompt](docs/PRO_REVIEW_PROMPT.md). No real upload performance improvement is claimed. The included adapted Viewer sources remain hash-checked by the release scan; public visibility does not change their separate upstream licensing status or grant public redistribution rights.
 
 ## New draft records by game account
 

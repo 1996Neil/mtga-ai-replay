@@ -1,7 +1,8 @@
 # Source and license record
 
-The repository is private development source. No blanket MIT license is asserted.
-Owned code has no new public license granted by this export.
+The repository is public source. Original Replay code is released under the MIT
+License in the repository root. That license does not cover third-party code,
+data, artwork, dependencies, or the adapted Viewer files listed below.
 
 - `mtga-log-parser@4.1.0`: unmodified npm dependency, MIT, copyright 2026
   kristeehan. Actual notice retained in LICENSE.mtga-log-parser; package integrity
@@ -31,4 +32,4 @@ windows; it is not a redistributed complete card dataset.
 
 GitHub's license explanation states that absence of a license leaves copyright
 rights reserved: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/licensing-a-repository
-Private visibility does not resolve the missing upstream permission.
+Public visibility does not resolve the missing upstream permission.

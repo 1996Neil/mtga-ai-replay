@@ -28,7 +28,12 @@ excluded from the exported JSON; its original copy remains local.
 
 ## Viewer permission boundary
 
-The 19 existing adapted files listed in restricted-viewer.json are included in private PR #3 for review under the user's explicit 2026-10-14 authorization. Preserve attribution and the upstream license status: no code license was declared, and this private inclusion does not grant public redistribution rights. Do not publish this source publicly or claim an upstream license. Do not commit built output.
+The 19 existing adapted files listed in restricted-viewer.json remain included for
+historical and build compatibility. Preserve attribution and the upstream license
+status: no code license was declared, and the repository's MIT license does not
+grant public redistribution rights for those files. Do not claim an upstream
+license or redistribute those files without the necessary permission. Do not
+commit built output.
 
 The materializer remains available for authorized local recovery from an explicit same-version directory:
 
