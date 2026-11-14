@@ -1,6 +1,6 @@
 # 给 Pro 的审查提示词
 
-请审查私有仓库 `1996Neil/mtga-live-coach-source` 的 `codex/replay2-sync-collection-20261010` 分支。先读 `docs/REPLAY2_SYNC_REVIEW.md`、`docs/replay2-runtime-export.json` 和 `docs/restricted-viewer.json`，与 main 比较。
+请审查本项目的同步与收藏实现。先读 `docs/REPLAY2_SYNC_REVIEW.md`、`docs/replay2-runtime-export.json` 和 `docs/restricted-viewer.json`，与 main 比较。
 
 用户的问题：Replay 2.0 对局越多上传越慢；完成缺少通知；关闭页面后进度连接丢失。现在添加了后台任务状态恢复、固定系统通知和同页更新收藏，请检查正确性，并提出有证据的提速补丁。
 

@@ -10,7 +10,7 @@
 
 ### P1-S1：Git tree 替身可隐藏将被推送的秘密祖先（已修复）
 
-- **位置：** [src/sync-security.mjs:301–311](https://github.com/1996Neil/mtga-live-coach-source/blob/fca87281749ae17cafac8b27974cee69203f6209/src/sync-security.mjs#L301)。原逻辑校验 commit/blob 原始摘要，却通过 `ls-tree` 解释历史 tree。
+- **位置：** `src/sync-security.mjs:301–311`。原逻辑校验 commit/blob 原始摘要，却通过 `ls-tree` 解释历史 tree。
 - **触发：** 构造“安全 root → 含合成密码的 ancestor → 安全 main tip”；当前 index 和工作区安全，再用本地 tree replacement 将恶意祖先的 tree 替换为安全视图。
 - **影响与证据：** 原 validator 先返回成功，随后真实本地 bare 的 `push main` 带出原始祖先密码；远端当前 tip 仍安全。修复版在 push 前以 `invalid-git-object` 拒绝，目标 refs 为空。证据：`security/replacement-main-proof.log`、`tree-replacement-proof.json` 及逐命令原始输出。
 - **最小修复：** 批量读取、验证每个原始 tree 的类型、长度和 Git 摘要，再按 tree hash 与路径前缀遍历叶子。替身的内容与所请求对象 hash 不符即失败。
@@ -18,21 +18,21 @@
 
 ### P1-S2：用户的 followTags 配置可附送未经检查的标签元数据（已修复）
 
-- **位置：** [src/coach-sync.mjs:280–291](https://github.com/1996Neil/mtga-live-coach-source/blob/fca87281749ae17cafac8b27974cee69203f6209/src/coach-sync.mjs#L280)，实际 push 在原 476–482 行。
+- **位置：** `src/coach-sync.mjs:280–291`，实际 push 在原 476–482 行。
 - **触发：** 本地 `push.followTags=true`，待发布分支有 annotated tag，tagger 或 annotation 包含私人信息。
 - **影响与证据：** 通过真实 `syncCoachBundles` 向临时 bare 发布，原版成功后远端确有合成私密 tag。修复后回放仍发布成功、远端 tags 为空，用户本地配置仍是 true。证据：`security/follow-tags-before.log` 与 `follow-tags-after.log`。
 - **最小修复：** 仅给这次 push 增加 `-c push.followTags=false`，限制为所请求的数据分支；不修改用户配置。此缺口 main 同样存在。
 
 ### P1-L1：收到 POST 响应头后断流，不能接回已启动的后台任务（已修复）
 
-- **位置：** [viewer/src/lib/taskClient.ts:59–63](https://github.com/1996Neil/mtga-live-coach-source/blob/fca87281749ae17cafac8b27974cee69203f6209/viewer/src/lib/taskClient.ts#L59)。原 `response.json()` 在丢回执恢复 catch 外。
+- **位置：** `viewer/src/lib/taskClient.ts:59–63`。原 `response.json()` 在丢回执恢复 catch 外。
 - **触发：** POST 已被接受并返回 202 headers，JSON body 读取中途断开。
 - **影响与证据：** 客户端直接抛 socket/body 错误而不 GET 接回任务。真实 loopback server 发送部分 JSON 后关闭 socket：原版失败，修复版 GET 恢复同一新任务，POST 计数仍为 1。证据：`tasks/original-lifecycle-probes-http.log` 与 `patched-lifecycle-probes-http.log`。
 - **最小修复：** fetch 与成功 JSON 读取进入同一恢复分支；通过 GET 对账，不自动重复 POST。
 
 ### P1-L2：旧的完成结果可能被误报为本次点击成功（已修复）
 
-- **位置：** [viewer/src/lib/taskClient.ts:19,32–33,57,61](https://github.com/1996Neil/mtga-live-coach-source/blob/fca87281749ae17cafac8b27974cee69203f6209/viewer/src/lib/taskClient.ts#L19)。原基线只来自该 client 过去观察到的 id。
+- **位置：** `viewer/src/lib/taskClient.ts:19,32–33,57,61`。原基线只来自该 client 过去观察到的 id。
 - **触发：** 新 client 没有观察基线，或本页停止轮询后另一窗口已完成 B；本次 POST 没有送达/回执丢失，之后 GET 得到这个旧完成结果。
 - **影响与证据：** 原版可显示已同步，但本次未创建新任务。两种情况都有修前失败、修后通过的冻结反例。
 - **最小修复：** 每次明确启动先 GET 最新基线；若已有 running 则观察该任务，否则丢回执后只接纳不同于本次基线的 id。不在状态未知时自动重新 POST。
@@ -40,14 +40,14 @@
 
 ### P1-C1：开始关服后仍能接受新数据任务（已修复）
 
-- **位置：** [src/server.mjs:71–89,156–162](https://github.com/1996Neil/mtga-live-coach-source/blob/fca87281749ae17cafac8b27974cee69203f6209/src/server.mjs#L71)。
+- **位置：** `src/server.mjs:71–89,156–162`。
 - **触发：** 任务业务已完成、通知仍在等待；close 捕获旧 completion 后，另一个 POST 创建新任务。
 - **影响与证据：** 原请求仍返回 202，关服可能只等待旧 promise，新任务在进程退出时被中断。没有把合成反例扩大成真实发布数据损坏。两条 shutdown 回归的原始日志见 `collection/shutdown-before-both.log`。
 - **最小修复：** 第一个 await 前同步设置 closing 门闩；写入口及异步 dispatch 后复查；close 幂等复用 promise。修后 replay/collection update/collection sync 三入口均返回 503，旧任务继续被等待。
 
 ### P1-C2：迟到的 POST body 可在 stop 后重新启动教练（已修复）
 
-- **位置：** [src/live-coach/routes.mjs:35–50](https://github.com/1996Neil/mtga-live-coach-source/blob/fca87281749ae17cafac8b27974cee69203f6209/src/live-coach/routes.mjs#L35)。
+- **位置：** `src/live-coach/routes.mjs:35–50`。
 - **触发：** 合法 POST 只发送部分 body；服务已经 stop 教练、仍等待另一个后台任务；此时 body 才完整到达。
 - **影响与证据：** 原版返回 200 并调用 start；修后返回 503、start 次数为 0。反例使用纯合成 runtime，没有真实模型或音频调用。
 - **最小修复：** routes 接收只读 `isClosing` 回调，在 body await 后、动作之前重新核对。证据：`collection/shutdown-after.log`。

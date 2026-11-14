@@ -19,9 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
-This license applies only to original Replay source code owned by 1996Neil.
-It does not grant rights to third-party code, data, artwork, dependencies, or
-the adapted Viewer files listed in docs/restricted-viewer.json and
-viewer/ATTRIBUTION.md. Those materials remain subject to their own notices and
-any permissions required from their respective rights holders.
