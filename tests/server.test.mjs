@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { request } from 'node:http';
+import { EventEmitter } from 'node:events';
 import { mkdtemp, mkdir, writeFile, rm, symlink, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -15,7 +16,7 @@ async function setup(t, options = {}) {
   await archiveReplays([{ match: { id: 'synthetic-match', started_at: '2026-10-02T00:00:00Z', event: 'Jump In', is_jump_in: true, result: 'Win' },
     games: [{ turns: [{ turn_number: 1, events: [{ type: 'land', card: { arena_id: 100, name: 'Synthetic Forest', visibility: 'public' } }] }] }],
   }], { dataDir });
-  const running = await startReplayServer({ observeLocalLogs: false, dataDir, viewerDir, notifyTask: async () => ({attempted:false,accepted:false}), ...options });
+  const running = await startReplayServer({ observeLocalLogs: false, displayNamesZh: new Map(), dataDir, viewerDir, notifyTask: async () => ({attempted:false,accepted:false}), ...options });
   t.after(async () => { await running.close(); await rm(temporary, { recursive: true, force: true }); });
   return { ...running, temporary, dataDir, viewerDir };
 }
@@ -210,7 +211,7 @@ test('Coach Context is a native JSON attachment with exact before hand, no futur
 test('collection API rejects foreign/parameterized actions and excludes concurrent replay publication', async t => {
  let reads=0,release;const gate=new Promise(resolve=>{release=resolve;});
  const {url}=await setup(t,{collectionUpdate:async()=>{reads++;await gate;return {local_updated:true,synced:true,summary:{card_kinds:3,total_quantity:9}};}});
- const headers={Origin:new URL(url).origin,'X-MTGA-Replay-Action':'collection-update'};
+ const headers={Origin:new URL(url).origin,'X-MTGA-Replay-Action':'collection-update','X-MTGA-Replay-Account-Confirmation':'unknown-account-reviewed'};
  for(const override of [{Origin:'https://foreign.invalid'},{'X-MTGA-Replay-Action':'wrong'}])assert.equal((await fetch(url+'api/collection',{method:'POST',headers:{...headers,...override}})).status,403);
  assert.equal((await fetch(url+'api/collection?path=/private',{method:'POST',headers})).status,400);
  assert.equal((await fetch(url+'api/collection',{method:'POST',headers,body:'{}'})).status,400);assert.equal(reads,0);
@@ -222,4 +223,82 @@ test('collection API rejects foreign/parameterized actions and excludes concurre
 test('isolated replay providers never expose collection reads or uploads by default', async t => {
  let reads=0;const {url}=await setup(t,{replayProvider:{list:async()=>[],get:async()=>null,latest:async()=>null},collectionUpdate:async()=>{reads++;}});
  assert.equal((await fetch(url+'api/collection')).status,403);assert.equal((await fetch(url+'api/collection/sync',{method:'POST',headers:{Origin:new URL(url).origin,'X-MTGA-Replay-Action':'collection-sync'}})).status,403);assert.equal(reads,0);
+});
+
+test('shutdown rejects new work while a completed task notification is still draining', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'mtga-shutdown-test-'));
+  const viewerDir = join(directory, 'viewer');
+  await mkdir(viewerDir); await writeFile(join(viewerDir, 'index.html'), 'Synthetic shutdown fixture');
+  let releaseNotification, notificationEntered, releaseLateWork;
+  const notificationGate = new Promise(resolve => { releaseNotification = resolve; });
+  const didNotify = new Promise(resolve => { notificationEntered = resolve; });
+  const lateWorkGate = new Promise(resolve => { releaseLateWork = resolve; });
+  let replayCalls = 0, collectionCalls = 0;
+  const running = await startReplayServer({ dataDir: join(directory, 'data'), viewerDir, writeInfo: false,
+    displayNamesZh: new Map(), observeLocalLogs: false,
+    syncWorkflow: async () => { if (++replayCalls > 1) await lateWorkGate; return { status: 'succeeded' }; },
+    collectionUpdate: async () => { collectionCalls++; await lateWorkGate; return { local_updated: true, synced: true }; },
+    collectionSync: async () => { collectionCalls++; await lateWorkGate; return { local_updated: false, synced: true }; },
+    notifyTask: async () => { notificationEntered(); await notificationGate; return { attempted: false, accepted: false }; } });
+  let closing;
+  t.after(async () => {
+    releaseNotification(); releaseLateWork();
+    if (closing) await closing;
+    else await running.close();
+    await rm(directory, { recursive: true, force: true });
+  });
+  await syncPost(running.url); await didNotify;
+  assert.equal((await fetch(running.url + 'api/sync').then(response => response.json())).status, 'succeeded');
+  closing = running.close();
+  await new Promise(resolve => setImmediate(resolve));
+  for (const [path, action] of [['api/sync', 'sync'], ['api/collection', 'collection-update'], ['api/collection/sync', 'collection-sync']]) {
+    const response = await fetch(running.url + path, { method: 'POST', headers: {
+      Origin: new URL(running.url).origin, 'X-MTGA-Replay-Action': action } });
+    assert.equal(response.status, 503, `${path} must not accept work after shutdown starts`);
+  }
+  assert.equal(replayCalls, 1); assert.equal(collectionCalls, 0);
+  // Read-only observation remains available until the captured task drains.
+  assert.equal((await fetch(running.url + 'api/sync')).status, 200);
+  releaseNotification(); await closing;
+  assert.equal(running.server.listening, false);
+  await running.close();
+});
+
+test('shutdown rejects a coach POST whose body finishes after the coach was stopped', async t => {
+  const { startLegacyCoachServer } = await import('../src/legacy-coach-server.mjs');
+  const directory = await mkdtemp(join(tmpdir(), 'mtga-shutdown-coach-test-'));
+  const viewerDir = join(directory, 'viewer');
+  await mkdir(viewerDir); await writeFile(join(viewerDir, 'index.html'), 'Synthetic shutdown fixture');
+  let releaseSync, syncEntered, starts = 0, stops = 0;
+  const syncGate = new Promise(resolve => { releaseSync = resolve; });
+  const didSync = new Promise(resolve => { syncEntered = resolve; });
+  const runtime = { controller: new EventEmitter(), snapshot: () => ({ enabled: starts > stops }),
+    start: async () => { starts++; }, stop: async () => { stops++; } };
+  const running = await startLegacyCoachServer({ dataDir: join(directory, 'data'), viewerDir, writeInfo: false,
+    displayNamesZh: new Map(), observeLocalLogs: false, liveCoach: runtime,
+    syncWorkflow: async () => { syncEntered(); await syncGate; return { status: 'succeeded' }; },
+    notifyTask: async () => ({ attempted: false, accepted: false }) });
+  let closing, pending;
+  t.after(async () => {
+    pending?.destroy(); releaseSync();
+    if (closing) await closing; else await running.close();
+    await rm(directory, { recursive: true, force: true });
+  });
+  await syncPost(running.url); await didSync;
+  const entered = new Promise(resolve => running.server.once('request', resolve));
+  const response = new Promise((resolve, reject) => {
+    pending = request(running.url + 'api/live-coach/start', { method: 'POST', headers: {
+      Origin: new URL(running.url).origin, 'X-MTGA-Coach-Action': 'session',
+      'Content-Type': 'application/json', 'Content-Length': '2' } }, result => {
+      result.resume(); result.on('end', () => resolve(result.statusCode));
+    });
+    pending.on('error', reject); pending.write('{');
+  });
+  await entered; closing = running.close();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(stops, 1);
+  pending.end('}');
+  assert.equal(await response, 503);
+  assert.equal(starts, 0);
+  releaseSync(); await closing;
 });

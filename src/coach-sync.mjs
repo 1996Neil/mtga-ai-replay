@@ -1,9 +1,12 @@
+import {CoachSyncError} from './coach-sync-error.mjs';
+import {bundleFiles} from './coach-bundle-files.mjs';
 import { execFile } from 'node:child_process';
+import { createGitBatch } from './git-batch.mjs';
 import { mkdir, readFile, writeFile, rename, open, rm, lstat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { defaultDataDir } from './history.mjs';
-import { serializeCoachJson, resolveCoachBundle } from './coach-bundle.mjs';
+import { serializeCoachJson } from './coach-bundle.mjs';
 import { validateBundleFiles, validateStagedRepository, validateSyncHistoryApproval, isCollectionSyncPath, isCoachSyncPath, createSyncValidationSession } from './sync-security.mjs';
 
 const NAMES = ['summary.json', 'coach.json', 'cards.json', 'manifest.json'];
@@ -50,15 +53,13 @@ own stable Tn-An anchors and state dictionary.
 All parts are covered by SHA256 and the content hash. They carry only sanitized
 player-perspective data and use the same upload guard as the four main files.
 `;
-const GITIGNORE = `*\n!.gitignore\n!README.md\n!index.json\n!latest/\n!latest/*.json\n!matches/\n!matches/*/\n!matches/*/*.json\n!matches/*/parts/\n!matches/*/parts/part-*.json\n`;
+const GITIGNORE = `*\n!.gitignore\n!README.md\n!index.json\n!latest/\n!latest/*.json\n!matches/\n!matches/*/\n!matches/*/*.json\n!matches/*/parts/\n!matches/*/parts/part-*.json\n!reviews/\n!reviews/*/\n!reviews/*/game-*.json\n`;
 const COLLECTION_ENTRY = `\n## Read the collection\n\nRead [collection/README.md](collection/README.md), then its summary, inventory and\nmanifest. Follow every listed card part; unresolved or truncated data is unknown.\n`;
 const digest = content => createHash('sha256').update(content).digest('hex');
 const locations = dataDir => ({ root: join(resolve(dataDir), 'coach-sync'), state: join(resolve(dataDir), 'coach-sync', 'state.json'), repo: join(resolve(dataDir), 'coach-sync', 'repository') });
 const initialState = () => ({ schema: 'MTGA_LOCAL_SYNC_V1', enabled: false, repository: null, pending: [], synced: {}, last_synced: null });
 
-export class CoachSyncError extends Error {
-  constructor(code, message) { super(message); this.name = 'CoachSyncError'; this.code = code; }
-}
+export { CoachSyncError } from './coach-sync-error.mjs';
 function fail(code, message) { throw new CoachSyncError(code, message); }
 export function syncErrorMessage(error) {
   if (error instanceof CoachSyncError || error?.code === 'MTGA_SYNC_SECURITY') return error.message;
@@ -149,10 +150,11 @@ export async function recoverCoachSyncLock(options = {}) {
   } finally { await removeOwnedLock(recovery, gate); }
 }
 
-function execute(file, args, { cwd, encoding = 'utf8', env = {}, input } = {}) {
+const PUSH_TIMEOUT_MS = 120_000;
+function execute(file, args, { cwd, encoding = 'utf8', env = {}, input, timeout = 30_000 } = {}) {
   return new Promise((yes, no) => {
   const child = execFile(file, args, {
-    cwd, encoding, timeout: 30000, maxBuffer: 512 * 1024 * 1024,
+    cwd, encoding, timeout, maxBuffer: 512 * 1024 * 1024,
     env: { ...process.env, ...env, GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1' },
   }, (error, stdout) => error ? no(error) : yes(stdout));
   child.stdin.on('error', no); child.stdin.end(input);
@@ -164,8 +166,17 @@ function runner(options) {
     try {
       const result = await run(file, args, settings);
       return result && typeof result === 'object' && !(result instanceof Uint8Array) ? result.stdout : result;
-    } catch {
+    } catch (error) {
       // Never interpolate stderr, token-bearing URLs or command arguments.
+      if (file === 'git' && settings?.operation === 'push') {
+        // Node versions report execFile's timeout either as ETIMEDOUT or as
+        // a killed child with SIGTERM. The push has an explicit timeout, so
+        // treat both shapes as an ambiguous remote outcome.
+        const timedOut = error?.code === 'ETIMEDOUT' || (settings?.timeout > 0 && error?.killed === true && error?.signal === 'SIGTERM');
+        fail(timedOut ? 'SYNC_PUSH_TIMEOUT' : 'SYNC_PUSH_FAILED', timedOut
+          ? 'Git push timed out; remote outcome is unverified and pending work was retained. Verify the remote branch before retrying.'
+          : 'Git push failed; remote outcome is unverified and pending work was retained.');
+      }
       fail(file === 'gh' ? 'GITHUB_UNAVAILABLE' : 'GIT_FAILED', file === 'gh'
         ? 'GitHub authentication or network is unavailable; local replay remains usable.'
         : 'Git sync failed or the remote rejected the update; pending work was retained.');
@@ -220,28 +231,8 @@ export async function getCoachHistoryKey(matchId, options = {}) {
   return state.synced[matchId]?.history_key ?? state.pending.find(item => item.match_id === matchId)?.history_key ?? state.history_keys?.[matchId] ?? null;
 }
 
-function bundleFiles(bundle) {
-  const files = new Map(NAMES.map(name => [name, serializeCoachJson(bundle[name.slice(0, -5)])]));
-  if (!HISTORY_KEY.test(bundle.historyKey ?? '') || !SHA.test(bundle.contentHash ?? '') || bundle.manifest.content_hash !== bundle.contentHash || bundle.summary.match_id !== bundle.manifest.match_id) fail('SYNC_BUNDLE', 'Coach bundle identity is invalid.');
-  const parts = bundle.parts instanceof Map ? [...bundle.parts] : Object.entries(bundle.parts ?? {});
-  for (const [name, value] of parts) {
-    if (PART_PATH.exec(name)?.[1] !== bundle.historyKey) fail('SYNC_BUNDLE', 'Coach object part path is invalid.');
-    files.set(name, typeof value === 'string' ? value : serializeCoachJson(value));
-  }
-  validateBundleFiles(new Map([...files].map(([name, content]) => [NAMES.includes(name) ? `latest/${name}` : name, content])));
-  // A secret or machine path must also be rejected if it crosses chunk boundaries.
-  // Resolve from the supplied in-memory parts only, then scan the full semantics.
-  validateBundleFiles(new Map([['latest/coach.json', serializeCoachJson(resolveCoachBundle(bundle.coach, new Map(parts)))]]));
-  const hashedNames = [...files.keys()].filter(name => name !== 'manifest.json');
-  if (Object.keys(bundle.manifest.files ?? {}).length !== hashedNames.length) fail('SYNC_BUNDLE', 'Coach manifest does not cover every bundle file.');
-  for (const name of hashedNames) {
-    if (bundle.manifest.files?.[name]?.sha256 !== digest(files.get(name)) || bundle.manifest.files?.[name]?.bytes !== Buffer.byteLength(files.get(name))) fail('SYNC_BUNDLE', 'Coach bundle integrity check failed.');
-  }
-  if (digest(serializeCoachJson(bundle.manifest.files)) !== bundle.contentHash) fail('SYNC_BUNDLE', 'Coach bundle content hash is invalid.');
-  return files;
-}
 export async function enqueueCoachBundle(bundle, options = {}) {
-  const dataDir = options.dataDir ?? defaultDataDir(), files = bundleFiles(bundle);
+  const dataDir = options.dataDir ?? defaultDataDir(), files = options.computePool ? await options.computePool.run('bundleFiles',{bundle}) : bundleFiles(bundle);
   return locked(dataDir, async () => {
     const state = await readState(dataDir), id = bundle.summary.match_id;
     const stableKey = state.synced[id]?.history_key ?? state.pending.find(item => item.match_id === id)?.history_key;
@@ -286,18 +277,22 @@ async function prepareCheckout(state, meta, run, repoDir, options = {}) {
     '-c', `user.email=${email}`,
     // A real large HTTPS push returned HTTP 400 on this Mac. Use a bounded
     // transport buffer, retain TLS checks, and leave global Git config untouched.
-    ...(args[0] === 'push' ? ['-c', 'http.version=HTTP/1.1', '-c', 'http.postBuffer=67108864'] : []),
+    // Publish only the requested data branch. A user's followTags preference
+    // must not attach local annotated tags whose metadata is not in this guard.
+    ...(args[0] === 'push' ? ['-c', 'http.version=HTTP/1.1', '-c', 'http.postBuffer=67108864', '-c', 'push.followTags=false'] : []),
     ...args], { cwd: repoDir, encoding, input,
     env: { GIT_AUTHOR_NAME: author, GIT_AUTHOR_EMAIL: email, GIT_COMMITTER_NAME: author, GIT_COMMITTER_EMAIL: email,
-      GIT_DIR: join(repoDir, '.git'), GIT_WORK_TREE: repoDir, GIT_INDEX_FILE: join(repoDir, '.git', 'index') } });
+      GIT_DIR: join(repoDir, '.git'), GIT_WORK_TREE: repoDir, GIT_INDEX_FILE: join(repoDir, '.git', 'index') },
+    timeout: args[0] === 'push' ? PUSH_TIMEOUT_MS : undefined, operation: args[0] });
   const remote = `https://github.com/${meta.nameWithOwner}.git`, branch = meta.defaultBranchRef?.name || 'main';
   const historyOptions = { repository: meta.nameWithOwner, branch,
     historyApproval: validateSyncHistoryApproval(state.history_approval, { repository: meta.nameWithOwner, branch }) };
   const validationSession = options.validationSession ?? createSyncValidationSession();
-  const validate = async () => {
+  const validate = async historyRevision => {
     options.onProgress?.({ phase: 'security' });
     return validateStagedRepository(repoDir, { ...historyOptions, validationSession,
-      onValidation: options.onValidation, runGit: (args, settings) => git(args, settings.encoding, settings.input) });
+      ...(historyRevision ? { historyRevision } : {}), computePool:options.computePool,
+      onValidation: options.onValidation, gitBatchFactory: options.gitBatchFactory ? ()=>options.gitBatchFactory({repoDir}) : !options.runCommand ? ()=>createGitBatch({cwd:repoDir,gitArgs:['-c','core.hooksPath=/dev/null','-c','commit.gpgsign=false'],env:{GIT_DIR:join(repoDir,'.git'),GIT_WORK_TREE:repoDir,GIT_INDEX_FILE:join(repoDir,'.git/index'),GIT_TERMINAL_PROMPT:'0',GIT_CONFIG_NOSYSTEM:'1'}}) : undefined, runGit: (args, settings) => git(args, settings.encoding, settings.input) });
   };
   let exists = false;
   try { const stat = await lstat(join(repoDir, '.git')); exists = stat.isDirectory() && !stat.isSymbolicLink(); if (!exists) fail('SYNC_WORKTREE', 'Unexpected sync checkout metadata.'); }
@@ -307,17 +302,17 @@ async function prepareCheckout(state, meta, run, repoDir, options = {}) {
   if (String(await git(['branch', '--show-current'])).trim() !== branch) fail('SYNC_BRANCH', 'Sync checkout is on an unexpected branch.');
   // Check before fetching or merging: even a fast-forward must not overwrite
   // another writer's staged, ignored or otherwise uncommitted files.
-  await validate();
+  if (!options.deferFullHistoryValidation) await validate();
   if (String(await git(['status', '--porcelain', '--untracked-files=all', '--ignored=matching'])).trim()) fail('SYNC_DIRTY', 'Sync checkout contains uncommitted files; no files were overwritten.');
   options.onProgress?.({ phase: 'remote' });
   await git(['fetch', '--prune', 'origin']);
-  await validate();
+  if (!options.deferFullHistoryValidation) await validate();
   if (meta.defaultBranchRef?.name) {
     const localRefs = String(await git(['show-ref']));
     if (localRefs.includes(`refs/heads/${branch}`)) await git(['merge', '--ff-only', `origin/${branch}`]);
     else await git(['checkout', '-B', branch, `origin/${branch}`]);
   }
-  await validate();
+  if (!options.deferFullHistoryValidation) await validate();
   const changes = String(await git(['status', '--porcelain', '--untracked-files=all', '--ignored=matching'])).trim();
   if (changes) fail('SYNC_DIRTY', 'Sync checkout contains uncommitted files; no files were overwritten.');
   return { git, branch, validate };
@@ -346,7 +341,7 @@ export async function assertStagedSyncOwnership(git, namespace) {
 export { locked as withCoachSyncLock, runner as coachSyncRunner, privateRepository as verifyPrivateSyncRepository,
   prepareCheckout as prepareSyncCheckout, locations as coachSyncLocations, readState as readCoachSyncState,
   atomicWrite as atomicSyncWrite, safeOutputParents as safeSyncOutputParents, verifyRemote as verifySyncRemote };
-async function queuedFiles(item, dataDir) {
+async function queuedFiles(item, dataDir, computePool) {
   if (!HISTORY_KEY.test(item.history_key ?? '') || !SHA.test(item.content_hash ?? '')) fail('SYNC_STATE', 'Invalid pending bundle reference.');
   const directory = join(locations(dataDir).root, 'bundles', item.history_key, item.content_hash);
   await safeOutputParents(locations(dataDir).root, `bundles/${item.history_key}/${item.content_hash}/summary.json`);
@@ -376,7 +371,8 @@ async function queuedFiles(item, dataDir) {
     if (!stat.isFile() || stat.isSymbolicLink()) fail('SYNC_WORKTREE', 'Pending object part must be a regular file.');
     const text = await readFile(path, 'utf8'); parts.set(name, text); files.set(name, text);
   }
-  bundleFiles({ ...values, parts, historyKey: item.history_key, contentHash: item.content_hash });
+  const bundle = { ...values, parts, historyKey: item.history_key, contentHash: item.content_hash };
+  if (computePool) await computePool.run('bundleFiles',{bundle}); else bundleFiles(bundle);
   if (values.summary.match_id !== item.match_id || values.summary.started_at !== item.started_at) fail('SYNC_STATE', 'Pending bundle metadata differs from its contents.');
   return { files, summary: values.summary };
 }
@@ -424,7 +420,7 @@ export async function getPublishedCoachIndex(options = {}) {
       history_key: item.history_key, content_hash: item.content_hash, started_at: item.started_at,
     }]));
     await saveState(dataDir, state);
-    return { source: 'remote', index, commit, pending: state.pending };
+    return { source: 'remote', index, commit, pending: state.pending, destination_hash:createHash('sha256').update(`${state.repository}:${branch}`).digest('hex') };
   });
 }
 async function publishPending(state, dataDir, options) {
@@ -442,7 +438,7 @@ async function publishPending(state, dataDir, options) {
   if (index.schema !== 'MTGA_COACH_INDEX_V1' || !Array.isArray(index.matches)) fail('SYNC_INDEX', 'Published match index is invalid.');
   let committed = 0;
   for (const item of [...state.pending].sort((a, b) => -byDate(a, b))) {
-    const { files, summary } = await queuedFiles(item, dataDir);
+    const { files, summary } = await queuedFiles(item, dataDir, options.computePool);
     const previous = index.matches.find(match => match.match_id === item.match_id);
     if (previous && previous.history_key !== item.history_key) fail('SYNC_BUNDLE', 'Published history key differs from the queued bundle; regenerate with its existing stable history key.');
     if (previous?.content_hash === item.content_hash) continue;
@@ -456,7 +452,7 @@ async function publishPending(state, dataDir, options) {
     const writes = new Map([...files].map(([name, text]) => [NAMES.includes(name) ? `${path}/${name}` : name, text]));
     if (index.latest_match_id === item.match_id) for (const name of NAMES) writes.set(`latest/${name}`, files.get(name));
     writes.set('index.json', serializeCoachJson(index)); writes.set('README.md', README + collectionEntry); writes.set('.gitignore', GITIGNORE);
-    validateBundleFiles(writes);
+    if(options.computePool)await options.computePool.run('validateFiles',{files:writes});else validateBundleFiles(writes);
     for (const [path, text] of writes) {
       // Existing symlinks and gitlinks were rejected by the Git-object guard.
       await safeOutputParents(repoDir, path);
@@ -467,7 +463,7 @@ async function publishPending(state, dataDir, options) {
     }
     await git(['add', '--', ...writes.keys()]);
     await assertStagedSyncOwnership(git, 'coach');
-    await validate();
+    if (!options.deferFullHistoryValidation) await validate();
     if (String(await git(['diff', '--cached', '--name-only'])).trim()) {
       await git(['commit', '-m', `${previous ? 'Improve replay coverage' : 'Add replay'} ${item.match_id}`]); committed++;
     }
@@ -475,14 +471,50 @@ async function publishPending(state, dataDir, options) {
   // Recheck visibility and outgoing history immediately before the network mutation.
   options.onProgress?.({ phase: 'remote' });
   await privateRepository(state.repository, run);
-  await verifyRemote(git, meta.nameWithOwner);
-  await validate();
-  await assertOutgoingSyncOwnership(git, branch, 'coach', Boolean(meta.defaultBranchRef?.name));
-  const remoteCount = meta.defaultBranchRef?.name ? Number(String(await git(['rev-list', '--count', `origin/${branch}..HEAD`])).trim()) : 1;
-  if (remoteCount) { options.onProgress?.({ phase: 'uploading' }); await git(['push', '--set-upstream', 'origin', branch]); }
+  const revision = String(await git(['rev-parse', 'HEAD'])).trim();
+  if (!/^[0-9a-f]{40,64}$/.test(revision)) fail('SYNC_REVISION', 'Local sync revision could not be verified.');
+  const branchRevision = String(await git(['rev-parse', `refs/heads/${branch}`])).trim();
+  if (branchRevision !== revision) fail('SYNC_HEAD_CHANGED', 'Local sync branch changed before the upload safety check.');
+  await validate(revision);
+  const checkedHead = String(await git(['rev-parse', 'HEAD'])).trim();
+  const checkedBranch = String(await git(['rev-parse', `refs/heads/${branch}`])).trim();
+  if (checkedHead !== revision || checkedBranch !== revision) fail('SYNC_HEAD_CHANGED', 'Local sync branch changed during the upload safety check.');
+  if (String(await git(['status', '--porcelain', '--untracked-files=all', '--ignored=matching'])).trim()) {
+    fail('SYNC_WORKTREE', 'Sync checkout changed during the upload safety check.');
+  }
+  const finalMeta = await privateRepository(state.repository, run);
+  if (finalMeta.nameWithOwner !== meta.nameWithOwner || (finalMeta.defaultBranchRef?.name || 'main') !== branch) {
+    fail('SYNC_BRANCH', 'Verified repository or default branch changed during the upload safety check.');
+  }
+  await verifyRemote(git, finalMeta.nameWithOwner);
+  await assertOutgoingSyncOwnership(git, branch, 'coach', Boolean(finalMeta.defaultBranchRef?.name));
+  const remoteCount = meta.defaultBranchRef?.name ? Number(String(await git(['rev-list', '--count', `origin/${branch}..${revision}`])).trim()) : 1;
+  options.onProgress?.({ phase: 'uploading', checkpoint: { commit: revision,
+    destination_hash: createHash('sha256').update(`${state.repository}:${branch}`).digest('hex') } });
+  let pushError;
+  if (remoteCount) {
+    try { await git(['push', '--set-upstream', 'origin', `${revision}:refs/heads/${branch}`]); }
+    catch (error) { pushError = error; }
+  }
+  // The exact revision was scanned before push. A fresh fetch and exact remote
+  // ref check confirms those same content-addressed objects without rescanning.
+  try {
+    const confirmationMeta = await privateRepository(state.repository, run);
+    if (confirmationMeta.nameWithOwner !== meta.nameWithOwner || (confirmationMeta.defaultBranchRef?.name || 'main') !== branch) {
+      fail('SYNC_REMOTE_VERIFY', 'Verified remote target changed before publication could be confirmed.');
+    }
+    await verifyRemote(git, confirmationMeta.nameWithOwner);
+    const remoteRef = `refs/heads/${branch}`;
+    const remoteOutput = String(await git(['ls-remote', '--heads', 'origin', remoteRef])).trim();
+    const remoteLine = remoteOutput.split('\n').find(line => line.split(/\s+/)[1] === remoteRef);
+    if (!remoteLine || remoteLine.split(/\s+/)[0] !== revision) {
+      fail('SYNC_REMOTE_VERIFY', 'Remote publication could not be confirmed.');
+    }
+  } catch (error) { throw pushError ?? error; }
+
   for (const item of state.pending) state.synced[item.match_id] = { content_hash: item.content_hash, history_key: item.history_key, started_at: item.started_at };
   state.pending = []; state.last_error = null; state.visibility = 'PRIVATE'; state.verified_at = new Date().toISOString();
-  state.last_synced = { match_id: index.latest_match_id, at: new Date().toISOString(), commit: String(await git(['rev-parse', 'HEAD'])).trim() };
+  state.last_synced = { match_id: index.latest_match_id, at: new Date().toISOString(), commit: revision };
   await saveState(dataDir, state);
   return { synced: true, committed, pending: 0, repository: state.repository, last_synced: state.last_synced, index };
 }
@@ -494,7 +526,8 @@ export async function syncCoachBundles(options = {}) {
     if (!state.pending.length) return { synced: true, duplicate: true, committed: 0, pending: 0, repository: state.repository, last_synced: state.last_synced };
     try { return await publishPending(state, dataDir, options); }
     catch (error) {
-      state.last_error = { code: error.code ?? 'SYNC_FAILED', message: syncErrorMessage(error), at: new Date().toISOString() };
+      state.last_error = { code: error.code ?? 'SYNC_FAILED', message: syncErrorMessage(error), at: new Date().toISOString(),
+        ...(error.code === 'SYNC_PUSH_TIMEOUT' || error.code === 'SYNC_PUSH_FAILED' ? { remote_outcome: 'unverified' } : {}) };
       await saveState(dataDir, state); throw error;
     }
   });

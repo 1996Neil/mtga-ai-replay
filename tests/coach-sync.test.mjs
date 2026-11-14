@@ -65,9 +65,10 @@ async function harness(t) {
   t.after(() => rm(directory, { recursive: true, force: true }));
   const dataDir = join(directory, 'local-data'), bare = join(directory, 'remote.git');
   await execute('git', ['init', '--bare', '-b', 'main', bare], { env });
-  const control = { visibility: 'PRIVATE', offline: false, unavailableGh: false, rejectPush: false, calls: [], visibilityChecks: 0, publicAtCheck: Infinity, gitEnv: {} };
-  const runCommand = async (file, args, { cwd, encoding = 'utf8', env: commandEnv = {} } = {}) => {
-    control.calls.push({ file, args: [...args] });
+  const control = { visibility: 'PRIVATE', offline: false, unavailableGh: false, rejectPush: false, losePushResponse: false,
+    pushFailure: null, calls: [], visibilityChecks: 0, publicAtCheck: Infinity, gitEnv: {}, beforeGit: null };
+  const runCommand = async (file, args, { cwd, encoding = 'utf8', env: commandEnv = {}, input, timeout } = {}) => {
+    control.calls.push({ file, args: [...args], timeout });
     if (file === 'gh') {
       assert.deepEqual(args.slice(0, 3), ['repo', 'view', REPOSITORY]);
       control.visibilityChecks++;
@@ -77,7 +78,11 @@ async function harness(t) {
       return JSON.stringify({ nameWithOwner: REPOSITORY, visibility: control.visibilityChecks >= control.publicAtCheck ? 'PUBLIC' : control.visibility, url: `https://github.com/${REPOSITORY}`, defaultBranchRef });
     }
     assert.equal(file, 'git');
-    const networkCommand = args.find(value => value === 'fetch' || value === 'push');
+    const networkCommand = args.find(value => value === 'fetch' || value === 'push' || value === 'ls-remote');
+    await control.beforeGit?.({ cwd, args, networkCommand });
+    if (networkCommand === 'push' && control.pushFailure === 'timeout-before') {
+      const error = new Error('Command was killed with SIGTERM ghp_SyntheticSecretMustNotEscape'); error.code = null; error.signal = 'SIGTERM'; error.killed = true; throw error;
+    }
     if (networkCommand && (control.offline || (control.rejectPush && networkCommand === 'push'))) throw new Error('fatal ghp_SyntheticSecretMustNotEscape https://token@example.invalid /Users/synthetic/private.log');
     if (networkCommand) {
       const remote = await execute('git', ['remote', 'get-url', '--all', ...(networkCommand === 'push' ? ['--push'] : []), 'origin'], { cwd, env });
@@ -86,7 +91,17 @@ async function harness(t) {
     // The stored origin stays canonical. Only network commands get a per-command
     // rewrite to a fresh local bare repository; no synthetic data reaches GitHub.
     const routed = networkCommand ? ['-c', `url.${bare}.insteadOf=${REMOTE_URL}`, ...args] : args;
-    return execute(file, routed, { cwd, encoding, env: { ...process.env, ...env, ...control.gitEnv, ...commandEnv }, maxBuffer: 32 * 1024 * 1024 });
+    return new Promise((resolve, reject) => {
+      const child = execFile(file, routed, { cwd, encoding, env: { ...process.env, ...env, ...control.gitEnv, ...commandEnv },
+        timeout, maxBuffer: 32 * 1024 * 1024 }, (error, stdout, stderr) => {
+        if (error) reject(error);
+        else if (networkCommand === 'push' && control.pushFailure === 'timeout-after') {
+          const timeoutError = new Error('Command was killed with SIGTERM ghp_SyntheticSecretMustNotEscape'); timeoutError.code = null; timeoutError.signal = 'SIGTERM'; timeoutError.killed = true; reject(timeoutError);
+        } else if (networkCommand === 'push' && control.losePushResponse) reject(Error('Synthetic lost push acknowledgement'));
+        else resolve({ stdout, stderr });
+      });
+      child.stdin.on('error', reject); child.stdin.end(input);
+    });
   };
   const options = { dataDir, runCommand };
   const published = async path => (await execute('git', ['--git-dir', bare, 'show', `HEAD:${path}`], { env })).stdout;
@@ -113,11 +128,22 @@ test('running Viewer discovers two later log matches without restart and continu
   await writeFile(join(viewerDir, 'index.html'), '<title>Synthetic sync integration</title>');
   const logPath = join(logDir, 'Player.log');
   await writeFile(logPath, syntheticLog([['synthetic-A', 0]]));
-  const options = { ...h.options, logDir };
-  assert.equal((await syncReplayHistory(options)).published, 1);
+  // Bind discovery to synthetic files even when this test runs on an Arena Mac.
+  const cardDb = join(h.dataDir, 'synthetic-cards.mtga'), { DatabaseSync } = await import('node:sqlite');
+  const database = new DatabaseSync(cardDb);
+  database.exec('CREATE TABLE Cards (GrpId INTEGER, TitleId INTEGER); CREATE TABLE Localizations_enUS (LocId INTEGER, Formatted INTEGER, Loc TEXT);');
+  database.close();
+  const options = { ...h.options, logDir, cardDb, displayNamesZh: new Map(), fetchFn: async () => { throw new Error('Synthetic test forbids metadata network'); } };
   const running = await startReplayServer({ dataDir: h.dataDir, viewerDir, displayNamesZh: new Map(),
+    localHistoryOptions: { logDir, cardDb, pollIntervalMs: 60000, settleMs: 0, minImportIntervalMs: 0 },
+    notifyTask: async () => ({ attempted: false, accepted: false }),
     syncWorkflow: request => syncReplayHistory({ ...options, ...request }) });
   t.after(() => running.close());
+  // The independent observer imports; upload consumes the current archive.
+  // Drive its ticks explicitly so the integration does not depend on wall time.
+  assert.equal((await running.localHistory.check({ immediate: true })).status, 'succeeded');
+  assert.equal((await listReplays({ ...h.options, limit: null })).length, 1);
+  assert.equal((await syncReplayHistory(options)).published, 1);
   const post = () => fetch(running.url + 'api/sync', { method: 'POST', headers: { Origin: new URL(running.url).origin, 'X-MTGA-Replay-Action': 'sync' } }).then(r => r.json());
   async function finish() {
     for (let i = 0; i < 1200; i++) {
@@ -132,16 +158,20 @@ test('running Viewer discovers two later log matches without restart and continu
   assert.equal(unchanged.result.published, 0); assert.equal(await h.commits(), commits);
   // A newly rotated file did not exist when the server started.
   await writeFile(join(logDir, 'Player-prev.log'), syntheticLog([['synthetic-B', 1], ['synthetic-C', 2]]));
+  assert.equal((await running.localHistory.check({ immediate: true })).status, 'succeeded');
+  assert.equal((await listReplays({ ...h.options, limit: null })).length, 3);
   const [first, duplicate] = await Promise.all([post(), post()]); assert.equal(first.id, duplicate.id);
   const added = await finish(); assert.equal(added.status, 'succeeded');
   assert.equal(added.result.local_matches, 3); assert.equal(added.result.already_published, 1);
-  assert.equal(added.result.missing, 2); assert.equal(added.result.published, 2); assert.equal(added.result.new_matches, 2);
+  assert.equal(added.result.missing, 2); assert.equal(added.result.published, 2); assert.equal(added.result.new_matches, 0);
   assert.equal(added.result.github_matches, 3);
   assert.deepEqual((await fetch(running.url + 'api/matches').then(r => r.json())).map(m => m.id), ['synthetic-C', 'synthetic-B', 'synthetic-A']);
   assert.equal(JSON.parse(await h.published('index.json')).matches.length, 3);
   const bad = catalogReplay('synthetic-bad', 4); bad.games[0].steps = [];
   await archiveReplays([bad], h.options);
   await writeFile(logPath, syntheticLog([['synthetic-A', 0], ['synthetic-D', 3]]));
+  assert.equal((await running.localHistory.check({ immediate: true })).status, 'succeeded');
+  assert.equal((await listReplays({ ...h.options, limit: null })).length, 5);
   await post(); const partial = await finish();
   assert.equal(partial.status, 'partial'); assert.equal(partial.result.published, 1);
   assert.equal(partial.result.failed, 1); assert.equal(partial.result.failures[0].match_id, 'synthetic-bad');
@@ -335,7 +365,7 @@ test('offline fetch retains queued bytes and retries successfully', async t => {
 test('a rejected push leaves its local commit pending and retries without another commit', async t => {
   const h = await harness(t); await configureCoachSync(REPOSITORY, h.options); const first = await bundle();
   await enqueueCoachBundle(first, h.options); h.control.rejectPush = true;
-  await assert.rejects(syncCoachBundles(h.options), error => error.code === 'GIT_FAILED');
+  await assert.rejects(syncCoachBundles(h.options), error => error.code === 'SYNC_PUSH_FAILED');
   assert.equal(await h.commits(), 0); assert.equal((await getCoachSyncStatus({ ...h.options, verify: false })).pending, 1);
   h.control.rejectPush = false; const result = await syncCoachBundles(h.options);
   assert.equal(result.committed, 0); assert.equal(await h.commits(), 1);
@@ -469,7 +499,124 @@ test('SQLite-only pending archives retry a rejected push with fixed identities a
   assert.equal((await validateStagedRepository(h.checkout)).ok, true);
 });
 
-test('incoming personal research commits are still rejected before any new replay is queued or committed', async t => {
+test('catalog performs one final security scan on the exact revision it pushes', async t => {
+  const h = await harness(t); await configureCoachSync(REPOSITORY, h.options);
+  await archiveReplays([catalogReplay('synthetic-pinned-A', 1), catalogReplay('synthetic-pinned-B', 2)], h.options);
+  const scans = [], result = await syncCoachCatalog({ ...h.options, onValidation: value => scans.push(value) });
+  assert.equal(result.published, 2); assert.equal(scans.length, 1);
+  const push = h.control.calls.find(call => call.file === 'git' && call.args.includes('push'));
+  assert.ok(push); const [revision, ref] = push.args.at(-1).split(':');
+  assert.match(revision, /^[0-9a-f]{40,64}$/); assert.equal(ref, 'refs/heads/main');
+  assert.equal(revision, (await getCoachSyncStatus({ ...h.options, verify: false })).last_synced.commit);
+  assert.equal((await execute('git', ['--git-dir', h.bare, 'rev-parse', 'refs/heads/main'], { env })).stdout.trim(), revision);
+  assert.equal(await h.commits(), 2);
+});
+
+test('remote publication confirmation reads the server ref despite an excluding fetch refspec', async t => {
+  const h = await harness(t); await configureCoachSync(REPOSITORY, h.options);
+  await enqueueCoachBundle(await bundle({ id: 'synthetic-refspec-primer' }), h.options);
+  assert.equal((await syncCoachBundles(h.options)).synced, true);
+  await enqueueCoachBundle(await bundle({ id: 'synthetic-excluded-fetch-refspec' }), h.options);
+  await execute('git', ['config', '--replace-all', 'remote.origin.fetch', '^refs/heads/main'], { cwd: h.checkout, env });
+  const result = await syncCoachBundles(h.options);
+  assert.equal(result.synced, true); assert.equal(result.pending, 0);
+  const confirmation = h.control.calls.find(call => call.file === 'git' && call.args.includes('ls-remote'));
+  assert.deepEqual(confirmation.args.slice(-4), ['ls-remote', '--heads', 'origin', 'refs/heads/main']);
+  assert.equal((await execute('git', ['--git-dir', h.bare, 'rev-parse', 'refs/heads/main'], { env })).stdout.trim(), result.last_synced.commit);
+});
+
+test('push timeout has a safe code, preserves pending work, and reconciles acceptance without duplicate push', async t => {
+  const h = await harness(t); await configureCoachSync(REPOSITORY, h.options);
+  await enqueueCoachBundle(await bundle({ id: 'synthetic-timeout-before' }), h.options);
+  h.control.pushFailure = 'timeout-before';
+  await assert.rejects(syncCoachBundles(h.options), error => error.code === 'SYNC_PUSH_TIMEOUT');
+  const failed = await getCoachSyncStatus({ ...h.options, verify: false });
+  assert.equal(failed.pending, 1); assert.equal(failed.last_error.code, 'SYNC_PUSH_TIMEOUT');
+  assert.equal(failed.last_error.remote_outcome, 'unverified');
+  assert.match(failed.last_error.message, /remote outcome is unverified/);
+  assert.doesNotMatch(failed.last_error.message, /ghp_|token@|private\.log/);
+  assert.equal(Number((await execute('git', ['rev-list', '--count', 'HEAD'], { cwd: h.checkout, env })).stdout.trim()), 1);
+  assert.equal(await h.commits(), 0);
+  const push = h.control.calls.find(call => call.file === 'git' && call.args.includes('push'));
+  assert.equal(push.timeout, 120_000);
+  h.control.pushFailure = null;
+  const retry = await syncCoachBundles(h.options);
+  assert.equal(retry.committed, 0); assert.equal(retry.pending, 0); assert.equal(await h.commits(), 1);
+  assert.equal((await getCoachSyncStatus({ ...h.options, verify: false })).pending, 0);
+
+  const ambiguous = await harness(t); await configureCoachSync(REPOSITORY, ambiguous.options);
+  await enqueueCoachBundle(await bundle({ id: 'synthetic-timeout-after' }), ambiguous.options);
+  ambiguous.control.pushFailure = 'timeout-after';
+  const reconciled = await syncCoachBundles(ambiguous.options);
+  assert.equal(reconciled.synced, true); assert.equal(reconciled.pending, 0);
+  assert.equal(ambiguous.control.calls.filter(call => call.file === 'git' && call.args.includes('push')).length, 1);
+  assert.equal(await ambiguous.commits(), 1);
+});
+
+test('catalog retry reuses a matching pending bundle but reruns the final fixed-revision security gate', async t => {
+  const h = await harness(t); await configureCoachSync(REPOSITORY, h.options);
+  const replay = catalogReplay('synthetic-reuse-pending', 3); await archiveReplays([replay], h.options);
+  const options = { ...h.options, displayNamesZh: new Map(), cardDb: null };
+  h.control.rejectPush = true;
+  const firstPhases = [];
+  const first = await syncCoachCatalog({ ...options, onProgress: progress => firstPhases.push(progress.phase) });
+  assert.ok(first.sync_error); assert.ok(firstPhases.includes('cards')); assert.ok(firstPhases.includes('generating'));
+  assert.equal((await getCoachSyncStatus({ ...options, verify: false })).pending, 1);
+  const localCommits = Number((await execute('git', ['rev-list', '--count', 'HEAD'], { cwd: h.checkout, env })).stdout.trim());
+  assert.equal(localCommits, 1); assert.equal(await h.commits(), 0);
+  h.control.rejectPush = false;
+  const retryPhases = [], scans = [];
+  const retried = await syncCoachCatalog({ ...options, onProgress: progress => retryPhases.push(progress.phase), onValidation: value => scans.push(value) });
+  assert.equal(retried.published, 1); assert.equal(retried.committed, 0); assert.equal(retried.pending, 0);
+  assert.equal(retryPhases.includes('cards'), false); assert.equal(retryPhases.includes('generating'), false);
+  assert.ok(retryPhases.includes('security')); assert.equal(scans.length, 1);
+  const push = h.control.calls.filter(call => call.file === 'git' && call.args.includes('push')).at(-1);
+  assert.equal(push.args.at(-1).split(':')[0], (await execute('git', ['rev-parse', 'HEAD'], { cwd: h.checkout, env })).stdout.trim());
+  assert.equal(Number((await execute('git', ['rev-list', '--count', 'HEAD'], { cwd: h.checkout, env })).stdout.trim()), localCommits);
+  assert.equal(await h.commits(), 1);
+});
+
+test('branch movement during the pinned scan blocks a mixed-revision push', async t => {
+  const h = await harness(t); await configureCoachSync(REPOSITORY, h.options);
+  await archiveReplays([catalogReplay('synthetic-head-race', 1)], h.options);
+  let headReads = 0, injected = false;
+  h.control.beforeGit = async ({ cwd, args }) => {
+    if (!injected && args.includes('rev-parse') && args.at(-1) === 'HEAD' && ++headReads === 2) {
+      injected = true;
+      await writeFile(join(cwd, 'README.md'), 'Synthetic safe commit during scan race.\n');
+      await execute('git', ['add', '--', 'README.md'], { cwd, env });
+      const fixed = ['-c', 'user.name=mtga-replay-coach', '-c', 'user.email=mtga-replay-coach@users.noreply.github.com', '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null'];
+      await execute('git', [...fixed, 'commit', '--quiet', '-m', 'Synthetic scan race'], { cwd, env });
+    }
+  };
+  const result = await syncCoachCatalog(h.options);
+  assert.match(result.sync_error, /branch changed/i); assert.equal(injected, true);
+  assert.equal(await h.commits(), 0); assert.equal((await getCoachSyncStatus({ ...h.options, verify: false })).pending, 1);
+  assert.equal(h.control.calls.some(call => call.file === 'git' && call.args.includes('push')), false);
+});
+
+test('deleted private historical payload still blocks the exact final revision', async t => {
+  const h = await harness(t); await configureCoachSync(REPOSITORY, h.options);
+  await archiveReplays([catalogReplay('synthetic-history-sentinel', 1)], h.options); await syncCoachCatalog(h.options);
+  const historical = 'matches/synthetic-history-sentinel/summary.json';
+  await mkdir(join(h.checkout, 'matches', 'synthetic-history-sentinel'), { recursive: true });
+  await writeFile(join(h.checkout, historical), '{\"internalAccountId\":\"SyntheticPrivateSentinel\"}');
+  await execute('git', ['add', '--', historical], { cwd: h.checkout, env });
+  const fixed = ['-c', 'user.name=mtga-replay-coach', '-c', 'user.email=mtga-replay-coach@users.noreply.github.com', '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null'];
+  await execute('git', [...fixed, 'commit', '--quiet', '-m', 'Synthetic safe identity'], { cwd: h.checkout, env });
+  await execute('git', ['rm', '--quiet', '--', historical], { cwd: h.checkout, env });
+  await execute('git', [...fixed, 'commit', '--quiet', '-m', 'Remove synthetic historical fixture'], { cwd: h.checkout, env });
+  await archiveReplays([catalogReplay('synthetic-history-pending', 2)], h.options);
+  const pushesBefore = h.control.calls.filter(call => call.file === 'git' && call.args.includes('push')).length;
+  const result = await syncCoachCatalog(h.options);
+  assert.ok(result.sync_error);
+  assert.equal((await getCoachSyncStatus({ ...h.options, verify: false })).pending, 1);
+  assert.equal(h.control.calls.filter(call => call.file === 'git' && call.args.includes('push')).length, pushesBefore);
+  assert.equal((await execute('git', ['rev-list', '--count', 'origin/main..HEAD'], { cwd: h.checkout, env })).stdout.trim(), '3');
+  assert.equal(await h.commits(), 1);
+});
+
+test('incoming personal research commits are rejected by the final scan before push', async t => {
   const h = await harness(t); await configureCoachSync(REPOSITORY, h.options);
   await archiveReplays([catalogReplay('synthetic-before-research', 1)], h.options); await syncCoachCatalog(h.options);
   const writer = join(h.dataDir, 'research-writer');
@@ -483,11 +630,14 @@ test('incoming personal research commits are still rejected before any new repla
   await execute('git', ['push', 'origin', 'main'], { cwd: writer, env });
   await archiveReplays([catalogReplay('synthetic-after-research', 2)], h.options);
   const localHead = (await execute('git', ['rev-parse', 'HEAD'], { cwd: h.checkout, env })).stdout.trim();
-  await assert.rejects(syncCoachCatalog(h.options), error => error.code === 'MTGA_SYNC_SECURITY' && error.rule === 'commit-personal-identity');
-  assert.equal((await getCoachSyncStatus({ ...h.options, verify: false })).pending, 0);
-  assert.equal((await execute('git', ['rev-parse', 'HEAD'], { cwd: h.checkout, env })).stdout.trim(), localHead);
+  const pushesBefore = h.control.calls.filter(call => call.file === 'git' && call.args.includes('push')).length;
+  const result = await syncCoachCatalog(h.options);
+  assert.ok(result.sync_error);
+  assert.equal((await getCoachSyncStatus({ ...h.options, verify: false })).pending, 1);
+  assert.notEqual((await execute('git', ['rev-parse', 'HEAD'], { cwd: h.checkout, env })).stdout.trim(), localHead);
   assert.equal((await listReplays({ ...h.options, limit: null })).length, 2);
   assert.equal(JSON.parse(await h.published('index.json')).matches.length, 1);
+  assert.equal(h.control.calls.filter(call => call.file === 'git' && call.args.includes('push')).length, pushesBefore);
 });
 
 test('explicit local approval preserves existing remote research history while backfilling SQLite and remaining idempotent', async t => {
@@ -508,7 +658,9 @@ test('explicit local approval preserves existing remote research history while b
   const approval = { schema: 'MTGA_SYNC_HISTORY_APPROVAL_V1', approved: true, repository: REPOSITORY, branch: 'main',
     approved_at: '2026-10-05T00:00:00.000Z', commits: [sha], files: [{ path: document, blob, mode: '100644', sha256: digest(text), bytes: Buffer.byteLength(text) }] };
   await archiveReplays([catalogReplay('synthetic-after-approved-history', 2)], h.options);
-  await assert.rejects(syncCoachCatalog(h.options), e => e.rule === 'commit-personal-identity');
+  const unapproved = await syncCoachCatalog(h.options);
+  assert.ok(unapproved.sync_error);
+  assert.equal((await getCoachSyncStatus({ ...h.options, verify: false })).pending, 1);
   await assert.rejects(approveCoachSyncHistory({ ...approval, repository: 'another/private' }, h.options), e => e.rule === 'invalid-history-approval');
   await approveCoachSyncHistory(approval, h.options);
   assert.deepEqual(JSON.parse(await readFile(join(h.dataDir, 'coach-sync/state.json'), 'utf8')).history_approval, approval);
@@ -558,6 +710,46 @@ test('a second origin push URL is rejected before fetch or push even when the fi
   assert.equal((await getCoachSyncStatus({ ...h.options, verify: false })).pending, 1);
 });
 
+test('an inherited followTags setting cannot publish uninspected annotated tag metadata', async t => {
+  const h = await harness(t); await configureCoachSync(REPOSITORY, h.options);
+  await enqueueCoachBundle(await bundle(), h.options);
+  let injected = false;
+  const options = { ...h.options, runCommand: async (file, args, settings) => {
+    const result = await h.options.runCommand(file, args, settings);
+    if (!injected && file === 'git' && args.includes('commit')) {
+      injected = true;
+      await execute('git', ['config', '--local', 'push.followTags', 'true'], { cwd: h.checkout, env });
+      await execute('git', ['-c', 'user.name=Synthetic Tagger', '-c', 'user.email=synthetic-personal@example.invalid',
+        'tag', '-a', 'synthetic-private-tag', '-m', 'ghp_SYNTHETIC_TAG_SECRET'], { cwd: h.checkout, env });
+    }
+    return result;
+  } };
+  const result = await syncCoachBundles(options); assert.equal(result.synced, true); assert.equal(injected, true);
+  assert.equal(await h.commits(), 1);
+  assert.equal((await execute('git', ['--git-dir', h.bare, 'for-each-ref', '--format=%(refname)', 'refs/tags'], { env })).stdout, '');
+  assert.equal((await execute('git', ['config', '--local', '--get', 'push.followTags'], { cwd: h.checkout, env })).stdout.trim(), 'true');
+});
+
+test('a post-stage private payload is rechecked before any commit or push and remains pending', async t => {
+  const h = await harness(t); await configureCoachSync(REPOSITORY, h.options);
+  await enqueueCoachBundle(await bundle(), h.options); await syncCoachBundles(h.options);
+  await enqueueCoachBundle(await bundle({ richer: true }), h.options);
+  const callCount = h.control.calls.length; let injected = false;
+  const options = { ...h.options, runCommand: async (file, args, settings) => {
+    const result = await h.options.runCommand(file, args, settings);
+    if (!injected && file === 'git' && args.includes('add') && args.includes('--')) {
+      injected = true;
+      await writeFile(join(h.checkout, 'latest/coach.json'), '{"password":"synthetic-post-stage-secret"}');
+      await execute('git', ['add', '--', 'latest/coach.json'], { cwd: h.checkout, env });
+    }
+    return result;
+  } };
+  await assert.rejects(syncCoachBundles(options), error => error.code === 'MTGA_SYNC_SECURITY' && error.rule === 'credential-key');
+  assert.equal(injected, true); assert.equal(await h.commits(), 1);
+  assert.equal(h.control.calls.slice(callCount).some(call => call.args.includes('commit') || call.args.includes('push')), false);
+  assert.equal((await getCoachSyncStatus({ ...h.options, verify: false })).pending, 1);
+});
+
 test('multipart enqueue persists all parts, retries fetch/push failures, stages exact history paths and copies only four latest files', async t => {
   const h = await harness(t); await configureCoachSync(REPOSITORY, h.options); const value = await multipartBundle();
   await enqueueCoachBundle(value, h.options);
@@ -566,7 +758,7 @@ test('multipart enqueue persists all parts, retries fetch/push failures, stages 
   await assert.rejects(syncCoachBundles(h.options), error => error.code === 'GIT_FAILED');
   assert.equal((await getCoachSyncStatus({ ...h.options, verify: false })).pending, 1); assert.equal(await h.commits(), 0);
   h.control.offline = false; h.control.rejectPush = true;
-  await assert.rejects(syncCoachBundles(h.options), error => error.code === 'GIT_FAILED');
+  await assert.rejects(syncCoachBundles(h.options), error => error.code === 'SYNC_PUSH_FAILED');
   assert.equal((await getCoachSyncStatus({ ...h.options, verify: false })).pending, 1); assert.equal(await h.commits(), 0);
   for (const [path, part] of value.parts) assert.equal(await readFile(join(h.checkout, path), 'utf8'), partText(part));
   const commitsBeforeRetry = Number((await execute('git', ['rev-list', '--count', 'HEAD'], { cwd: h.checkout, env })).stdout.trim());
@@ -689,6 +881,8 @@ test('actual multipart codec survives enqueue, Git staging, publish and lossless
 });
 
 test('individually safe string chunks cannot conceal a credential after multipart resolution', async t => {
+  const {createComputePool}=await import('../src/compute-pool.mjs');
+  const pool=createComputePool({size:2});t.after(()=>pool.close());
   const h = await harness(t); await configureCoachSync(REPOSITORY, h.options); const value = await multipartBundle();
   const [firstPath, secondPath] = value.parts.keys();
   value.parts = new Map([
@@ -704,6 +898,14 @@ test('individually safe string chunks cannot conceal a credential after multipar
   await assert.rejects(enqueueCoachBundle(value, h.options), error => {
     assert.equal(error.code, 'MTGA_SYNC_SECURITY'); assert.doesNotMatch(error.message, /SyntheticSecret/); return true;
   });
+  await assert.rejects(enqueueCoachBundle(value, {...h.options,computePool:pool}),error=>{
+    assert.equal(error.code,'MTGA_SYNC_SECURITY');assert.doesNotMatch(error.message,/SyntheticSecret/);return true;
+  });
   assert.equal((await getCoachSyncStatus({ ...h.options, verify: false })).pending, 0); assert.equal(await h.commits(), 0);
   assert.equal(h.control.calls.some(call => call.file === 'git'), false);
+});
+
+test('push success with lost acknowledgement is freshly reconciled without another commit or upload',async t=>{
+ const h=await harness(t);await configureCoachSync(REPOSITORY,h.options);const value=await bundle();await enqueueCoachBundle(value,h.options);h.control.losePushResponse=true;
+ const result=await syncCoachBundles(h.options);assert.equal(result.synced,true);assert.equal(result.pending,0);assert.equal(await h.commits(),1);assert.equal(h.control.calls.filter(call=>call.args.includes('push')).length,1);assert.equal(await h.published('latest/cards.json'),serializeCoachJson(value.cards));
 });

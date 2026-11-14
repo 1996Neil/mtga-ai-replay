@@ -1,0 +1,63 @@
+{
+  "status": "stale",
+  "current_source_content_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "report": {
+    "schema": "MTGA_AI_REVIEW_V1",
+    "match_id": "synthetic-match-one",
+    "game_number": 1,
+    "source_content_hash": "1cb57e528d13cbeba862f37ef6b46959d04fd219455c4f570f1d5646af43ad39",
+    "policy_version": "cloud-visible/1",
+    "generated_at": "2026-10-15T00:00:00.000Z",
+    "generator": {
+      "name": "chatgpt-cloud-agent",
+      "version": "1.0"
+    },
+    "provenance": {
+      "source_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "evidence": "published-player-perspective",
+      "context_sources": [
+        "本局已发布证据"
+      ],
+      "summary_may_use_future": true
+    },
+    "coverage": {
+      "scope": "sampled",
+      "actions_total": 2,
+      "states_resolved": 2,
+      "inspected": [
+        {
+          "anchor": "T1-A1",
+          "boundary": "after"
+        }
+      ],
+      "limitations": [
+        "仅检查所列节点；未检查动作不代表正确。"
+      ]
+    },
+    "summary": {
+      "headline": "合成协议验收",
+      "overview": "本报告只用于隔离协议测试。",
+      "strengths": [],
+      "improvements": [],
+      "limitations": [
+        "不是真实模型分析。"
+      ]
+    },
+    "notes": [
+      {
+        "anchor": "T1-A1",
+        "boundary": "after",
+        "severity": "tip",
+        "confidence": "low",
+        "title": "检查当前资源",
+        "observation": "当前局面有可见地牌。",
+        "suggestion": "评估下一回合资源。",
+        "rationale": "依据当前已观测局面。",
+        "limitation": "不推断隐藏手牌或合法行动。",
+        "cards": [
+          "Forest"
+        ]
+      }
+    ]
+  }
+}

@@ -18,7 +18,7 @@ export async function startCloudReplay({ port = 8787 } = {}) {
     const { replays } = await buildReplays(syntheticMatchRecords('synthetic-cloud-match'));
     await archiveReplays(replays, { dataDir });
     await mkdir(viewerDir);
-    await writeFile(join(viewerDir, 'index.html'), '<!doctype html><meta charset="utf-8"><title>MTGA source API</title><h1>MTGA synthetic development API</h1><p>Disposable synthetic replay. Restricted Viewer source is excluded.</p><a href="/api/health">Health</a> <a href="/api/matches">Matches</a>');
+    await writeFile(join(viewerDir, 'index.html'), '<!doctype html><meta charset="utf-8"><title>MTGA source API</title><h1>MTGA synthetic development API</h1><p>Disposable synthetic API; the complete Viewer is built separately.</p><a href="/api/health">Health</a> <a href="/api/matches">Matches</a>');
     const running = await startReplayServer({ dataDir, viewerDir, port, writeInfo: false, displayNamesZh: new Map(),
       fetchFn: async () => { throw new Error('External card requests are disabled in cloud development.'); }, enableReplaySync: false, enableCollection: false, observeLocalLogs: false });
     let closed = false;

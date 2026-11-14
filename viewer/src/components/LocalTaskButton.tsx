@@ -39,13 +39,19 @@ export function LocalTaskButton<Result>({ path, action, capability, label, descr
     return () => { abort.abort(); controller.current?.abort(); busy.current = false; };
   }, [client, capability]);
   async function start(retry = false) {
-    if (busy.current) return;
+    if (busy.current || job.status==='needs_recovery') return;
+    if(action==='collection-update'&&!retry&&!window.confirm('当前读取器无法自动识别账户。请核对 Arena 已登录的是预期账户；确认后将读取并更新收藏。是否继续？'))return;
     busy.current = true;
     controller.current?.abort(); const abort = new AbortController(); controller.current = abort;
     setRequestError(''); setDetails(true); setStarting(true);
     try { await client.run(observe, abort.signal, setLost, retry); }
     catch (error) { if (!abort.signal.aborted) { setRequestError(error instanceof Error ? error.message : '任务状态未知，请重新打开页面查看。'); setStarting(false); } }
     finally { busy.current = false; }
+  }
+  async function reconcile() {
+    if(busy.current)return;busy.current=true;
+    const abort=new AbortController();controller.current=abort;setStarting(true);setRequestError('');
+    try{await client.reconcile(observe,abort.signal,setLost);}catch{setRequestError('任务尚不能确认，请人工核对。');}finally{busy.current=false;setStarting(false);}
   }
   const running = job.status === 'running', success = job.status === 'succeeded';
   return <div className="replay-sync">
@@ -60,9 +66,10 @@ export function LocalTaskButton<Result>({ path, action, capability, label, descr
       {requestError && <p>{requestError}</p>}
       {job.error && <p>{job.error}</p>}
       {job.progress?.timings_ms && <details><summary>各阶段耗时</summary><p>{Object.entries(job.progress.timings_ms).map(([phase, ms]) => `${({ security: '安全检查', cards: '补齐卡牌', generating: '生成文件', remote: '核对远端', uploading: '上传', publishing: '准备发布', scanning: '扫描', comparing: '比较' } as Record<string,string>)[phase] ?? phase} ${Math.round(ms / 1000)}秒`).join(' · ')}</p></details>}
+      {job.status==='needs_recovery'&&capability==='replay-sync'&&<button type="button" className="standard-button" disabled={starting||lost} onClick={()=>void reconcile()}>核对已发布回放</button>}
       {extra?.(job)}
       {job.notification?.attempted && <p className="task-note">{job.notification.accepted ? '已提交系统通知；是否显示由 macOS 通知设置决定。' : '系统通知未能提交；此处保留完成结果。'}</p>}
-      {!running && job.status !== 'idle' && <button type="button" className="standard-button task-retry" disabled={starting || lost} onClick={() => void start(retryUpload && job.status === 'partial')}>{retryUpload && job.status === 'partial' ? '重试上传收藏' : capability === 'replay-sync' ? '再次上传回放' : '再次更新收藏'}</button>}
+      {!running && job.status !== 'idle' && job.status !== 'needs_recovery' && <button type="button" className="standard-button task-retry" disabled={starting || lost} onClick={() => void start(retryUpload && job.status === 'partial')}>{retryUpload && job.status === 'partial' ? '重试上传收藏' : capability === 'replay-sync' ? '再次上传回放' : '再次更新收藏'}</button>}
     </div>}
   </div>;
 }

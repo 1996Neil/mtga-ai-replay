@@ -5,51 +5,29 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startReplayServer } from '../src/server.mjs';
 
-const state = { turn: 2, phase: 'Phase_Main1', players: {
-  me: { life: 16, hand: [{ name: 'Island', arena_id: 1 }], battlefield: [], graveyard: [], exile: [] },
-  opponent: { life: 20, hand: [], battlefield: [], graveyard: [], exile: [] } }, stack: [] };
-const replay = () => ({ match: { id: 'synthetic-review-http', started_at: new Date(0).toISOString() },
-  games: [{ game_number: 1, steps: [{ anchor: 'T2-A1', turn: 2,
-    event: { actor: 'me', type: 'land', card: { name: 'Island' } },
-    state_before: state, state: state }], states: {}, result: { outcome: 'Win' } }],
-  warnings: [] });
-const result = { summary: { headline: '土地选择', overview: '这局只有一个合成动作。',
-  strengths: [], improvements: [], limitations: [] },
-  notes: [{ anchor: 'T2-A1', boundary: 'before', severity: 'tip', confidence: 'low',
-    title: '观察地牌', observation: '当前可见 Island。', suggestion: '检查法术力需求。',
-    cards: ['Island'] }] };
-
-test('review HTTP endpoints are same-origin opt-in, cached, game-specific and stale-safe', async t => {
-  const dataDir = await mkdtemp(join(tmpdir(), 'replay-review-http-'));
-  t.after(() => rm(dataDir, { recursive: true, force: true }));
-  let recorded = replay(), calls = 0;
-  const runtime = await startReplayServer({ dataDir, viewerDir: dataDir,
-    writeInfo: false, displayNamesZh: new Map(), enableReplaySync: false,
-    enableCollection: false, includeLocalHistory: false, observeLocalLogs: false,
-    replayProvider: { list: async () => [], get: async id =>
-      id === recorded.match.id ? recorded : null, latest: async () => recorded },
-    reviewGenerator: async () => { calls++; return result; } });
+test('Replay HTTP is cloud-read-only even if a legacy local generator/key is supplied', async t => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'replay-cloud-http-')); t.after(() => rm(dataDir, { recursive: true, force: true }));
+  const replay = { match: { id: 'synthetic-review-http' }, games: [{ game_number: 1, steps: [] }] };
+  let localModelCalls = 0, syncs = 0;
+  const runtime = await startReplayServer({ dataDir, viewerDir: dataDir, writeInfo: false, displayNamesZh: new Map(),
+    enableReplaySync: false, enableCollection: false, includeLocalHistory: false, observeLocalLogs: false,
+    replayProvider: { list: async () => [], get: async id => id === replay.match.id ? replay : null },
+    reviewGenerator: async () => { localModelCalls++; throw Error('must not be called'); },
+    reviewReader: { read: async () => ({ status: 'missing', can_sync: true }),
+      start: () => { syncs++; return { status: 'syncing', code: 202 }; }, close: async () => {} } });
   t.after(() => runtime.close());
-  const target = `${runtime.url}api/matches/synthetic-review-http/review?game=1`;
-  const ask = async (url, options) => fetch(url, options).then(async res =>
-    ({ status: res.status, value: await res.json() }));
-  assert.equal((await ask(target)).value.status, 'missing');
-  const generate = target.replace('/review?', '/review/generate?');
-  const blocked = await ask(generate, { method: 'POST', headers: {
-    'Origin': 'http://example.invalid', 'X-MTGA-Replay-Action': 'review-generate' } });
-  assert.equal(blocked.status, 403); assert.equal(calls, 0);
-  const options = { method: 'POST', headers: {
-    'Origin': runtime.url.slice(0, -1), 'X-MTGA-Replay-Action': 'review-generate' } };
-  const first = await ask(generate, options);
-  assert.equal(first.status, 202);
-  const wait = async () => { for (let i = 0; i < 100; i++) { const r = await ask(target); if (r.value.status !== 'running') return r.value; await new Promise(done => setTimeout(done, 5)); } throw new Error('Review did not finish'); };
-  assert.equal((await wait()).review.notes[0].anchor, 'T2-A1');
-  assert.equal(calls, 1);
-  assert.equal((await ask(generate, options)).status, 202);
-  await wait();
-  assert.equal(calls, 1);
-  assert.equal((await ask(target)).value.status, 'ready');
-  recorded = structuredClone(recorded);
-  recorded.games[0].steps[0].state_before.turn = 99;
-  assert.equal((await ask(target)).value.status, 'stale');
+  const target = `${runtime.url}api/matches/${replay.match.id}/review?game=1`;
+  const post = (url, headers = {}, body) => fetch(url, { method: 'POST', headers: { Origin: runtime.url.slice(0, -1), ...headers }, body });
+  assert.equal((await (await fetch(target)).json()).status, 'missing');
+  assert.equal((await post(target.replace('/review?', '/review/generate?'), { 'X-MTGA-Replay-Action': 'review-generate' })).status, 410);
+  const sync = target.replace('/review?', '/review/sync?');
+  assert.equal((await post(sync)).status, 403);
+  assert.equal((await post(sync, { Origin: 'https://example.invalid', 'X-MTGA-Replay-Action': 'review-sync' })).status, 403);
+  assert.equal((await post(sync, { 'X-MTGA-Replay-Action': 'review-sync' }, '{}')).status, 400);
+  assert.equal((await post(sync + '&game=2', { 'X-MTGA-Replay-Action': 'review-sync' })).status, 400);
+  assert.equal((await post(sync.replace('game=1', 'game=2'), { 'X-MTGA-Replay-Action': 'review-sync' })).status, 404);
+  assert.equal((await post(sync, { 'X-MTGA-Replay-Action': 'review-sync' })).status, 202);
+  const health = await (await fetch(`${runtime.url}api/health`)).json();
+  assert.ok(health.capabilities.includes('cloud-review-read')); assert.ok(!health.capabilities.includes('replay-review-generate'));
+  assert.equal(syncs, 1); assert.equal(localModelCalls, 0);
 });

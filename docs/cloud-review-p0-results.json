@@ -1,0 +1,124 @@
+{
+  "scope": "cloud-review-p0-isolated-validation",
+  "date": "2026-10-15",
+  "backend": {
+    "command": "node --test --test-concurrency=4 tests/*.test.mjs",
+    "tests": 400,
+    "passed": 392,
+    "failed": 0,
+    "skipped": 8,
+    "cancelled": 0
+  },
+  "viewer": {
+    "command": "npm run viewer:test",
+    "passed": 78,
+    "failed": 0
+  },
+  "typecheck_and_build": "passed",
+  "paid_model_calls": 0,
+  "real_github_data_writes": 0,
+  "desktop_replaced": false,
+  "real_replays": [
+    {
+      "actions": 391,
+      "notes": 8,
+      "english_names_checked": 16,
+      "parts": 18,
+      "verified": true,
+      "stale_detected": true,
+      "local_bundle_reproduced": true,
+      "elapsed_ms": 8801.2,
+      "paid_calls": 0
+    },
+    {
+      "actions": 545,
+      "notes": 8,
+      "english_names_checked": 16,
+      "parts": 40,
+      "verified": true,
+      "stale_detected": true,
+      "local_bundle_reproduced": true,
+      "elapsed_ms": 17312,
+      "paid_calls": 0
+    },
+    {
+      "actions": 340,
+      "notes": 8,
+      "english_names_checked": 16,
+      "parts": 15,
+      "verified": true,
+      "stale_detected": true,
+      "local_bundle_reproduced": true,
+      "elapsed_ms": 6826.4,
+      "paid_calls": 0
+    },
+    {
+      "actions": 548,
+      "notes": 8,
+      "english_names_checked": 16,
+      "parts": 36,
+      "verified": true,
+      "stale_detected": true,
+      "local_bundle_reproduced": true,
+      "elapsed_ms": 13967.7,
+      "paid_calls": 0
+    },
+    {
+      "actions": 387,
+      "notes": 8,
+      "english_names_checked": 16,
+      "parts": 19,
+      "verified": true,
+      "stale_detected": true,
+      "local_bundle_reproduced": true,
+      "elapsed_ms": 7313.3,
+      "paid_calls": 0
+    },
+    {
+      "actions": 807,
+      "notes": 8,
+      "english_names_checked": 16,
+      "parts": 72,
+      "verified": true,
+      "stale_detected": true,
+      "local_bundle_reproduced": true,
+      "elapsed_ms": 25124.7,
+      "paid_calls": 0
+    },
+    {
+      "actions": 561,
+      "notes": 8,
+      "english_names_checked": 16,
+      "parts": 42,
+      "verified": true,
+      "stale_detected": true,
+      "local_bundle_reproduced": true,
+      "elapsed_ms": 15253.2,
+      "paid_calls": 0
+    },
+    {
+      "actions": 382,
+      "notes": 8,
+      "english_names_checked": 16,
+      "parts": 21,
+      "verified": true,
+      "stale_detected": true,
+      "local_bundle_reproduced": true,
+      "elapsed_ms": 8359.1,
+      "paid_calls": 0
+    }
+  ],
+  "historical_data": {
+    "replays_before": 161,
+    "replays_after": 161,
+    "coach_notes_before": 1,
+    "coach_notes_after": 1,
+    "all_original_rows_unchanged": true
+  },
+  "limitations": [
+    "Real GitHub CAS/identity adapter not piloted",
+    "Synthetic annotations are not Agent strategy acceptance",
+    "Production UI latency and memory not measured",
+    "Interrupted fetch-lock recovery is manual"
+  ]
+}
