@@ -2,7 +2,7 @@
   "name": "mtga-gpt-replay",
   "version": "0.3.1",
   "type": "module",
-  "description": "Open-source MTGA replay and Live Coach source",
+  "description": "Open-source MTGA replay source",
   "bin": {
     "mtga-gpt-replay": "bin/mtga-gpt-replay.mjs",
     "mtga-gpt-collection": "bin/mtga-gpt-collection.mjs"

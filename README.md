@@ -12,9 +12,11 @@ The [Phase 1 audit](docs/REPLAY_AI_AUDIT_20261014.md) and
 The legacy voice code and launcher remain in Git; the original desktop checkout is not replaced.
 
 
-This repository contains the latest owned replay/Live Coach backend, model and
-speech adapters, owned Viewer integration, tests, three lockfiles and local
-platform tools. It is separate from the private coaching **data** repository.
+This repository contains the MTGA Replay backend, owned Viewer integration,
+tests, three lockfiles and local platform tools. It is separate from the
+private replay **data** repository. Older optional Coach/Live Coach adapters
+remain in the source tree for compatibility, but they are not required by the
+replay viewer or replay import workflow.
 The latest model-provider work and subsequent manual replay-sync/service-identity
 changes are included. Existing applications and frozen delivery snapshots were
 not changed by this source export.
@@ -70,11 +72,9 @@ setup. The collection publisher's personal repository binding was replaced in
 this export with `example-user/mtga-replay-data`; configure it deliberately before
 any separately authorized real collection publishing.
 
-SIWC and DeepSeek selection are explicit. Provider catalogs, inference, login,
-and paid speech remain separately authorized actions. No credentials or grants
-are packaged; setting up cloud source access grants no permission for model/TTS
-calls. Real model strategy quality, real model-to-speech integration and new-game
-active coaching remain unverified.
+The optional legacy Coach adapters have separate provider catalogs, login and
+paid speech authorization. No credentials or grants are packaged; Replay import
+and viewing do not call model or speech services.
 
 No raw Player.log, personal SQLite history, credentials, cookies, tokens, account
 configuration, audio, card collection/cache, acceptance logs or upstream artwork
