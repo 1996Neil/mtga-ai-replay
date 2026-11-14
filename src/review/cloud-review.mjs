@@ -109,15 +109,15 @@ export function validateCloudReviewBinding(raw, source, { policyVersion = CLOUD_
   return { status: 'ready', report };
 }
 
-/** Compatibility presentation only. Durable cloud JSON retains its declared
- * semantics; #4's conservative severity and canonical names remain in force. */
+/** Compatibility presentation only. Importance and uncertainty remain separate;
+ * V1 severity is never promoted to a claim of a proven rules error. */
 export async function adaptCloudReview(report, source) {
   const result = validateCloudReviewBinding(report, source);
   if (result.status !== 'ready') return { status: result.status };
   const game = findReviewGame(source.replay, report.game_number);
   const fingerprint = await reviewFingerprintAsync(game, source.replay.warnings);
   const review = normalizeReplayReview(source.replay, report.game_number, report, {
-    source: `cloud:${report.generator.name}`, now: report.generated_at, fingerprint });
+    source: `cloud:${report.generator.name}`, now: report.generated_at, fingerprint, cloudSemantics: true });
   review.summary.limitations = [...new Set([...report.coverage.limitations, ...review.summary.limitations])].slice(0, 4);
   return { status: 'ready', review: { ...review, cloud_schema: report.schema,
     source_content_hash: report.source_content_hash, cloud_policy_version: report.policy_version, coverage: report.coverage } };

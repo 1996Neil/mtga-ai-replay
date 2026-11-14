@@ -96,7 +96,7 @@ export function visibleCardNames(snapshot) {
 }
 
 /** Strict, source-anchored report. Never silently remap an invalid anchor to a nearby frame. */
-export function normalizeReplayReview(replay, gameNumber, raw, { source = 'imported', now = new Date().toISOString(), fingerprint } = {}) {
+export function normalizeReplayReview(replay, gameNumber, raw, { source = 'imported', now = new Date().toISOString(), fingerprint, cloudSemantics = false } = {}) {
   const game = findReviewGame(replay, gameNumber);
   if (!game) throw new Error('Review game is not present in this replay.');
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Review payload must be an object.');
@@ -116,10 +116,17 @@ export function normalizeReplayReview(replay, gameNumber, raw, { source = 'impor
     if (!input || typeof input !== 'object') continue;
     const anchor = text(input.anchor, 80);
     const step = steps.get(anchor);
-    const severity = text(input.severity, 20), confidence = text(input.confidence, 20);
+    const cloudV2 = cloudSemantics && raw.schema === 'MTGA_AI_REVIEW_V2';
+    const importance = cloudV2 ? input.importance : ({ critical: 'critical', major: 'major', tip: 'normal', positive: 'normal' })[input.severity];
+    const assessment = cloudV2 ? input.assessment : input.severity === 'positive' ? 'positive' : ['critical', 'major'].includes(input.severity) ? 'possible_error' : 'suggestion';
+    const severity = cloudV2 ? (assessment === 'positive' ? 'positive' : importance === 'normal' ? 'tip' : importance) : text(input.severity, 20), confidence = text(input.confidence, 20);
     const boundary = input.boundary === 'after' ? 'after' : 'before';
     if (!step || !severities.has(severity) || !confidences.has(confidence) || seen.has(anchor)) continue;
-    // Strong red warnings are never based on explicitly low-confidence model claims.
+    // Cloud importance controls attention, never certainty or a rules verdict.
+    // Historical local-model callers keep their original conservative policy.
+    if (cloudSemantics && (!['critical', 'major', 'normal'].includes(importance) || !['suggestion', 'possible_error', 'positive'].includes(assessment))) continue;
+    // Keep the legacy hint conservative for older Viewers. The P1 Viewer uses
+    // explicit importance/assessment for attention and never this error label.
     const safeSeverity = ['critical', 'major'].includes(severity) ? 'tip' : severity;
     if (!(boundary === 'before' ? beforeOf(game, step) : afterOf(game, step))) continue; // Never display a post-action frame as a pre-action one.
     const title = text(input.title, 160), observation = text(input.observation, 1400),
@@ -130,7 +137,7 @@ export function normalizeReplayReview(replay, gameNumber, raw, { source = 'impor
     const lookup = new Map([...names].map(name => [name.toLowerCase(), name]));
     const cards = [...new Set((Array.isArray(input.cards) ? input.cards : [])
       .filter(name => typeof name === 'string').map(name => lookup.get(name.toLowerCase())).filter(Boolean))].slice(0, 8);
-    notes.push({ anchor, boundary, severity: safeSeverity, confidence, title, observation, suggestion,
+    notes.push({ anchor, boundary, severity: safeSeverity, confidence, ...(cloudSemantics ? { importance, assessment } : {}), title, observation, suggestion,
       rationale: text(input.rationale, 1300), cards, limitation: text(input.limitation, 500) });
     seen.add(anchor);
   }

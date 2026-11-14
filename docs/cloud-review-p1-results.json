@@ -1,0 +1,270 @@
+{
+  "schema": "MTGA_CLOUD_REVIEW_P1_RESULTS_V1",
+  "base_commit": "51d6b8bb96e3a935aafca1e281af86e05fc5afa5",
+  "scope": "isolated implementation and Draft PR; production pilot not authorized",
+  "connector": {
+    "create_commit_exposes_author_committer": false,
+    "update_ref_exposes_expected_sha": true,
+    "default_identity_not_experimentally_assumed": true,
+    "chosen_adapter": "REST explicit author/committer + GraphQL updateRefs beforeOid and force=false"
+  },
+  "tests": {
+    "full_backend": {
+      "tests": 414,
+      "pass": 406,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 8,
+      "duration_ms": 295417.508708
+    },
+    "viewer": {
+      "tests": 80,
+      "pass": 80,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "duration_ms": 238.964292
+    },
+    "typescript": "pass",
+    "production_build": "pass",
+    "viewer_gzip_kb": 85.21,
+    "private_corpus_skips": 8,
+    "final_semantics_reader": {
+      "tests": 25,
+      "pass": 25,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "duration_ms": 784.507833
+    },
+    "read_receipt_http": {
+      "tests": 12,
+      "pass": 12,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "duration_ms": 795.004917
+    },
+    "overlap": "Focused groups overlap the full run; do not sum them"
+  },
+  "real_github": {
+    "primary": {
+      "repository": "1996Neil/mtga-replay-p1-sandbox-20261015",
+      "synthetic_only": true,
+      "production_data_writes": 0,
+      "paid_model_calls": 0,
+      "initial_upload": true,
+      "review_commit": "565449d2738912cdc77ca84cfc9603e0b9dd5335",
+      "explicit_author_and_committer": true,
+      "concurrent_cas": {
+        "attempts": 2,
+        "accepted": 1,
+        "rejected": 1,
+        "force": false
+      },
+      "wrong_original_blob_rejected": true,
+      "ambiguous_acknowledgement": {
+        "mutations": 1,
+        "automatic_retries": 0,
+        "persisted_commit_confirmed_independently": true
+      },
+      "read_only_sync_ready": true,
+      "subsequent_match_upload": true,
+      "review_bytes_preserved": true,
+      "changed_source_stale": true
+    },
+    "final_adapter_and_other_device": {
+      "repository": "1996Neil/mtga-replay-p1-sandbox-20261015",
+      "final_adapter_commit": "aa6ba087d90fc0ced9f4287fc1c050f10a1dc883",
+      "explicit_raw_candidate_identity_checked": true,
+      "real_github_read_and_write": true,
+      "worker_reader_ready": true,
+      "other_device_source_update": true,
+      "unchanged_local_input_and_upload_state": true,
+      "stale_survives_restart": true,
+      "production_data_writes": 0,
+      "paid_model_calls": 0
+    },
+    "expected_head_control": {
+      "repository": "1996Neil/mtga-replay-p1-sandbox-20261015",
+      "wrong_expected_head_request_rejected": true,
+      "correct_expected_head_noop_control_accepted": true,
+      "force": false,
+      "head_unchanged": true,
+      "structured_conflict_code_available": false,
+      "generic_github_error_on_wrong_expected_head": true,
+      "production_data_writes": 0
+    }
+  },
+  "performance": {
+    "units": {
+      "wall_ms": "milliseconds",
+      "node_cpu_ms": "Node process including worker threads; excluding Git/browser/probe subprocesses",
+      "rss": "MiB despite legacy _mb field names"
+    },
+    "method": "single samples; same real 807-action local copy and V1 synthetic report for paired comparison; fresh processes/cache; local bare Git; external HTTP probe; no production/network/model P95 claim",
+    "baseline": {
+      "actions": 807,
+      "status": "ready",
+      "notes": 8,
+      "wall_ms": 27121.7,
+      "node_cpu_ms": 20627.9,
+      "node_rss_before_mb": 184.8,
+      "node_rss_peak_mb": 1285.2,
+      "event_loop_max_ms": 8233.4,
+      "event_loop_p99_ms": 42.7,
+      "health_probes": 114,
+      "health_failures": 1,
+      "health_p95_ms": 27.8,
+      "health_max_ms": 6875.9,
+      "transport": "local bare Git, fresh process and cache",
+      "paid_model_calls": 0,
+      "production_data_writes": 0
+    },
+    "worker": {
+      "actions": 807,
+      "status": "ready",
+      "notes": 8,
+      "wall_ms": 26956.4,
+      "node_cpu_ms": 20669.7,
+      "node_rss_before_mb": 206.6,
+      "node_rss_peak_mb": 2061,
+      "node_rss_after_mb": 1516.5,
+      "event_loop_max_ms": 83.2,
+      "event_loop_p99_ms": 11.3,
+      "health_probes": 265,
+      "health_failures": 0,
+      "health_p95_ms": 2.1,
+      "health_max_ms": 34.9,
+      "transport": "local bare Git, fresh process and cache",
+      "paid_model_calls": 0,
+      "production_data_writes": 0
+    },
+    "interactive_v2": {
+      "actions": 807,
+      "status": "ready",
+      "notes": 8,
+      "wall_ms": 31360.9,
+      "node_cpu_ms": 21567.2,
+      "node_rss_before_mb": 375,
+      "node_rss_peak_mb": 2077.2,
+      "node_rss_after_mb": 1562.2,
+      "event_loop_max_ms": 82.4,
+      "event_loop_p99_ms": 12.1,
+      "health_probes": 307,
+      "health_failures": 0,
+      "health_p95_ms": 2.9,
+      "health_max_ms": 39.4,
+      "transport": "local bare Git, fresh process and cache",
+      "paid_model_calls": 0,
+      "production_data_writes": 0
+    },
+    "limits": [
+      "CPU and wall time roughly unchanged",
+      "Peak Node RSS increases to about 2061 MiB",
+      "Final small read-receipt and conservative legacy hint checks were tested after the measured runtime; no claim of millisecond precision for that delta"
+    ]
+  },
+  "ui": {
+    "viewport": {
+      "width": 1280,
+      "height": 720,
+      "overridden": false
+    },
+    "replay_actions": 807,
+    "report": "synthetic V2; no model analysis",
+    "during_sync": {
+      "next_step_worked": true,
+      "slider_to_action": 725,
+      "anchor": "T38-A17",
+      "sync_label_visible": true
+    },
+    "ready": {
+      "notes": 8,
+      "critical_low_confidence": true,
+      "assessment": "建议核查",
+      "no_rule_verdict": true,
+      "before_boundary": true,
+      "floating_panel_keyboard_move": {
+        "before_x": 861,
+        "after_x": 881,
+        "width": 375,
+        "y": 130
+      },
+      "integrity_label_preserved": true,
+      "advanced_tools_preserved": true
+    },
+    "stale": {
+      "markers_before": 8,
+      "markers_after": 0,
+      "slider_value": 724,
+      "slider_max": 806,
+      "report_hash_changed_in_temporary_local_git_only": true,
+      "raw_replay_bytes_changed": false
+    },
+    "screenshots": [
+      "sync-responsive-807.jpg",
+      "critical-low-confidence-807.jpg",
+      "anchor-725-and-tools.jpg",
+      "stale-markers-cleared-807.jpg"
+    ],
+    "production_writes": 0,
+    "paid_model_calls": 0
+  },
+  "historical_integrity": {
+    "replays": {
+      "p0_original_rows": 161,
+      "p1_initial_rows": 171,
+      "p1_final_rows": 171,
+      "all_p1_original_rows_unchanged": true,
+      "all_p0_original_rows_unchanged": true
+    },
+    "coach_notes": {
+      "p0_original_rows": 1,
+      "p1_initial_rows": 1,
+      "p1_final_rows": 1,
+      "all_p1_original_rows_unchanged": true,
+      "all_p0_original_rows_unchanged": true
+    }
+  },
+  "independent_review": {
+    "conclusion": "No blocker found for Draft PR only",
+    "executed_groups": [
+      {
+        "scope": "writer and protocol",
+        "passed": 12
+      },
+      {
+        "scope": "reader",
+        "passed": 10
+      },
+      {
+        "scope": "final protocol compatibility and UI mapping rerun",
+        "passed": 9
+      }
+    ],
+    "overlap": "Groups overlap; not a unique total",
+    "read_only_real_commit_verified": "aa6ba087d90fc0ced9f4287fc1c050f10a1dc883"
+  },
+  "release": {
+    "passed": true,
+    "historical_union_paths": 269,
+    "manifest_pinned_viewer_sources": 19,
+    "reachable_commits": 41,
+    "shallow": false,
+    "final_scope_note": "Final additions/index and new commit metadata require the same-rule incremental check; history unchanged since full scan"
+  },
+  "reviewed_runtime_sha256": {
+    "src/review/github-review-writer.mjs": "7aed8339a3214a4533cf73b6234d293663e73beb51f650497e61e1b1cc4771c2",
+    "src/review/review-sync.mjs": "0a0617c1b080b43e0c162b14e7d866f542d0bd2c91a0cc147720ded6437d6168",
+    "src/review/cloud-review-compute.mjs": "eaea0f8ec11b9e8b195d78b0b695740e48f4f784615574b507590c34ec3e886d",
+    "src/compute-pool.mjs": "052ba60415cd4333f8d8f7ce9a6f50be94b87d5e3d998311adc5e80bae376ca4",
+    "src/review/review-model.mjs": "9c004f60f4e2fb5c3fed9c69ff70c19ff928d912289721cc095b5df34ad0562a",
+    "viewer/src/components/ReplayReviewCoach.tsx": "9a0569b4e36fd0fd6b9005f1c09936be3bcbb98dd094b30b0a3d776fc4109668"
+  },
+  "production_data_writes": 0,
+  "paid_model_calls": 0,
+  "old_prs_merged": false,
+  "desktop_replaced": false,
+  "repository_renamed": false
+}

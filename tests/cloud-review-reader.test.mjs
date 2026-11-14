@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { bundle, filesForBundle, reportForSource } from './helpers/cloud-review-fixture.mjs';
 import { readPublishedReviewSource } from '../src/review/cloud-review.mjs';
 import { createCloudReviewReader } from '../src/review/review-sync.mjs';
+import { createComputePool } from '../src/compute-pool.mjs';
 const revision = 'a'.repeat(40);
 async function setup(t) {
   const dataDir = await mkdtemp(join(tmpdir(), 'cloud-review-reader-'));
@@ -82,7 +83,7 @@ test('deck mutation between validated bundle and cache publication is rejected',
   control.onLoad = () => { if (++reads === 2) replay.deck[0].quantity--; };
   reader.start(id, 1); await reader.wait(); assert.equal((await reader.read(id, 1)).status, 'stale');
   const other = createCloudReviewReader({ dataDir, loadReplay: async () => replay });
-  assert.equal((await other.read(id, 1)).status, 'missing'); await other.close();
+  assert.equal((await other.read(id, 1)).status, 'stale'); await other.close();
 });
 
 test('a newly verified branch cannot fall back to another branch cache after error or restart', async t => {
@@ -92,4 +93,64 @@ test('a newly verified branch cannot fall back to another branch cache after err
   reader.start(id, 1); await reader.wait(); assert.equal((await reader.read(id, 1)).status, 'error');
   const other = createCloudReviewReader({ dataDir, loadReplay: async () => replay });
   assert.equal((await other.read(id, 1)).status, 'missing'); await other.close();
+});
+
+test('a remotely observed stale report cannot become ready again after restart with unchanged local input', async t => {
+  const { reader, id, control, replay, dataDir } = await setup(t);
+  reader.start(id, 1); await reader.wait(); assert.equal((await reader.read(id, 1)).status, 'ready');
+  control.report = { ...control.report, source_content_hash: 'f'.repeat(64) };
+  reader.start(id, 1); await reader.wait(); assert.equal((await reader.read(id, 1)).status, 'stale');
+  const cold = createCloudReviewReader({ dataDir, loadReplay: async () => replay });
+  assert.equal((await cold.read(id, 1)).status, 'stale'); await cold.close();
+});
+
+test('same-branch late worker cannot overwrite a newer observed report revision', async t => {
+  const h = await setup(t), { replay, dataDir, id, source, report } = h;
+  const second = readPublishedReviewSource({ files: filesForBundle(await bundle({ richer: true, coachOptions: { multipart: true } })), matchId: id, revision: 'b'.repeat(40) });
+  let enter, release; const entered = new Promise(done => { enter = done; }), blocked = new Promise(done => { release = done; });
+  const pool = createComputePool(); t.after(() => pool.close());
+  const fetcher = (value, headline) => async (_id, _game, hooks) => {
+    const scope = { repository: 'fixture-owner/private-coaching', branch: 'main' };
+    await hooks.onVerifiedTarget(scope); await hooks.onVerifiedRevision({ ...scope, matchId: id, gameNumber: 1, revision: value.revision });
+    return { ...scope, source: value, report: { ...reportForSource(value), summary: { ...report.summary, headline } } };
+  };
+  const slow = createCloudReviewReader({ dataDir, loadReplay: async () => replay, fetchReview: fetcher(source, '较早报告'), computePool: {
+    run: async (operation, input) => { if (operation === 'cloudReviewSync') { enter(); await blocked; } return pool.run(operation, input); }
+  } });
+  const fast = createCloudReviewReader({ dataDir, loadReplay: async () => replay, fetchReview: fetcher(second, '最新报告') });
+  t.after(() => Promise.all([slow.close(), fast.close()]));
+  slow.start(id, 1); await entered; fast.start(id, 1); await fast.wait();
+  assert.equal((await fast.read(id, 1)).review.summary.headline, '最新报告');
+  release(); await slow.wait();
+  const cold = createCloudReviewReader({ dataDir, loadReplay: async () => replay });
+  assert.equal((await cold.read(id, 1)).review.summary.headline, '最新报告'); await cold.close();
+});
+
+test('revision receipts are scoped per match and do not invalidate another match cache', async t => {
+  const h = await setup(t); h.reader.start(h.id, 1); await h.reader.wait();
+  let replay;
+  const value = await bundle({ id: 'synthetic-other-match', richer: true, coachOptions: { multipart: true }, onReplay: raw => { replay = raw; } });
+  const source = readPublishedReviewSource({ files: filesForBundle(value), matchId: value.summary.match_id, revision: 'c'.repeat(40) });
+  const statePath = join(h.dataDir, 'coach-sync/state.json'), state = JSON.parse(await readFile(statePath));
+  state.synced[source.match_id] = { content_hash: source.content_hash }; await writeFile(statePath, JSON.stringify(state));
+  const other = createCloudReviewReader({ dataDir: h.dataDir, loadReplay: async () => replay, fetchReview: async (_id, _game, hooks) => {
+    const scope = { repository: state.repository, branch: 'main' };
+    await hooks.onVerifiedTarget(scope); await hooks.onVerifiedRevision({ ...scope, matchId: source.match_id, gameNumber: 1, revision: source.revision });
+    return { ...scope, source, report: reportForSource(source) };
+  } });
+  other.start(source.match_id, 1); await other.wait(); assert.equal((await other.read(source.match_id, 1)).status, 'ready');
+  assert.equal((await h.reader.read(h.id, 1)).status, 'ready'); await other.close();
+});
+
+test('a read worker cannot return ready after another reader has persisted remote stale', async t => {
+  const h = await setup(t); h.reader.start(h.id, 1); await h.reader.wait();
+  let enter, release; const entered = new Promise(done => { enter = done; }), blocked = new Promise(done => { release = done; });
+  const pool = createComputePool(); t.after(() => pool.close());
+  const slow = createCloudReviewReader({ dataDir: h.dataDir, loadReplay: async () => h.replay, computePool: {
+    run: async (operation, input) => { const result = await pool.run(operation, input); if (operation === 'cloudReviewRead') { enter(); await blocked; } return result; }
+  } }); t.after(() => slow.close());
+  const pending = slow.read(h.id, 1); await entered;
+  h.control.report = { ...h.control.report, source_content_hash: 'f'.repeat(64) };
+  h.reader.start(h.id, 1); await h.reader.wait(); release();
+  assert.equal((await pending).status, 'stale');
 });

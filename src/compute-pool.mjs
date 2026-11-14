@@ -8,7 +8,7 @@ export function createComputePool({ size = 2, maxQueue = 32 } = {}) {
   let closed = false, sequence = 0, failures=0; const waiting = [], slots = [];
   function dispatch() {
     for (const slot of slots) {
-      if (closed || slot.task || !waiting.length) continue;
+      if (closed || slot.retiring || slot.task || !waiting.length) continue;
       const task = waiting.shift(); slot.task = task;
       slot.worker.ref();task.timeout=setTimeout(()=>{slot.worker.terminate();},120000);
       try { slot.worker.postMessage({ id: task.id, operation: task.operation, input: task.input }); }
@@ -17,6 +17,9 @@ export function createComputePool({ size = 2, maxQueue = 32 } = {}) {
   }
   function finish(slot, error, value) {
     const task = slot.task; slot.task = null; if(task)clearTimeout(task.timeout);slot.worker.unref();
+    // Large source expansion is a one-shot peak. Release its V8 heap instead of
+    // retaining gigabytes after either a ready or rejected cloud verification.
+    if (!closed && task?.operation === 'cloudReviewSync') { slot.retiring = true; void slot.worker.terminate(); }
     if (task) error ? task.reject(error) : task.resolve(value);
     dispatch();
   }
@@ -36,7 +39,7 @@ export function createComputePool({ size = 2, maxQueue = 32 } = {}) {
     });
     slot.worker.on('exit', () => {
       const task = slot.task; slot.task = null; if(task)clearTimeout(task.timeout);task?.reject(Error('CPU worker exited'));
-      if(!closed&&++failures>2){closed=true;for(const pending of waiting.splice(0))pending.reject(Error('CPU pool unavailable'));for(const peer of slots)if(peer!==slot){if(peer.task){clearTimeout(peer.task.timeout);peer.task.reject(Error('CPU pool unavailable'));peer.task=null;}peer.worker.terminate();}}
+      if(!closed&&!slot.retiring&&++failures>2){closed=true;for(const pending of waiting.splice(0))pending.reject(Error('CPU pool unavailable'));for(const peer of slots)if(peer!==slot){if(peer.task){clearTimeout(peer.task.timeout);peer.task.reject(Error('CPU pool unavailable'));peer.task=null;}peer.worker.terminate();}}
       if (!closed) { const index = slots.indexOf(slot); slots[index] = make(); dispatch(); }
     });
     return slot;
@@ -45,7 +48,7 @@ export function createComputePool({ size = 2, maxQueue = 32 } = {}) {
   return {
     run(operation, input) {
       if (closed) return Promise.reject(Error('CPU pool closed'));
-      if (!['bundle','validate','bundleFiles','validateFiles'].includes(operation)) return Promise.reject(Error('Unsupported CPU operation'));
+      if (!['bundle','validate','bundleFiles','validateFiles','cloudReviewSync','cloudReviewRead','cloudReviewFingerprint'].includes(operation)) return Promise.reject(Error('Unsupported CPU operation'));
       if (waiting.length >= maxQueue) return Promise.reject(Error('CPU queue full'));
       return new Promise((resolve,reject) => { waiting.push({id:++sequence,operation,input,resolve,reject}); dispatch(); });
     },

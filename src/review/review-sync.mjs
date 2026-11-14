@@ -4,9 +4,9 @@ import { DatabaseSync } from 'node:sqlite';
 import { defaultDataDir } from '../history.mjs';
 import { coachSyncRunner, readCoachSyncState, verifyPrivateSyncRepository, verifySyncRemote } from '../coach-sync.mjs';
 import { validateStagedRepository, validateSyncHistoryApproval } from '../sync-security.mjs';
-import { buildCoachBundle } from '../coach-bundle.mjs';
-import { replayInputFingerprintAsync, findReviewGame, normalizeReplayReview } from './review-model.mjs';
-import { readPublishedReviewSource, validateCloudReviewBinding, adaptCloudReview, reviewPath } from './cloud-review.mjs';
+import { findReviewGame } from './review-model.mjs';
+import { readPublishedReviewSource, validateCloudReviewBinding, reviewPath } from './cloud-review.mjs';
+import { createComputePool } from '../compute-pool.mjs';
 import { parseCloudReview, reviewReject, MAX_REVIEW_BYTES, CLOUD_REVIEW_POLICY } from './cloud-review-contract.mjs';
 
 async function directory(path) {
@@ -24,9 +24,15 @@ async function cache(dataDir, write, callback) {
     if (write) database.exec(`CREATE TABLE IF NOT EXISTS cloud_review_cache (
       repository TEXT NOT NULL, branch TEXT NOT NULL, match_id TEXT NOT NULL, game_number INTEGER NOT NULL,
       checked_at TEXT NOT NULL, local_fingerprint TEXT NOT NULL, report_json TEXT NOT NULL,
-      PRIMARY KEY(repository, branch, match_id, game_number));
+      remote_revision TEXT NOT NULL DEFAULT '', PRIMARY KEY(repository, branch, match_id, game_number));
       CREATE TABLE IF NOT EXISTS cloud_review_targets (
-      repository TEXT PRIMARY KEY, branch TEXT NOT NULL, checked_at TEXT NOT NULL)`);
+      repository TEXT PRIMARY KEY, branch TEXT NOT NULL, checked_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS cloud_review_observations (
+      repository TEXT NOT NULL, branch TEXT NOT NULL, match_id TEXT NOT NULL, game_number INTEGER NOT NULL,
+      revision TEXT NOT NULL, status TEXT NOT NULL, checked_at TEXT NOT NULL,
+      PRIMARY KEY(repository,branch,match_id,game_number))`);
+    if (write && !database.prepare('PRAGMA table_info(cloud_review_cache)').all().some(row => row.name === 'remote_revision'))
+      database.exec("ALTER TABLE cloud_review_cache ADD COLUMN remote_revision TEXT NOT NULL DEFAULT ''");
     else if (!database.prepare("SELECT 1 FROM sqlite_master WHERE name='cloud_review_cache'").get()) return null;
     return callback(database);
   } finally { database.close(); }
@@ -61,10 +67,11 @@ export async function fetchCloudReview(matchId, gameNumber, options = {}) {
     await verifySyncRemote(git, meta.nameWithOwner);
     if (String(await git(['status', '--porcelain', '--untracked-files=all', '--ignored=matching'])).trim()) reviewReject('sync-dirty');
     await git(['fetch', '--prune', '--no-tags', 'origin']);
-    await validateStagedRepository(repo, { repository: meta.nameWithOwner, branch,
+    await validateStagedRepository(repo, { repository: meta.nameWithOwner, branch, computePool: options.computePool,
       historyApproval: validateSyncHistoryApproval(state.history_approval, { repository: meta.nameWithOwner, branch }) });
     const revision = String(await git(['rev-parse', `refs/remotes/origin/${branch}`])).trim();
     if (!/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(revision)) reviewReject('sync-revision');
+    await options.onVerifiedRevision?.({ repository: meta.nameWithOwner, branch, matchId, gameNumber, revision });
     const entries = String(await git(['ls-tree', '-rz', revision])).split('\0').filter(Boolean);
     const paths = new Map(entries.map(row => { const [meta, path] = row.split('\t'); return [path, meta]; }));
     const read = async (path, max = 2 * 1024 * 1024) => {
@@ -88,9 +95,10 @@ export async function fetchCloudReview(matchId, gameNumber, options = {}) {
       if (!path.startsWith(`${prefix}/`) || !/^(?:matches\/[A-Za-z0-9][A-Za-z0-9_-]{0,127}\/(?:summary|coach|cards)\.json|matches\/[A-Za-z0-9][A-Za-z0-9_-]{0,127}\/parts\/part-[0-9]{4,6}\.json)$/.test(path)) reviewReject('source-part-path');
       files.set(path, await read(path));
     }
-    const source = readPublishedReviewSource({ files, matchId, revision });
     const report = paths.has(path) ? parseCloudReview(await read(path, MAX_REVIEW_BYTES), { path }) : null;
-    return { repository: meta.nameWithOwner, branch, source, report };
+    const sourceInput = { files, matchId, revision };
+    return options.deferSourceVerification ? { repository: meta.nameWithOwner, branch, sourceInput, report }
+      : { repository: meta.nameWithOwner, branch, source: readPublishedReviewSource(sourceInput), report };
   } finally {
     const original = await lock.stat(), current = await lstat(join(root, 'fetch.lock')).catch(() => null);
     if (current?.ino === original.ino && current?.dev === original.dev && !current.isSymbolicLink()) await rm(join(root, 'fetch.lock'));
@@ -102,28 +110,49 @@ export async function fetchCloudReview(matchId, gameNumber, options = {}) {
  * bundle before a cloud report may acquire markers in the local timeline. */
 export function createCloudReviewReader({ loadReplay, dataDir = defaultDataDir(), fetchReview = fetchCloudReview, ...options }) {
   const tasks = new Map(); let closing = false;
+  let ownedPool;
+  const compute = () => options.computePool ?? (ownedPool ??= createComputePool({ size: 2 }));
   const keyOf = (id, game) => `${id}:${game}`;
   async function read(id, gameNumber) {
     reviewPath(id, gameNumber);
-    const replay = structuredClone(await loadReplay(id)), game = findReviewGame(replay, gameNumber);
+    const replay = await loadReplay(id), game = findReviewGame(replay, gameNumber);
     if (!game) return { code: 404, error: 'Unknown replay game.' };
     const task = tasks.get(keyOf(id, gameNumber));
     const state = await readCoachSyncState(dataDir);
-    const row = state.repository ? await cache(dataDir, false, db => {
+    const cached = state.repository ? await cache(dataDir, false, db => {
       if (!db.prepare("SELECT 1 FROM sqlite_master WHERE name='cloud_review_targets'").get()) return null;
-      return db.prepare(`SELECT c.* FROM cloud_review_cache c JOIN cloud_review_targets t
+      const row = db.prepare(`SELECT c.* FROM cloud_review_cache c JOIN cloud_review_targets t
         ON c.repository=t.repository AND c.branch=t.branch WHERE c.repository=? AND c.match_id=? AND c.game_number=?`).get(state.repository, id, gameNumber);
+      const observed = db.prepare("SELECT 1 FROM sqlite_master WHERE name='cloud_review_observations'").get()
+        ? db.prepare(`SELECT o.* FROM cloud_review_observations o JOIN cloud_review_targets t
+          ON o.repository=t.repository AND o.branch=t.branch WHERE o.repository=? AND o.match_id=? AND o.game_number=?`).get(state.repository, id, gameNumber) : null;
+      return { row, observed };
     }) : null;
-    const base = { can_sync: state.enabled && !closing, checked_at: row?.checked_at ?? null };
+    const { row, observed } = cached ?? {};
+    const base = { can_sync: state.enabled && !closing, checked_at: observed?.checked_at ?? row?.checked_at ?? null };
     if (task?.status === 'syncing') return { ...base, status: 'syncing' };
     if (task?.status === 'stale') return { ...base, status: 'stale' };
+    if (observed?.status === 'stale' || (observed && row && (observed.revision !== row.remote_revision || observed.status === 'observed'))) return { ...base, status: 'stale' };
     if (!row) return { ...base, status: task?.status === 'error' ? 'error' : task?.status === 'stale' ? 'stale' : 'missing', error: task?.error };
     const report = parseCloudReview(row.report_json, { path: reviewPath(id, gameNumber) });
-    const localFingerprint = await replayInputFingerprintAsync(replay);
-    if (report.source_content_hash !== state.synced[id]?.content_hash || report.policy_version !== CLOUD_REVIEW_POLICY || localFingerprint !== row.local_fingerprint) return { ...base, status: 'stale' };
-    const review = normalizeReplayReview(replay, gameNumber, report, { source: 'cloud:chatgpt-cloud-agent', now: report.generated_at, fingerprint: localFingerprint });
-    review.summary.limitations = [...new Set([...report.coverage.limitations, ...review.summary.limitations])].slice(0, 4);
-    return { ...base, status: 'ready', review: { ...review, source_content_hash: report.source_content_hash, coverage: report.coverage },
+    if (report.source_content_hash !== state.synced[id]?.content_hash || report.policy_version !== CLOUD_REVIEW_POLICY) return { ...base, status: 'stale' };
+    const result = await compute().run('cloudReviewRead', { replay, report, expectedFingerprint: row.local_fingerprint });
+    if (result.status !== 'ready') return { ...base, status: 'stale' };
+    const currentSettings = await readCoachSyncState(dataDir);
+    if (currentSettings.repository !== state.repository || currentSettings.synced[id]?.content_hash !== report.source_content_hash) return { ...base, status: 'stale' };
+    // A different reader can invalidate or replace this cache while the worker
+    // is normalizing it. Recheck the durable receipt AFTER that async boundary.
+    const currentReceipt = await cache(dataDir, false, db => {
+      const target = db.prepare('SELECT branch FROM cloud_review_targets WHERE repository=?').get(state.repository);
+      const current = db.prepare('SELECT * FROM cloud_review_cache WHERE repository=? AND branch=? AND match_id=? AND game_number=?').get(state.repository, row.branch, id, gameNumber);
+      if (target?.branch !== row.branch || !current || current.remote_revision !== row.remote_revision || current.report_json !== row.report_json || current.local_fingerprint !== row.local_fingerprint) return false;
+      const observation = db.prepare("SELECT 1 FROM sqlite_master WHERE name='cloud_review_observations'").get()
+        ? db.prepare('SELECT revision,status FROM cloud_review_observations WHERE repository=? AND branch=? AND match_id=? AND game_number=?').get(state.repository, row.branch, id, gameNumber) : null;
+      return !observation || (observation.revision === row.remote_revision && observation.status === 'ready');
+    });
+    if (!currentReceipt) return { ...base, status: 'stale' };
+    if (tasks.get(keyOf(id, gameNumber))?.status === 'syncing') return { ...base, status: 'syncing' };
+    return { ...base, ...result,
       offline: task?.status === 'error', error: task?.error };
   }
   function start(id, gameNumber) {
@@ -135,6 +164,7 @@ export function createCloudReviewReader({ loadReplay, dataDir = defaultDataDir()
     while (tasks.size > 32) tasks.delete(tasks.keys().next().value);
     task.done = (async () => {
       try {
+        let verifiedRevision;
         const onVerifiedTarget = async ({ repository, branch }) => {
           const settings = await readCoachSyncState(dataDir);
           if (repository !== settings.repository || !/^[A-Za-z0-9][A-Za-z0-9_.\/-]{0,127}$/.test(branch ?? '') || branch.includes('..')) reviewReject('sync-target');
@@ -142,32 +172,65 @@ export function createCloudReviewReader({ loadReplay, dataDir = defaultDataDir()
             ON CONFLICT(repository) DO UPDATE SET branch=excluded.branch,checked_at=excluded.checked_at`)
             .run(repository, branch, new Date().toISOString()));
         };
-        const { source, report, repository, branch } = await fetchReview(id, gameNumber, { ...options, dataDir, onVerifiedTarget });
+        const onVerifiedRevision = async value => {
+          if (value.matchId !== id || value.gameNumber !== gameNumber || !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(value.revision ?? '')) reviewReject('sync-revision');
+          await cache(dataDir, true, db => {
+            const target = db.prepare('SELECT branch FROM cloud_review_targets WHERE repository=?').get(value.repository);
+            if (target?.branch !== value.branch) reviewReject('sync-target');
+            db.prepare(`INSERT INTO cloud_review_observations VALUES (?,?,?,?,?,'observed',?)
+              ON CONFLICT(repository,branch,match_id,game_number) DO UPDATE SET revision=excluded.revision,
+              status=CASE WHEN cloud_review_observations.revision=excluded.revision THEN cloud_review_observations.status ELSE 'observed' END,
+              checked_at=excluded.checked_at`).run(value.repository, value.branch, id, gameNumber, value.revision, new Date().toISOString());
+          });
+          verifiedRevision = value.revision;
+        };
+        const { source, sourceInput, report, repository, branch } = await fetchReview(id, gameNumber,
+          { ...options, computePool: compute(), deferSourceVerification: true, dataDir, onVerifiedTarget, onVerifiedRevision });
         if (closing) return;
         const settings = await readCoachSyncState(dataDir);
         if (repository !== settings.repository || !/^[A-Za-z0-9][A-Za-z0-9_.\/-]{0,127}$/.test(branch ?? '')) reviewReject('sync-target');
+        // Compatibility for trusted in-process fetch providers used by offline
+        // integrations. The production fetch always records its revision inside
+        // the fetch lease before parsing any untrusted source/report bytes.
+        if (!verifiedRevision && fetchReview !== fetchCloudReview) await onVerifiedRevision({ repository, branch, matchId: id, gameNumber, revision: sourceInput?.revision ?? source?.revision });
+        if (!verifiedRevision || verifiedRevision !== (sourceInput?.revision ?? source?.revision)) reviewReject('sync-revision');
+        const publish = async (status, fingerprint) => cache(dataDir, true, db => {
+          db.exec('BEGIN IMMEDIATE');
+          try {
+            const target = db.prepare('SELECT branch FROM cloud_review_targets WHERE repository=?').get(repository);
+            const observation = db.prepare('SELECT revision FROM cloud_review_observations WHERE repository=? AND branch=? AND match_id=? AND game_number=?').get(repository, branch, id, gameNumber);
+            if (target?.branch !== branch || observation?.revision !== verifiedRevision) { db.exec('ROLLBACK'); return false; }
+            if (status === 'ready') db.prepare(`INSERT INTO cloud_review_cache VALUES (?,?,?,?,?,?,?,?)
+              ON CONFLICT(repository,branch,match_id,game_number) DO UPDATE SET checked_at=excluded.checked_at,
+              local_fingerprint=excluded.local_fingerprint,report_json=excluded.report_json,remote_revision=excluded.remote_revision`)
+              .run(repository, branch, id, gameNumber, new Date().toISOString(), fingerprint, JSON.stringify(report), verifiedRevision);
+            else db.prepare('DELETE FROM cloud_review_cache WHERE repository=? AND branch=? AND match_id=? AND game_number=?').run(repository, branch, id, gameNumber);
+            db.prepare('UPDATE cloud_review_observations SET status=?,checked_at=? WHERE repository=? AND branch=? AND match_id=? AND game_number=?')
+              .run(status, new Date().toISOString(), repository, branch, id, gameNumber);
+            db.exec('COMMIT'); return true;
+          } catch (error) { db.exec('ROLLBACK'); throw error; }
+        });
         if (!report) {
-          await cache(dataDir, true, db => db.prepare('DELETE FROM cloud_review_cache WHERE repository=? AND match_id=? AND game_number=?').run(repository, id, gameNumber));
-          task.status = 'missing'; return;
+          if (sourceInput) await compute().run('cloudReviewSync', { sourceInput, report: null });
+          task.status = await publish('missing') ? 'missing' : 'stale'; return;
         }
-        if (validateCloudReviewBinding(report, source).status !== 'ready') { task.status = 'stale'; return; }
-        const replay = structuredClone(await loadReplay(id)), game = findReviewGame(replay, gameNumber);
+        // Injected fetchers are trusted dependencies, but still need an opaque
+        // source verdict. Production fetch returns raw bytes for worker checks.
+        if (!sourceInput && validateCloudReviewBinding(report, source).status !== 'ready') { await publish('stale'); task.status = 'stale'; return; }
+        const replay = await loadReplay(id), game = findReviewGame(replay, gameNumber);
         if (!game) reviewReject('local-game');
-        const bundle = await buildCoachBundle(replay, { cards: source.cards, historyKey: source.history_key, multipart: true });
-        if (bundle.contentHash !== source.content_hash) { task.status = 'stale'; return; }
-        await adaptCloudReview(report, source); // Exercise #4 semantics before caching.
-        const fingerprint = await replayInputFingerprintAsync(replay);
+        const verified = await compute().run('cloudReviewSync', { sourceInput,
+          sourceMetadata: sourceInput ? undefined : { cards: source.cards, history_key: source.history_key, content_hash: source.content_hash }, report, replay });
+        if (verified.status !== 'ready') { await publish('stale'); task.status = 'stale'; return; }
+        const fingerprint = verified.fingerprint;
         const current = await loadReplay(id), currentGame = findReviewGame(current, gameNumber);
-        if (!currentGame || await replayInputFingerprintAsync(current) !== fingerprint) { task.status = 'stale'; return; }
+        if (!currentGame || await compute().run('cloudReviewFingerprint', { replay: current }) !== fingerprint) { await publish('stale'); task.status = 'stale'; return; }
         if (closing) return;
-        await cache(dataDir, true, db => db.prepare(`INSERT INTO cloud_review_cache VALUES (?,?,?,?,?,?,?)
-          ON CONFLICT(repository,branch,match_id,game_number) DO UPDATE SET checked_at=excluded.checked_at, local_fingerprint=excluded.local_fingerprint,report_json=excluded.report_json`)
-          .run(repository, branch, id, gameNumber, new Date().toISOString(), fingerprint, JSON.stringify(report)));
-        task.status = 'ready';
+        task.status = await publish('ready', fingerprint) ? 'ready' : 'stale';
       } catch { task.status = 'error'; task.error = '云端复盘同步未完成；保留上次校验结果，比赛记录未变。'; }
     })();
     return { code: 202, status: 'syncing' };
   }
   return { read, start, wait: () => Promise.all([...tasks.values()].map(task => task.done)),
-    close: async () => { closing = true; await Promise.all([...tasks.values()].map(task => task.done)); } };
+    close: async () => { closing = true; await Promise.all([...tasks.values()].map(task => task.done)); await ownedPool?.close(); } };
 }

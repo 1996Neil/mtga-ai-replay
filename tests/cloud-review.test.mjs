@@ -13,14 +13,33 @@ const make = async () => { const value = await bundle({ richer: true, coachOptio
   return { value, files, source, report: reportForSource(source) }; };
 const rejected = error => ['MTGA_CLOUD_REVIEW', 'MTGA_SYNC_SECURITY'].includes(error.code);
 
-test('strict V1 roundtrip adapts to PR4 display with coverage and conservative severity', async () => {
+test('strict V1 roundtrip preserves importance but never promotes a legacy claim to a proven error', async () => {
   const { source, report } = await make(); report.notes[0].severity = 'critical';
   assert.deepEqual(parseCloudReview(JSON.stringify(report)), report);
   const result = await adaptCloudReview(report, source);
   assert.equal(result.status, 'ready'); assert.equal(result.review.notes[0].severity, 'tip');
+  assert.equal(result.review.notes[0].importance, 'critical');
+  assert.equal(result.review.notes[0].assessment, 'possible_error');
+  assert.equal(result.review.notes[0].confidence, 'low');
   assert.equal(result.review.notes[0].cards[0], 'Forest');
   assert.equal(result.review.source_content_hash, source.content_hash);
   assert.equal(result.review.summary.limitations[0], report.coverage.limitations[0]);
+});
+
+test('V2 importance, assessment and confidence vary independently; unsupported certainty fails closed', async () => {
+  const { source, report } = await make(); report.schema = 'MTGA_AI_REVIEW_V2';
+  delete report.notes[0].severity;
+  for (const importance of ['critical', 'major', 'normal']) for (const assessment of ['suggestion', 'possible_error', 'positive']) for (const confidence of ['low', 'medium', 'high']) {
+    Object.assign(report.notes[0], { importance, assessment, confidence });
+    assert.equal(validateBundleFiles(new Map([[reviewPath(report.match_id, 1), JSON.stringify(report)]])).ok, true);
+    const { review } = await adaptCloudReview(report, source);
+    assert.equal(review.notes[0].importance, importance); assert.equal(review.notes[0].assessment, assessment);
+    assert.equal(review.notes[0].confidence, confidence);
+  }
+  report.notes[0].assessment = 'confirmed_error';
+  assert.throws(() => validateCloudReviewBinding(report, source), rejected);
+  report.notes[0].assessment = 'possible_error'; report.notes[0].proof = 'AI 自称证明';
+  assert.throws(() => parseCloudReview(JSON.stringify(report)), rejected);
 });
 
 test('review history is readable but never acquires replay or collection write authority', async () => {

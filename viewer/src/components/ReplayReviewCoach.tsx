@@ -2,19 +2,17 @@ import { useEffect, useLayoutEffect, useRef, useState, useMemo } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
 import './ReplayReviewCoach.css';
+import { reviewPresentation, importanceLabel } from '../replay/reviewPresentation';
+import type { Severity, Importance, Assessment } from '../replay/reviewPresentation';
 
-type Severity = 'critical' | 'major' | 'tip' | 'positive';
 type Boundary = 'before' | 'after';
 type Note = { anchor: string; boundary: Boundary; severity: Severity; confidence: 'high'|'medium'|'low';
+  importance?: Importance; assessment?: Assessment;
   title: string; observation: string; suggestion: string; rationale?: string; cards: string[]; limitation?: string };
 type Review = { schema_version: string; match_id: string; game_number: number; source: string; created_at: string;
   summary: { headline: string; overview: string; strengths: string[]; improvements: string[]; limitations: string[] }; notes: Note[] };
 type Match = { matchId: string; gameNumber: number; steps: Array<{ anchor: string }> };
 type Rect = { left: number; top: number; width: number; height: number };
-const label: Record<Severity, string> = { critical: '重大问题', major: '重要建议', tip: '策略提示', positive: '优秀操作' };
-const symbol: Record<Severity, string> = { critical: '!', major: '!', tip: 'i', positive: '✓' };
-const severityOrder: Severity[] = ['critical', 'major', 'tip', 'positive'];
-const confidence = { high: '较高', medium: '中等', low: '较低' };
 const bounded = (value: number, max: number) => Math.max(8, Math.min(Math.max(8, max), value));
 const displayDate = (value?: string | null) => value && Number.isFinite(Date.parse(value))
   ? new Date(value).toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai' }) : '未知日期';
@@ -144,14 +142,15 @@ export function ReplayReviewCoach({ match, currentStepIndex, viewBefore, onJump 
   };
   const markerButtons = markers.map((group, index) => {
     const first = group[0], winner = group.slice().sort((a, b) =>
-      severityOrder.indexOf(a.severity) - severityOrder.indexOf(b.severity))[0];
+      reviewPresentation(a).rank - reviewPresentation(b).rank)[0];
+    const appearance = reviewPresentation(winner);
     const left = first.index / Math.max(match.steps.length - 1, 1) * 100;
     return <button key={first.anchor + index} type="button"
-      className={`replay-review-marker severity-${winner.severity}`}
+      className={`replay-review-marker severity-${appearance.tone}`}
       style={{ left: `${left}%` }}
-      aria-label={`${label[winner.severity]}，${group.length} 条，${first.anchor}，点击定位`}
-      title={`${first.anchor} · ${label[winner.severity]} · ${group.length} 条建议`}
-      onClick={() => choose(first)}>{group.length > 1 ? group.length : symbol[winner.severity]}</button>;
+      aria-label={`${appearance.accessible}，${group.length} 条，${first.anchor}，点击定位`}
+      title={`${first.anchor} · ${appearance.accessible} · ${group.length} 条建议`}
+      onClick={() => choose(first)}>{group.length > 1 ? group.length : appearance.symbol}</button>;
   });
   const changeSelected = (direction: -1|1) => {
     if (!ordered.length) return;
@@ -217,10 +216,11 @@ export function ReplayReviewCoach({ match, currentStepIndex, viewBefore, onJump 
           </button>
           {!canSync && <p>云端复盘使用已有私有数据仓库连接；本地无需模型密钥。</p>}
         </> : selected ? <>
-          <div className="replay-review-meta"><span className={`severity-text-${selected.severity}`}>
-            {symbol[selected.severity]} {label[selected.severity]}</span>
+          <div className="replay-review-meta"><span className={`severity-text-${reviewPresentation(selected).tone}`}>
+            {reviewPresentation(selected).symbol} {reviewPresentation(selected).label}</span>
             <span>{selected.anchor} · 动作{selected.boundary === 'before' ? '前' : '后'}</span>
-            <span>置信度：{confidence[selected.confidence]}</span></div>
+            <span>置信度：{reviewPresentation(selected).confidence}</span></div>
+          <p className="replay-review-muted">AI 判断：{reviewPresentation(selected).judgment} · 不代表规则裁定</p>
           <h3>{selected.title}</h3>
           {selected.cards.length > 0 && <div className="replay-review-cards">{selected.cards.map(card =>
             <code key={card}>{card}</code>)}</div>}
@@ -238,7 +238,7 @@ export function ReplayReviewCoach({ match, currentStepIndex, viewBefore, onJump 
           {review.summary.improvements.length > 0 && <div><b>↗ 后续重点</b><ul>{review.summary.improvements.map((s,i)=><li key={i}>{s}</li>)}</ul></div>}
           {review.summary.limitations.length > 0 && <details><summary>分析边界</summary><ul>{review.summary.limitations.map((s,i)=><li key={i}>{s}</li>)}</ul></details>}
           <div className="replay-review-legend" aria-label="时间轴标记图例">
-            {severityOrder.map(k=><span key={k} className={`severity-text-${k}`}>{symbol[k]} {label[k]}</span>)}
+            {(['critical','major','normal'] as Importance[]).map(k=><span key={k} className={`severity-text-${k === 'normal' ? 'tip' : k}`}>{k === 'normal' ? 'i' : '◆'} {importanceLabel[k]}</span>)}
           </div>
           <nav className="replay-review-nav"><button type="button" disabled={!ordered.length} onClick={() => changeSelected(1)}>查看第一条建议 →</button></nav>
         </>}
