@@ -47,7 +47,7 @@
 
 ### P1-C2：迟到的 POST body 可在 stop 后重新启动教练（已修复）
 
-- **位置：** `src/live-coach/routes.mjs:35–50`。
+- **位置：** historical legacy integration; the live Coach route has since been removed from the public Replay source.
 - **触发：** 合法 POST 只发送部分 body；服务已经 stop 教练、仍等待另一个后台任务；此时 body 才完整到达。
 - **影响与证据：** 原版返回 200 并调用 start；修后返回 503、start 次数为 0。反例使用纯合成 runtime，没有真实模型或音频调用。
 - **最小修复：** routes 接收只读 `isClosing` 回调，在 body await 后、动作之前重新核对。证据：`collection/shutdown-after.log`。

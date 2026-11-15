@@ -14,12 +14,9 @@ The legacy voice code and launcher remain in Git; the original desktop checkout 
 
 This repository contains the MTGA Replay backend, owned Viewer integration,
 tests, three lockfiles and local platform tools. It is separate from the
-private replay **data** repository. Older optional Coach/Live Coach adapters
-remain in the source tree for compatibility, but they are not required by the
-replay viewer or replay import workflow.
-The latest model-provider work and subsequent manual replay-sync/service-identity
-changes are included. Existing applications and frozen delivery snapshots were
-not changed by this source export.
+private replay **data** repository.
+The latest replay-sync and service-identity changes are included. Existing
+applications and frozen delivery snapshots were not changed by this source export.
 
 Subsequent scoped history-approval safeguards are also preserved: legacy data
 history needs an explicit local approval bound to repository, branch, commit and
@@ -37,7 +34,6 @@ node_modules. From a fresh clone:
 npm ci --ignore-scripts
 npm ci --ignore-scripts --prefix viewer
 npm test
-npm run coach:test
 npm run viewer:test
 npm run viewer:build
 npm run test:cloud
@@ -46,7 +42,7 @@ npm start -- --port 8787
 ```
 
 Dependency installation needs the npm registry or a populated cache. Tests use
-only mocked model/TTS responses, synthetic logs, temporary local repositories,
+synthetic logs, temporary local repositories,
 and explicitly deidentified windows. No real GPT/TTS requests are made. `npm test`
 retains but explicitly skips eight tests requiring the private locked data
 history. `viewer:test` runs the complete Viewer suite. No missing data is replaced
@@ -72,9 +68,7 @@ setup. The collection publisher's personal repository binding was replaced in
 this export with `example-user/mtga-replay-data`; configure it deliberately before
 any separately authorized real collection publishing.
 
-The optional legacy Coach adapters have separate provider catalogs, login and
-paid speech authorization. No credentials or grants are packaged; Replay import
-and viewing do not call model or speech services.
+Replay import and viewing do not call model, voice or paid-provider services.
 
 No raw Player.log, personal SQLite history, credentials, cookies, tokens, account
 configuration, audio, card collection/cache, acceptance logs or upstream artwork

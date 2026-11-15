@@ -170,7 +170,7 @@ test('session capabilities reject fabricated, foreign-module and concurrently us
 });
 
 async function approvedFixture(t) {
-  const dir = await fixture(t), path = 'docs/research/live-coach/approved.md', text = '{"account_id":"synthetic-reference-only"}';
+  const dir = await fixture(t), path = 'docs/research/replay/approved.md', text = '{"account_id":"synthetic-reference-only"}';
   await add(dir, path, text);
   await command(dir, ['commit', '-qm', 'Synthetic approved research'], undefined,
     { GIT_AUTHOR_EMAIL: 'synthetic-research@example.invalid', GIT_COMMITTER_EMAIL: 'synthetic-research@example.invalid' });

@@ -10,7 +10,6 @@ test('cloud review and UI integration preserves the App entry points', async () 
   for (const pattern of [/<ReplayReviewCoach\b/, /onJump\s*=/, /\bintegrityMessages\b/, /advanced-tools/, /id="replay-controls"/]) {
     assert.ok(pattern.test(app), `Required App entry point missing: ${pattern}`);
   }
-  assert.ok(!/import[^;]*\bLiveCoachPanel\b/s.test(app), 'LiveCoachPanel must remain detached');
   assert.ok(!/<NearbyActions\b/.test(app), 'NearbyActions must not render in App');
 });
 

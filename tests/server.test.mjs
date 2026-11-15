@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { request } from 'node:http';
-import { EventEmitter } from 'node:events';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdtemp, mkdir, writeFile, rm, symlink, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -59,7 +58,6 @@ test('fixed local sync rejects foreign origins, missing action header and arbitr
   assert.equal((await fetch(url + 'api/sync', { method: 'OPTIONS' })).status, 405);
   assert.equal(calls, 0);
 });
-
 test('rapid sync requests share one job, expose progress and structured partial results', async t => {
   let calls = 0, release;
   const gate = new Promise(resolve => { release = resolve; });
@@ -77,7 +75,6 @@ test('rapid sync requests share one job, expose progress and structured partial 
   assert.notEqual((await syncPost(url).then(r => r.json())).id, a.id);
   await finishedJob(url); assert.equal(calls, 2);
 });
-
 test('a replay arriving during sync schedules one automatic follow-up without another log change', async t => {
   let releaseImport, releaseSync, calls = 0;
   const importGate = new Promise(resolve => { releaseImport = resolve; });
@@ -96,7 +93,6 @@ test('a replay arriving during sync schedules one automatic follow-up without an
   assert.equal(calls, 2);
   await finishedJob(running.url);
 });
-
 test('unexpected sync exceptions never expose raw credentials or local paths', async t => {
   const { url } = await setup(t, { syncWorkflow: async () => { throw new Error('ghp_SyntheticSecret /Users/synthetic/private.log'); } });
   await syncPost(url); const job = await finishedJob(url);
@@ -297,43 +293,4 @@ test('shutdown rejects new work while a completed task notification is still dra
   releaseNotification(); await closing;
   assert.equal(running.server.listening, false);
   await running.close();
-});
-
-test('shutdown rejects a coach POST whose body finishes after the coach was stopped', async t => {
-  const { startLegacyCoachServer } = await import('../src/legacy-coach-server.mjs');
-  const directory = await mkdtemp(join(tmpdir(), 'mtga-shutdown-coach-test-'));
-  const viewerDir = join(directory, 'viewer');
-  await mkdir(viewerDir); await writeFile(join(viewerDir, 'index.html'), 'Synthetic shutdown fixture');
-  let releaseSync, syncEntered, starts = 0, stops = 0;
-  const syncGate = new Promise(resolve => { releaseSync = resolve; });
-  const didSync = new Promise(resolve => { syncEntered = resolve; });
-  const runtime = { controller: new EventEmitter(), snapshot: () => ({ enabled: starts > stops }),
-    start: async () => { starts++; }, stop: async () => { stops++; } };
-  const running = await startLegacyCoachServer({ dataDir: join(directory, 'data'), viewerDir, writeInfo: false,
-    displayNamesZh: new Map(), observeLocalLogs: false, liveCoach: runtime,
-    syncWorkflow: async () => { syncEntered(); await syncGate; return { status: 'succeeded' }; },
-    notifyTask: async () => ({ attempted: false, accepted: false }) });
-  let closing, pending;
-  t.after(async () => {
-    pending?.destroy(); releaseSync();
-    if (closing) await closing; else await running.close();
-    await rm(directory, { recursive: true, force: true });
-  });
-  await syncPost(running.url); await didSync;
-  const entered = new Promise(resolve => running.server.once('request', resolve));
-  const response = new Promise((resolve, reject) => {
-    pending = request(running.url + 'api/live-coach/start', { method: 'POST', headers: {
-      Origin: new URL(running.url).origin, 'X-MTGA-Coach-Action': 'session',
-      'Content-Type': 'application/json', 'Content-Length': '2' } }, result => {
-      result.resume(); result.on('end', () => resolve(result.statusCode));
-    });
-    pending.on('error', reject); pending.write('{');
-  });
-  await entered; closing = running.close();
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(stops, 1);
-  pending.end('}');
-  assert.equal(await response, 503);
-  assert.equal(starts, 0);
-  releaseSync(); await closing;
 });

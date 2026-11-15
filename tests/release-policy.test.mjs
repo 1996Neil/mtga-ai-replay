@@ -14,7 +14,7 @@ test('release policy excludes runtime data and credential-shaped content while s
   assert.equal(forbiddenPath('viewer/src/components/GameBoard.tsx'), false);
   assert.equal(forbiddenPath('viewer/src/index.css'), false);
   assert.deepEqual(inspectRecord('viewer/src/components/GameBoard.tsx', Buffer.from('ghp_' + 'A'.repeat(32))), ['credential-shaped value']);
-  assert.equal(forbiddenPath('src/live-coach/providers/deepseek.mjs'), false);
+  assert.equal(forbiddenPath('src/replay.mjs'), false);
   const secretLike = 'ghp_' + 'A'.repeat(32);
   assert.deepEqual(inspectRecord('src/example.mjs', Buffer.from(secretLike)), ['credential-shaped value']);
   assert.deepEqual(inspectRecord('tests/example.test.mjs', Buffer.from('ghp_SYNTHETIC_SUPER_SECRET')), []);

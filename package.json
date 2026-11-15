@@ -15,8 +15,6 @@
     "viewer:install": "npm ci --ignore-scripts --prefix viewer",
     "viewer:build": "npm --prefix viewer run build",
     "viewer:test": "node scripts/test.mjs --viewer --full-viewer",
-    "coach:offline": "node bin/mtga-gpt-replay.mjs live-coach serve --enable --offline",
-    "coach:test": "node scripts/test.mjs --coach",
     "start": "node scripts/cloud-dev.mjs",
     "test:private-corpus": "node scripts/test.mjs --private-corpus",
     "test:cloud": "node --test tests/cloud-dev.test.mjs tests/release-policy.test.mjs",

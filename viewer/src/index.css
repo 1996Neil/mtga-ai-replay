@@ -681,42 +681,6 @@ a{
 .sync-details>button{float:right;padding:0 4px}
 @keyframes sync-spin{to{transform:rotate(360deg)}}
 @media(prefers-reduced-motion:reduce){.sync-button[aria-busy=true] svg{animation:none}}
-/* Coach controls stay in the toolbar; the expanded panel never takes board space. */
-.live-coach-toolbar { position: relative; flex-shrink: 0; }
-.live-coach-toolbar + .mode-switch { margin-left: 0; }
-.coach-toolbar-button { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 5px 9px; border: 1px solid #46514e; border-radius: 5px; background: #2b3432; color: #d2dfd8; font-size: 12px; white-space: nowrap; }
-.coach-toolbar-button:hover, .coach-toolbar-button[aria-expanded=true] { background: #394641; }
-.coach-toolbar-button span { color: #becdc6; font-size: 11px; }
-.live-coach-panel { position: absolute; top: calc(100% + 8px); right: 0; z-index: 230; width: min(680px, calc(100vw - 24px)); max-height: calc(100dvh - 110px); overflow: auto; margin: 0; padding: 10px 14px; border: 1px solid #586371; border-radius: 8px; background: #19212b; color: #f1f3f5; box-shadow: 0 12px 32px #0009; }
-.live-coach-panel > div { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
-.live-coach-panel .coach-popover-heading { justify-content: space-between; margin-bottom: 10px; }
-.live-coach-panel button { border: 1px solid #697b8d; padding: 5px 10px; border-radius: 5px; background: #283747; color: inherit; cursor: pointer; }
-.live-coach-panel button:disabled { opacity: .55; cursor: default; }
-.live-coach-panel p { margin: 8px 0 2px; }
-.live-coach-panel pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto; font-size: 12px; }
-.live-coach-setup-container { display: block !important; margin-top: 10px; padding-top: 10px; border-top: 1px solid #586371; }
-.live-coach-setup { max-height: min(48dvh, 440px); overflow: auto; padding: 3px; overflow-wrap: anywhere; }
-.live-coach-setup button { min-height: 36px; }
-.live-coach-setup .coach-setup-note { margin-top: 0; color: #c9d4df; }
-.coach-connection-status { margin: 10px 0 14px; padding: 10px 12px; border: 1px solid #586371; border-radius: 6px; background: #202b37; }
-.coach-connection-status > div, .coach-setup-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
-.coach-connection-status summary { margin-top: 8px; cursor: pointer; }
-.coach-connection-status ul { padding-left: 20px; margin: 8px 0 0; }
-.coach-connection-status code { margin-left: 6px; color: #c9d4df; }
-.live-coach-panel .coach-setup-notice { color: #f3d3a2; }
-.coach-voice-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-.coach-voice-provider { min-width: 0; margin: 0; padding: 10px 12px 12px; border: 1px solid #586371; border-radius: 6px; }
-.coach-voice-provider legend { padding: 0 4px; font-weight: 600; }
-.coach-voice-provider legend span { margin-left: 8px; font-size: 12px; font-weight: 400; color: #c9d4df; }
-.coach-voice-provider label { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 10px; margin: 6px 0; }
-.coach-voice-provider small, .coach-setup-actions small { color: #c9d4df; }
-.coach-voice-provider > small { display: block; margin-top: 8px; }
-.coach-voice-provider input, .coach-voice-provider select { display: block; width: 100%; min-width: 0; min-height: 36px; padding: 6px 8px; border: 1px solid #697b8d; border-radius: 5px; background: #121a24; color: inherit; }
-.coach-voice-provider input:disabled, .coach-voice-provider select:disabled { opacity: .6; cursor: default; }
-.coach-voice-provider button { margin-top: 10px; }
-.coach-setup-actions { margin-top: 12px; }
-.live-coach-panel .coach-setup-error { color: #ffccc5; }
-
 /* Short windows reserve both HUDs and transport; art crops compactly while names/stats stay readable. */
 @media(max-height:760px) {
   #root, .app-shell { min-height: 0; }
@@ -734,7 +698,6 @@ a{
   .land-pile-state { font-size: 9px; }
   .nearby-action { min-height: 22px; padding-block: 2px; }
   .turn-scrubber { height: 12px; margin-top: 5px; }
-  .live-coach-panel { max-height: calc(100dvh - 120px); }
 }
 #root, .app-shell { min-height: 0; }
 .card-readout.card-caption { display: flex; align-items: center; gap: 4px; height: 18px; min-height: 18px; padding: 0 1px; border-radius: 0; background: transparent; }

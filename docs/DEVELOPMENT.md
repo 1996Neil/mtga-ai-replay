@@ -16,15 +16,12 @@ integrity inventory. Neither file is downloaded or uploaded by these commands:
 
 ```bash
 MTGA_PRIVATE_CORPUS_DIR=/path/to/existing/private-data-checkout \
-MTGA_PRIVATE_HELDOUT_FIXTURE=/path/to/original/live-coach-heldout-windows.json \
 npm run test:private-corpus
 ```
 
-The deidentified rule windows remain the same current-perspective observations:
-names Me/Opponent, empty unknown opponent hands, no account IDs, no raw logs or
-future-result fields in inference inputs. Stable match/state IDs exist only to
-join regression cases. The heldout archive timestamp/path/hash inventory was
-excluded from the exported JSON; its original copy remains local.
+The remaining private-corpus checks cover authorized replay history only. No
+private logs, account IDs, credentials or heldout coaching fixtures are required
+by the public replay test suite.
 
 ## Viewer permission boundary
 
@@ -52,12 +49,5 @@ necessary rights; this private PR authorization does not supply them.
 The macOS launcher icon also needs rights verification and an explicit local
 asset before installing the native launcher. Installation is outside cloud setup.
 
-## Model and voice checks
-
-The explicit model catalog, strict checked-candidate output contract, DeepSeek
-bounded request/budget ledger, cancellation and Chinese-advice leases are covered
-offline. Tests use clearly synthetic tokens/keys and non-audio transport bytes.
-Passing them proves code contracts, not model quality, real latency, pronunciation
-or acoustic cancellation. A user-approved service pilot and controllable practice
-match remain necessary for those claims. No paid endpoint is part of npm setup,
-start, test, or release scanning.
+Replay setup does not require model, voice or paid-provider credentials. No paid
+endpoint is part of npm setup, start, test or release scanning.

@@ -8,7 +8,6 @@ import { boardRelationships } from '../viewer/src/lib/relationships.ts';
 import { withoutCombatDuplicates } from '../viewer/src/lib/relationshipLayers.ts';
 import { describeEventZh } from '../viewer/src/lib/display.ts';
 import { observationGroup } from '../viewer/src/lib/observationGroups.ts';
-import { snapshotToLiveState } from '../src/live-coach/state.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -90,9 +89,6 @@ test('only committed combat actions enter the replay file while live state keeps
   assert.equal(events.find(e => e.type === 'block').card.instance_id, 103);
   assert.equal(events.some(e => /selection|cancelled/.test(e.type)), false);
   assert.equal(match.steps.some(step => step.stateId === 'S6'), false);
-  const live = snapshotToLiveState(raw.games[0].states.S5, { sessionId: 'test', matchId: raw.match.id, seq: 1, stateComplete: true });
-  assert.deepEqual(live.committed_combat.blockers, []);
-  assert.deepEqual(live.tentative.blockers, [{ instance_id: 102, attacker_ids: [101] }]);
   assert.doesNotMatch(events.map(event => describeEventZh(event)).join('\n'), /待确认|撤销/);
   assert.equal(match.steps.some(step => step.event?.type === 'game_over'), true);
 });

@@ -9,10 +9,6 @@ import { openViewer } from '../src/launch-viewer.mjs';
 import { configureCoachSync, getCoachSyncStatus, syncErrorMessage } from '../src/coach-sync.mjs';
 import { syncCoachCatalog, printCatalogSync } from '../src/coach-catalog-sync.mjs';
 
-if (process.argv[2] === 'live-coach') {
-  try { await (await import('./mtga-live-coach.mjs')).main(process.argv.slice(3)); }
-  catch (error) { console.error(`mtga-gpt-replay live-coach: ${error.message}`); process.exitCode = 1; }
-} else {
 const help = `Usage: mtga-gpt-replay latest [--jump-in | --all]
        mtga-gpt-replay last 5 [--all]
        mtga-gpt-replay replay latest
@@ -100,5 +96,4 @@ try {
   const syncCommand = process.argv.includes('sync');
   console.error(`mtga-gpt-replay: ${syncCommand ? syncErrorMessage(error) : error.message}`);
   process.exitCode = 1;
-}
 }

@@ -6,7 +6,6 @@ import { join } from 'node:path';
 import { normalizeReplayReview, reviewIsCurrent, selectReviewDecisions,
   reviewDecisionContext, reviewFingerprint } from '../src/review/review-model.mjs';
 import { readReplayReview, writeReplayReview } from '../src/review/review-store.mjs';
-import { createReplayReviewGenerator } from '../src/review/review-generator.mjs';
 
 const before = {
   turn: 3, phase: 'Phase_Main1', step: 'Step_Main',
@@ -51,14 +50,12 @@ test('review stores exact English names and rejects unobserved opponent cards', 
   assert.equal(record.summary.headline, sample.summary.headline);
   assert.equal(reviewIsCurrent(replay(), record), true);
 });
-
 test('low-confidence critical advice is downgraded rather than painted red', () => {
   const record = normalizeReplayReview(replay(), 1, {
     ...sample, notes: [{ ...sample.notes[0], severity: 'critical', confidence: 'low' }],
   });
   assert.equal(record.notes[0].severity, 'tip');
 });
-
 test('invalid anchors and missing before-states are not relocated or fabricated', () => {
   const record = normalizeReplayReview(replay(), 1, { ...sample,
     notes: [...sample.notes, { ...sample.notes[0], anchor: 'T99-A99' },
@@ -96,31 +93,4 @@ test('private SQLite review sidecar persists independently of replay history', a
   const record = normalizeReplayReview(replay(), 1, sample);
   await writeReplayReview(record, { dataDir });
   assert.deepEqual(await readReplayReview('synthetic-123', 1, { dataDir }), record);
-});
-
-test('review generator only sends each decision its own before-state, then separately summarizes', async () => {
-  const calls = [];
-  const fakeFetch = async (_url, options) => {
-    const input = JSON.parse(options.body);
-    const content = JSON.parse(input.messages[1].content);
-    calls.push(content);
-    const decision = Boolean(content.task);
-    const response = decision
-      ? { worth_noting: true, severity: 'tip', confidence: 'medium',
-          title: '决策', observation: 'Spell Snare 已施放', suggestion: '建议保留更多选择',
-          rationale: '无法证明其他行为的合法性', cards: ['Spell Snare', 'Secret Opponent Bomb'] }
-      : sample.summary;
-    return new Response(JSON.stringify({ choices: [{ finish_reason: 'stop',
-      message: { content: JSON.stringify(response) } }] }), { status: 200 });
-  };
-  const generate = createReplayReviewGenerator({ apiKey: 'synthetic-test-token',
-    fetchImpl: fakeFetch, decisionLimit: 4 });
-  const review = await generate(replay(), { gameNumber: 1 });
-  assert.equal(calls.length, 2);
-  assert.equal(calls[0].context.anchor, 'T3-A1');
-  assert.equal(JSON.stringify(calls[0]).includes('Secret Opponent Bomb'), false);
-  assert.equal(calls[1].timeline.length, 3);
-  assert.equal(review.notes.length, 1);
-  assert.deepEqual(review.notes[0].cards, ['Spell Snare']);
-  assert.ok(review.summary.limitations.some(s => s.includes('仅抽查')));
 });
