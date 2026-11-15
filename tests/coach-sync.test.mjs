@@ -672,8 +672,8 @@ test('incoming personal research is rejected before merging, generation or queue
   await archiveReplays([catalogReplay('synthetic-before-research', 1)], h.options); await syncCoachCatalog(h.options);
   const writer = join(h.dataDir, 'research-writer');
   await execute('git', ['clone', h.bare, writer], { env });
-  const document = 'docs/research/replay/synthetic-research.md';
-  await mkdir(join(writer, 'docs', 'research', 'replay'), { recursive: true });
+  const document = 'docs/research/live-coach/synthetic-research.md';
+  await mkdir(join(writer, 'docs', 'research', 'live-coach'), { recursive: true });
   await writeFile(join(writer, document), 'Synthetic non-replay research document.');
   await execute('git', ['add', '-f', '--', document], { cwd: writer, env });
   const personalEnv = { ...env, GIT_AUTHOR_NAME: 'Synthetic Research Author', GIT_AUTHOR_EMAIL: 'research-person@example.invalid', GIT_COMMITTER_NAME: 'Synthetic Research Author', GIT_COMMITTER_EMAIL: 'research-person@example.invalid' };
@@ -699,8 +699,8 @@ test('explicit local approval preserves existing remote research history while b
   await archiveReplays([catalogReplay('synthetic-before-approved-history', 1)], h.options); await syncCoachCatalog(h.options);
   const writer = join(h.dataDir, 'approved-research-writer');
   await execute('git', ['clone', h.bare, writer], { env });
-  const document = 'docs/research/replay/Existing_Research.md', text = 'Existing fixed synthetic research.';
-  await mkdir(join(writer, 'docs/research/replay'), { recursive: true });
+  const document = 'docs/research/live-coach/Existing_Research.md', text = 'Existing fixed synthetic research.';
+  await mkdir(join(writer, 'docs/research/live-coach'), { recursive: true });
   await writeFile(join(writer, document), text);
   await execute('git', ['add', '-f', '--', document], { cwd: writer, env });
   await execute('git', ['-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', 'commit', '-m', 'Existing synthetic research'], {

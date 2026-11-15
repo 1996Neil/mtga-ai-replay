@@ -59,7 +59,10 @@ const IMAGE_KEYS = new Set(['image', 'images', 'imageuris', 'imageurls', 'imageu
   'cardimage', 'cardimages', 'cachedimages', 'binarydata', 'imagedata', 'imagebase64', 'rawbytes']);
 const normalizedKey = value => value.toLowerCase().replace(/[^a-z0-9]/g, '');
 export const allowedPath = path => typeof path === 'string' && (ALLOWED_ROOT.has(path) || BUNDLE_PATH.test(path) || PART_PATH.test(path) || COLLECTION_PATH.test(path) || isReviewSyncPath(path) || isDraftSyncPath(path));
-const RESEARCH_PATH = /^docs\/research\/replay\/[A-Za-z0-9_-]{1,128}\.md$/;
+// The private data repository retains historical research paths from before
+// Replay became a replay-only source repository. This is a data namespace,
+// not a runtime module or public source path.
+const RESEARCH_PATH = /^docs\/research\/live-coach\/[A-Za-z0-9_-]{1,128}\.md$/;
 const OBJECT_HASH = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/;
 
 /** Explicit local consent for immutable, already-published history; never inferred from Git. */

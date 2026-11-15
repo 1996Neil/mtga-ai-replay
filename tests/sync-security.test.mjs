@@ -45,7 +45,7 @@ async function existingResearch(t, text = 'Existing immutable research.') {
   const dir = await repository(t);
   await git(dir, ['symbolic-ref', 'HEAD', 'refs/heads/main']);
   await add(dir, 'README.md', 'Safe fixture.'); await commit(dir);
-  const path = 'docs/research/replay/Existing_Research.md';
+  const path = 'docs/research/live-coach/Existing_Research.md';
   await add(dir, path, text);
   await personalCommit(dir);
   const approval = { schema: 'MTGA_SYNC_HISTORY_APPROVAL_V1', approved: true,
@@ -91,7 +91,7 @@ test('approved research documents cannot be staged as modifications, deletions o
     await git(h.dir, ['reset', '--hard', baseline]);
     if (action === 'modify') await add(h.dir, h.path, 'Changed research.');
     if (action === 'delete') await git(h.dir, ['rm', '--', h.path]);
-    if (action === 'rename') await git(h.dir, ['mv', '--', h.path, 'docs/research/replay/Renamed.md']);
+    if (action === 'rename') await git(h.dir, ['mv', '--', h.path, 'docs/research/live-coach/Renamed.md']);
     await assert.rejects(validateStagedRepository(h.dir, h.options), e => e.rule === 'unapproved-file-path');
   }
 });
@@ -112,7 +112,7 @@ test('approved document text is scanned and cannot grant its bytes a JSON data e
 });
 
 test('each approved document fingerprint is checked even when two paths share one blob', async t => {
-  const h = await existingResearch(t), path = 'docs/research/replay/Second_Research.md';
+  const h = await existingResearch(t), path = 'docs/research/live-coach/Second_Research.md';
   await add(h.dir, path, 'Existing immutable research.'); await personalCommit(h.dir);
   const approval = { ...h.approval,
     commits: [...h.approval.commits, (await git(h.dir, ['rev-parse', 'HEAD'])).stdout.trim()],

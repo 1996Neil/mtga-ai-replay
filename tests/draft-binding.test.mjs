@@ -98,6 +98,16 @@ test('replayed capture segments collapse within one bound course/account without
   assert.equal(sameAccount.matches.length, 1);
 });
 
+test('identical incomplete capture segments from a quit and reopen collapse', () => {
+  const older = capture('older'); older.picks = older.picks.slice(0, 2);
+  older.picks[1].complete = false; older.picks[1].missing = ['capture_gap'];
+  const newer = structuredClone(older); newer.run_id = 'newer'; newer.started_at = '2026-10-30T12:05:00+08:00';
+  const result = bindDraftCaptures([older, newer], []);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].run_id, 'newer');
+  assert.deepEqual(result[0].capture_run_ids, ['newer', 'older']);
+});
+
 test('partial course refresh retains already archived members and recomputes score', () => {
   const previous = course(); previous.matches[0].result = 'Loss';
   const next = course(); next.matches = [{ id: 'later', result: 'Win', started_at: '2026-10-30T04:00:00Z' }];

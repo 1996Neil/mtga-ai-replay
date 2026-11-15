@@ -105,13 +105,18 @@ export function bindDraftCaptures(captures, courses) {
     };
   });
   // Tracker restarts can replay the exact same selection. Show the newest capture
-  // once per bound course/account and retain all capture IDs as provenance.
+  // once per bound course/account. For unresolved partial captures, use the
+  // event/account plus the exact observed pick sequence; this collapses a
+  // quit/reopen replay without merging a different pick sequence.
   const unique = new Map(), output = [];
   for (const run of bound.sort((a, b) => Date.parse(b.started_at) - Date.parse(a.started_at) || a.run_id.localeCompare(b.run_id))) {
-    if (run.binding !== 'matched_pool') { output.push(run); continue; }
-    const selectionSignature = JSON.stringify(run.picks.map(pick =>
-      [pick.pack_number, pick.pick_number, pick.selected.arena_id, pick.candidates.map(card => card.arena_id)]));
-    const key = `${run.account_key ?? 'unassigned'}:${run.bound_run_id}:${selectionSignature}`;
+    const selectionSignature = JSON.stringify((run.picks ?? []).map(pick =>
+      [pick.pack_number, pick.pick_number, pick.selected?.arena_id ?? null,
+        (pick.candidates ?? []).map(card => card.arena_id),
+        Boolean(pick.complete), [...(pick.missing ?? [])].sort()]));
+    const key = run.binding === 'matched_pool'
+      ? `${run.account_key ?? 'unassigned'}:${run.bound_run_id}:${selectionSignature}`
+      : `${run.account_key ?? 'unassigned'}:${run.event_id}:${selectionSignature}`;
     const previous = unique.get(key);
     if (previous) previous.capture_run_ids.push(run.run_id);
     else { const value = { ...run, capture_run_ids: [run.run_id] }; unique.set(key, value); output.push(value); }
