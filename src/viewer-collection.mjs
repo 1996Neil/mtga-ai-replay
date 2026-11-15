@@ -4,13 +4,13 @@ import { collectionAccountKey } from './collection-scope.mjs';
 import { validAccountKey } from './account-scope.mjs';
 
 /** Invoke the same existing validated snapshot/publisher path as the installed CLI. */
-export function createViewerCollection({ dataDir, update = updateCollection, sync = syncCollection, notify, journal, accountKey }) {
+export function createViewerCollection({ dataDir, displayNamesZh, update = updateCollection, sync = syncCollection, notify, journal, accountKey }) {
   let savedLocalResult;
   return createViewerTask({ kind: 'collection', notify, journal, errorMessage: collectionErrorMessage,
     workflow: async ({ operation, onProgress }) => {
       onProgress({ phase: operation === 'sync' ? 'uploading' : 'reading' });
       let result;
-      try { result = await (operation === 'sync' ? sync : update)({ dataDir, accountKey, confirmAccount:true, readerOptions: { interactive: false } }); }
+      try { result = await (operation === 'sync' ? sync : update)({ dataDir, displayNamesZh, accountKey, confirmAccount:true, readerOptions: { interactive: false } }); }
       catch (error) {
         if (operation === 'sync' && savedLocalResult) return { ...savedLocalResult, status: 'partial', synced: false, error: collectionErrorMessage(error) };
         throw error;

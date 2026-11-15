@@ -9,6 +9,7 @@ import { createSyncValidationSession } from './sync-security.mjs';
 import { coachInputFingerprint, readSyncCache, writeSyncCache, syncDigest } from './sync-cache.mjs';
 import { CoachSyncError, getCoachHistoryKey, getPublishedCoachIndex, enqueueCoachBundle, syncCoachBundles, syncErrorMessage } from './coach-sync.mjs';
 import { readReplaySettings, replayInRetention } from './replay-settings.mjs';
+import { loadInstalledChineseDisplayNames } from './display-names.mjs';
 
 function generationReason(error) {
   if (error instanceof CoachSyncError || error?.code === 'MTGA_SYNC_SECURITY') return syncErrorMessage(error);
@@ -68,8 +69,9 @@ async function queueReplay(replay, options, published, receipts, pendingBundle) 
  * selected for local export. Per-match generation failures never abort peers. */
 export async function syncCoachCatalog(options = {}) {
   const count=options.workerCount??2;
+  const displayNamesZh = options.displayNamesZh ?? await loadInstalledChineseDisplayNames();
   const pool = count ? createComputePool({size:count}) : null;
-  try { return await runCatalog({...options,computePool:pool}); } finally { await pool?.close(); }
+  try { return await runCatalog({...options, displayNamesZh, computePool:pool}); } finally { await pool?.close(); }
 }
 async function runCatalog(options) {
   // Remote-index preflight always checks history before receipts or generation.

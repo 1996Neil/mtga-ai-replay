@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
   bundledCardNamesFingerprint,
+  displayNamesMapFingerprint,
   loadBundledChineseDisplayNames,
   loadDisplayNames,
   loadInstalledChineseDisplayNames,
@@ -52,4 +53,12 @@ test('bundled loader and fingerprint are stable', async () => {
   const fingerprint = await bundledCardNamesFingerprint();
   assert.match(fingerprint, /^2026\.65\.0-r1:[a-f0-9]{64}$/);
   assert.equal(fingerprint, await bundledCardNamesFingerprint());
+});
+
+test('final display-map fingerprint changes only when displayed names change', () => {
+  const names = new Map([[1, '树林'], [2, '山脉']]);
+  const first = displayNamesMapFingerprint(names);
+  assert.equal(first, displayNamesMapFingerprint(names));
+  names.set(2, '海岛');
+  assert.notEqual(displayNamesMapFingerprint(names), first);
 });

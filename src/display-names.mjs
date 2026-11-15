@@ -10,6 +10,7 @@ const CHINESE_BASICS = ['树林', '山脉', '海岛', '平原', '沼泽'];
 const BUNDLED_GZ = new URL('./card-names/cards.jsonl.gz', import.meta.url);
 const BUNDLED_MANIFEST = new URL('./card-names/manifest.json', import.meta.url);
 let bundledNamesPromise, bundledFingerprintPromise;
+const DISPLAY_SOURCE = Symbol('display-name-source');
 
 function plainText(value) {
   const entities = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
@@ -139,7 +140,22 @@ export async function discoverDisplayNameDatabase(options = {}) {
 export async function loadDisplayNames(options = {}) {
   const bundled = await loadBundledChineseDisplayNames();
   const installed = (await discoverInstalledNames(options)).names;
-  return new Map([...bundled, ...installed]);
+  const names = new Map([...bundled, ...installed]);
+  Object.defineProperty(names, DISPLAY_SOURCE, {
+    value: { bundledFingerprint: await bundledCardNamesFingerprint() },
+    enumerable: false,
+  });
+  return names;
+}
+
+/** Stable fingerprint for the final display map used by a running process. */
+export function displayNamesMapFingerprint(names) {
+  if (!(names instanceof Map)) return 'missing';
+  const rows = [...names].sort((a, b) => Number(a[0]) - Number(b[0]));
+  return createHash('sha256').update(JSON.stringify({
+    bundled: names[DISPLAY_SOURCE]?.bundledFingerprint ?? null,
+    rows,
+  })).digest('hex');
 }
 
 /** Legacy name: now includes the bundled names-only release. */

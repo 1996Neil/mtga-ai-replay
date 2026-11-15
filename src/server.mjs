@@ -40,8 +40,8 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
   const chineseNames = displayNamesZh ?? await loadInstalledChineseDisplayNames();
   let assignedPort, closePromise, closing = false;
   const journal = enableReplaySync || enableCollection ? createTaskJournal(dataDir) : null;
-  const sync = createViewerSync({ dataDir, workflow: syncWorkflow ?? syncReplays, notify: notifyTask, journal });
-  const collection = createAccountViewerCollections({ dataDir, update: collectionUpdate, sync: collectionSync, notify: notifyTask, journal });
+  const sync = createViewerSync({ dataDir, displayNamesZh: chineseNames, workflow: syncWorkflow ?? syncReplays, notify: notifyTask, journal });
+  const collection = createAccountViewerCollections({ dataDir, displayNamesZh: chineseNames, update: collectionUpdate, sync: collectionSync, notify: notifyTask, journal });
   let queuedAutoSync = null;
   function requestAutoSync() {
     if (queuedAutoSync || closing) return;
