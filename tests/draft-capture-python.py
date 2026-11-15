@@ -44,6 +44,15 @@ class CaptureTests(unittest.TestCase):
         self.assertNotIn('synthetic-private', json.dumps(value))
         self.assertEqual(value['pack_number'], 1)
 
+    def test_human_draft_coordinates_are_one_based(self):
+        raw = b"20261024 010203.123,INFO,tracker,Draft pack: " + repr({
+            'event_name': 'PremierDraft_SYNTHETIC', 'pack_number': 3, 'pick_number': 15,
+            'card_ids': [10],
+        }).encode()
+        value = c.normalize(raw.decode(), one_based=True)
+        self.assertEqual(value['pack_number'], 3)
+        self.assertEqual(value['pick_number'], 15)
+
     def test_incomplete_utf8_and_restart(self):
         content = line(payload={'note': '中文'})
         cut = content.index('中'.encode()) + 1

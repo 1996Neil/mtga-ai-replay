@@ -6,6 +6,54 @@ import { validAccountKey } from './account-scope.mjs';
 const observationCache = new Map();
 const noCardNames = new Map(), projectionCaches = new WeakMap();
 const SESSION_GAP_MS = 30 * 60 * 1000;
+
+function segmentPickMap(run) {
+  const minimumPack = Math.min(...(run.picks ?? []).map(pick => pick.pack_number).filter(Number.isInteger));
+  const minimumPick = Math.min(...(run.picks ?? []).map(pick => pick.pick_number).filter(Number.isInteger));
+  const packOffset = Number.isFinite(minimumPack) && minimumPack >= 2 ? -1 : 0;
+  const pickOffset = Number.isFinite(minimumPick) && minimumPick >= 2 ? -1 : 0;
+  return new Map((run.picks ?? []).map(pick => {
+    const normalized = packOffset || pickOffset
+      ? { ...pick, pack_number: pick.pack_number + packOffset, pick_number: pick.pick_number + pickOffset }
+      : pick;
+    return [`${normalized.pack_number}:${normalized.pick_number}`, normalized];
+  }));
+}
+
+function mergeResumedSegments(runs) {
+  const output = [];
+  for (const run of runs.slice().sort((a, b) => String(b.started_at).localeCompare(String(a.started_at)) || a.run_id.localeCompare(b.run_id))) {
+    const current = segmentPickMap(run);
+    let merged = false;
+    for (let i = 0; i < output.length; i += 1) {
+      const prior = output[i];
+      if (prior.account_key !== run.account_key || prior.event_id !== run.event_id) continue;
+      const priorStarted = Date.parse(prior.started_at ?? ''), currentStarted = Date.parse(run.started_at ?? '');
+      if (Number.isFinite(priorStarted) && Number.isFinite(currentStarted) &&
+        Math.abs(priorStarted - currentStarted) > 10 * 60 * 1000) continue;
+      const priorMap = segmentPickMap(prior);
+      const shared = [...current.keys()].filter(key => priorMap.has(key)).length;
+      if (shared < 8) continue;
+      const quality = value => [
+        (value.picks ?? []).filter(pick => pick.selected).length,
+        (value.picks ?? []).reduce((sum, pick) => sum + (pick.candidates?.length ?? 0), 0),
+        value.picks?.length ?? 0,
+      ];
+      const currentQuality = quality(run), priorQuality = quality(prior);
+      const better = currentQuality[0] > priorQuality[0] ||
+        currentQuality[0] === priorQuality[0] && currentQuality[1] > priorQuality[1] ||
+        currentQuality[0] === priorQuality[0] && currentQuality[1] === priorQuality[1] && currentQuality[2] > priorQuality[2];
+      const chosen = better ? run : prior;
+      const normalizedPicks = chosen === run ? [...current.values()] : [...priorMap.values()];
+      output[i] = { ...chosen, picks: normalizedPicks.sort((a, b) => a.pack_number - b.pack_number || a.pick_number - b.pick_number),
+        capture_run_ids: [...new Set([...(prior.capture_run_ids ?? [prior.run_id]), ...(run.capture_run_ids ?? [run.run_id])])] };
+      merged = true;
+      break;
+    }
+    if (!merged) output.push({ ...run, capture_run_ids: [run.run_id] });
+  }
+  return output.sort((a, b) => String(b.started_at).localeCompare(String(a.started_at)) || a.run_id.localeCompare(b.run_id));
+}
 export async function draftLogRevision(logDir = join(homedir(), '.seventeenlands')) {
   let names;
   try { names = (await readdir(logDir)).filter(name => /^seventeenlands\.log(?:\.|$)/.test(name)).sort(); }
@@ -20,7 +68,7 @@ export async function draftLogRevision(logDir = join(homedir(), '.seventeenlands
 
 /** Tracker sessions are provisional capture segments, NEVER Course/match bindings.
  * Preserve all observations in SQLite; this display projection can be rebuilt. */
-export function projectDraftCaptures(observations, { cardNames = noCardNames, gaps = 0, onProject } = {}) {
+export function projectDraftCaptures(observations, { cardNames = noCardNames, gaps = 0, onProject, collapseResumed = false } = {}) {
   let cache = projectionCaches.get(cardNames);
   if (!cache) { cache = new Map(); projectionCaches.set(cardNames, cache); }
   const segments = [], activeByEvent = new Map();
@@ -52,7 +100,7 @@ export function projectDraftCaptures(observations, { cardNames = noCardNames, ga
     if (kind === 'pick') pick.logged_at ??= logged_at;
     segment.picks.set(key, pick);
   }
-  return segments.map(segment => {
+  const projected = segments.map(segment => {
     const signature = JSON.stringify([gaps, segment.account_key, segment.event_id, segment.started_at,
       [...segment.picks.values()].map(pick => [pick.pack_number, pick.pick_number, pick.logged_at, [...pick.packs], [...pick.selections], pick.observation_ids])]);
     const cachedProjection = cache.get(segment.id);
@@ -93,6 +141,7 @@ export function projectDraftCaptures(observations, { cardNames = noCardNames, ga
     cache.set(segment.id, { signature, value }); onProject?.({ built: 1, reused: 0 });
     return value;
   }).sort((a, b) => String(b.started_at).localeCompare(String(a.started_at)) || a.run_id.localeCompare(b.run_id));
+  return collapseResumed ? mergeResumedSegments(projected) : projected;
 }
 
 export async function readDraftCapture({ dataDir, metadataOnly = false, onRead }) {
@@ -140,6 +189,8 @@ export async function readDraftCapture({ dataDir, metadataOnly = false, onRead }
 
 export async function listCapturedDraftRuns(options) {
   const { observations, gaps } = await readDraftCapture(options);
+  if (options.includeUnpublished === true)
+    return projectDraftCaptures(observations, { ...options, gaps, collapseResumed: true });
   let confirmed = [];
   try {
     const receipt = JSON.parse(await readFile(join(options.dataDir, 'draft-sync/published.json'), 'utf8'));
@@ -148,7 +199,7 @@ export async function listCapturedDraftRuns(options) {
       confirmed = observations.filter(item => ids.has(item.observation_id));
     }
   } catch { /* Unpublished observations remain only in the transmission queue. */ }
-  return projectDraftCaptures(confirmed, { ...options, gaps });
+  return projectDraftCaptures(confirmed, { ...options, gaps, collapseResumed: true });
 }
 
 /** Local-only unknown-owner projection. It is intentionally outside Git
@@ -162,5 +213,5 @@ export async function listUnknownDraftRuns(options) {
       confirmed = new Set(receipt.observation_ids);
   } catch { /* No verified publication yet. */ }
   const unknown = observations.filter(item => !validAccountKey(item.account_key) && !confirmed.has(item.observation_id));
-  return projectDraftCaptures(unknown, { ...options, gaps });
+  return projectDraftCaptures(unknown, { ...options, gaps, collapseResumed: true });
 }

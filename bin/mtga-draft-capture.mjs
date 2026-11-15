@@ -5,16 +5,34 @@ import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { defaultDataDir } from '../src/history.mjs';
 import { draftLogRevision } from '../src/draft-capture.mjs';
+import { mkdtemp, rename, rm, stat } from 'node:fs/promises';
+import { join } from 'node:path';
 const run = promisify(execFile);
 const { values } = parseArgs({ options: {
   sync: { type: 'boolean', default: false },
   'from-start': { type: 'boolean', default: false },
   watch: { type: 'boolean', default: false }, 'data-dir': { type: 'string' },
   'log-dir': { type: 'string' }, python: { type: 'string', default: 'python3' },
+  rebuild: { type: 'boolean', default: false },
 } });
 const script = fileURLToPath(new URL('../tools/draft-capture/capture.py', import.meta.url));
-const args = [script, ...(values['from-start'] ? ['--from-start'] : []), '--data-dir', values['data-dir'] ?? defaultDataDir(),
-  ...(values['log-dir'] ? ['--log-dir', values['log-dir']] : [])];
+const dataDir = values['data-dir'] ?? defaultDataDir(), logDir = values['log-dir'];
+if (values.rebuild) {
+  const temporary = await mkdtemp(join(dataDir, '.draft-rebuild-'));
+  const target = join(dataDir, 'draft-capture.sqlite3');
+  const backup = `${target}.before-rebuild-${new Date().toISOString().replace(/[-:.TZ]/g, '')}`;
+  try {
+    const result = JSON.parse((await run(values.python, [script, '--from-start', '--data-dir', temporary,
+      ...(logDir ? ['--log-dir', logDir] : [])], { timeout: 120000, maxBuffer: 8192 })).stdout);
+    await stat(join(temporary, 'draft-capture.sqlite3'));
+    try { await rename(target, backup); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    await rename(join(temporary, 'draft-capture.sqlite3'), target);
+    console.log(JSON.stringify({ ...result, rebuilt: true, backup }, null, 2));
+  } finally { await rm(temporary, { recursive: true, force: true }); }
+  process.exit(0);
+}
+const args = [script, ...(values['from-start'] ? ['--from-start'] : []), '--data-dir', dataDir,
+  ...(logDir ? ['--log-dir', logDir] : [])];
 let closed = false, lastSyncAttempt = 0, lastSyncedCount = null, lastSyncedGaps = null, lastSyncedInput = null, syncActive = null;
 let lastLogRevision, lastCapture;
 for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => { closed = true; });

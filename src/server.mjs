@@ -106,8 +106,10 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
     const history = await localCatalog();
     const ownership = new Map(history.map(item => [item.id, item.account_key]));
     const knownCourses = new Map((await listDraftRuns({ dataDir })).map(run => [run.run_id, run]));
-    const sourceCaptures = await listCapturedDraftRuns({ dataDir, cardNames: await draftNameCatalog });
+    const sourceCaptures = await listCapturedDraftRuns({ dataDir, cardNames: await draftNameCatalog, includeUnpublished: true });
     const localUnknown = await listUnknownDraftRuns({ dataDir, cardNames: await draftNameCatalog });
+    const sourceCaptureIds = new Set(sourceCaptures.flatMap(run => run.capture_run_ids ?? [run.run_id]));
+    const visibleUnknown = localUnknown.filter(run => !sourceCaptureIds.has(run.run_id));
     let publishedCaptures;
     try { publishedCaptures = await readPublishedDraftLinks(sourceCaptures, { dataDir, history }); }
     catch { publishedCaptures = sourceCaptures.map(run => ({ ...run, binding: 'unresolved', binding_reason: 'evidence_unavailable' })); }
@@ -142,7 +144,7 @@ export async function startReplayServer({ dataDir = defaultDataDir(), viewerDir 
       const allDecks = await listReplayDecks(rawCourses.flatMap(run => run.matches.map(match => match.id)), { dataDir, cache: draftDeckCache });
       legacyCaptures = bindDraftCaptures(sourceCaptures, verifyDraftCourseMatches(rawCourses, allDecks, ownership));
     }
-    let unknownRuns = localUnknown;
+    let unknownRuns = visibleUnknown;
     if (unknownRuns.length) try {
       unknownRuns = bindDraftCaptures(unknownRuns, verifiedRecent).map(run =>
         run.binding === 'matched_pool' && validAccountKey(run.binding_account_key)

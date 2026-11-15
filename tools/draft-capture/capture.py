@@ -22,7 +22,7 @@ def digest(value):
     return hashlib.sha256(value).hexdigest()
 
 
-def normalize(line):
+def normalize(line, one_based=False):
     match = PREFIX.match(line)
     if not match:
         return None
@@ -35,7 +35,12 @@ def normalize(line):
     pick = value.get('pick_number', value.get('PickNumber', value.get('SelfPick', value.get('Pick'))))
     if not EVENT.fullmatch(str(event)):
         raise ValueError('unsupported event')
-    if type(pack) is not int or type(pick) is not int or not 0 <= pack <= 2 or not 0 <= pick < 30:
+    if type(pack) is not int or type(pick) is not int:
+        raise ValueError('invalid draft coordinate')
+    if one_based:
+        if not 1 <= pack <= 3 or not 1 <= pick <= 30:
+            raise ValueError('invalid draft coordinate')
+    elif not 0 <= pack <= 2 or not 0 <= pick < 30:
         raise ValueError('invalid draft coordinate')
     cards = value.get('card_ids')
     if cards is None and kind == 'pack':
@@ -47,8 +52,8 @@ def normalize(line):
         raise ValueError('invalid card IDs')
     # This is the tracker log's LOCAL receipt time, not Arena's action timestamp.
     logged_at = dt.datetime.strptime(stamp, '%Y%m%d %H%M%S.%f').astimezone().isoformat(timespec='milliseconds')
-    return dict(adapter=VERSION, kind=kind, event_id=str(event), pack_number=pack + 1,
-                pick_number=pick + 1, card_ids=cards, logged_at=logged_at)
+    return dict(adapter=VERSION, kind=kind, event_id=str(event), pack_number=pack if one_based else pack + 1,
+                pick_number=pick if one_based else pick + 1, card_ids=cards, logged_at=logged_at)
 
 
 def connect(data_dir):
@@ -171,11 +176,12 @@ def capture(log_dir, data_dir, before_commit=None, start_now=False):
                         continue
                     if b',Draft pack: ' not in raw and b',Draft pick: ' not in raw and b',Human draft ' not in raw:
                         continue
+                    one_based = b'Human draft ' in raw
                     raw = re.sub(b'Human draft [^:]*pack[^:]*: ', b'Draft pack: ', raw)
                     raw = re.sub(b'Human draft [^:]*pick[^:]*: ', b'Draft pick: ', raw)
                     identity = digest((incarnation + ':' + str(start) + ':' + digest(raw)).encode())
                     try:
-                        normalized = normalize(raw.decode('utf-8').rstrip('\r\n'))
+                        normalized = normalize(raw.decode('utf-8').rstrip('\r\n'), one_based=one_based)
                         if normalized is None:
                             raise ValueError('unsupported log prefix')
                     except (ValueError, SyntaxError, TypeError, UnicodeError, RecursionError):

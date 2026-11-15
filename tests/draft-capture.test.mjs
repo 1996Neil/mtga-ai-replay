@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { projectDraftCaptures, readDraftCapture } from '../src/draft-capture.mjs';
+import { listCapturedDraftRuns, projectDraftCaptures, readDraftCapture } from '../src/draft-capture.mjs';
 import { startReplayServer } from '../src/server.mjs';
 const run = promisify(execFile);
 let seq = 0;
@@ -16,7 +16,7 @@ const observation = (kind, p, n, card_ids) => ({ observation_id: (++seq).toStrin
 
 test('Python capture atomicity, rotation, malformed inputs and restart suite', async () => {
   const result = await run('python3', [fileURLToPath(new URL('./draft-capture-python.py', import.meta.url))]);
-  assert.match(result.stderr, /Ran 16 tests/);
+  assert.match(result.stderr, /Ran 17 tests/);
   assert.match(result.stderr, /OK/);
 });
 
@@ -88,6 +88,7 @@ test('real collector output reaches HTTP without a match or legacy database, pub
     "20261024 010204.123,INFO,tracker,Draft pick: {'event_name': 'QuickDraft_SYNTHETIC', 'pack_number': 0, 'pick_number': 0, 'card_ids': [11]}\n");
   await run('python3', [fileURLToPath(new URL('../tools/draft-capture/capture.py', import.meta.url)), '--from-start', '--log-dir', logDir, '--data-dir', dataDir]);
   assert.equal((await readDraftCapture({ dataDir })).observations.length, 2);
+  assert.equal((await listCapturedDraftRuns({ dataDir, includeUnpublished: true })).length, 1);
   const server = await startReplayServer({ dataDir, viewerDir, observeLocalLogs: false, displayNamesZh: new Map(), cardNames: new Map([[11, 'Synthetic card']]) });
   t.after(() => server.close());
   const localUnknown = await fetch(server.url + 'api/draft-runs').then(r => r.json());
