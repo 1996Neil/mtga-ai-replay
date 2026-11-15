@@ -62,6 +62,22 @@ test('repeated initial pack does not merge separate progressed segments or diffe
   assert.equal(projectDraftCaptures([observation('pack', 1, 1, [10]), observation('pack', 1, 1, [11])]).length, 2);
 });
 
+test('a resumed draft without pack one starts a new segment after a long gap', () => {
+  const first = observation('pack', 1, 1, [10, 11]);
+  first.logged_at = '2026-10-24T01:00:00.000+08:00';
+  const progressed = observation('pick', 1, 1, [10]);
+  progressed.logged_at = '2026-10-24T01:00:01.000+08:00';
+  const resumedPack = observation('pack', 2, 2, [12, 13]);
+  resumedPack.logged_at = '2026-10-24T02:00:00.000+08:00';
+  const resumedPick = observation('pick', 2, 2, [12]);
+  resumedPick.logged_at = '2026-10-24T02:00:01.000+08:00';
+  const runs = projectDraftCaptures([first, progressed, resumedPack, resumedPick]);
+  assert.equal(runs.length, 2);
+  const resumed = runs.find(run => run.picks.some(pick => pick.pack_number === 2));
+  assert.equal(resumed.picks[0].candidates.length, 2);
+  assert.deepEqual(resumed.picks[0].selected_ids, [12]);
+});
+
 test('real collector output reaches HTTP without a match or legacy database, published session stays separate', async t => {
   const root = await mkdtemp(join(tmpdir(), 'draft-capture-http-'));
   t.after(() => rm(root, { recursive: true, force: true }));

@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import { validAccountKey } from './account-scope.mjs';
 const observationCache = new Map();
 const noCardNames = new Map(), projectionCaches = new WeakMap();
+const SESSION_GAP_MS = 30 * 60 * 1000;
 export async function draftLogRevision(logDir = join(homedir(), '.seventeenlands')) {
   let names;
   try { names = (await readdir(logDir)).filter(name => /^seventeenlands\.log(?:\.|$)/.test(name)).sort(); }
@@ -30,13 +31,18 @@ export function projectDraftCaptures(observations, { cardNames = noCardNames, ga
     let segment = activeByEvent.get(identity);
     const first = kind === 'pack' && pack_number === 1 && pick_number === 1;
     const signature = JSON.stringify(card_ids);
+    const previousTime = segment?.last_logged_at ? Date.parse(segment.last_logged_at) : NaN;
+    const currentTime = logged_at ? Date.parse(logged_at) : NaN;
+    const resumedAfterGap = Number.isFinite(previousTime) && Number.isFinite(currentTime) &&
+      currentTime - previousTime > SESSION_GAP_MS;
     // Repeated P1P1 notifications before progression remain the same segment.
     // A repeated initial pack after progression starts another unverified segment.
-    if (!segment || (first && (segment.initial !== signature || segment.progressed))) {
+    if (!segment || resumedAfterGap || (first && (segment.initial !== signature || segment.progressed))) {
       segment = { id: observation_id.slice(0, 32), account_key: account_key ?? null, event_id, started_at: logged_at, initial: first ? signature : null,
         progressed: false, picks: new Map() };
       segments.push(segment); activeByEvent.set(identity, segment);
     }
+    segment.last_logged_at = logged_at;
     if (pack_number !== 1 || pick_number !== 1) segment.progressed = true;
     const key = `${pack_number}:${pick_number}`;
     const pick = segment.picks.get(key) ?? { pack_number, pick_number, packs: new Map(), selections: new Map(),
