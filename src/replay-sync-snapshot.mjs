@@ -21,7 +21,7 @@ export async function replaySyncSnapshot({ state, dataDir, onProgress, probeRemo
     const remote = await probeRemote(state.repository, options);
     if (!remote?.isPrivate || remote.nameWithOwner !== state.repository) throw Error('Replay sync repository must remain private');
     if (remote.defaultBranchRef?.target?.oid === previous.commit && remote.defaultBranchRef?.name === previous.branch) {
-      return { source: 'remote', index: previous.index, commit: previous.commit, pending: state.pending };
+      return { source: 'remote', unchanged: true, index: previous.index, commit: previous.commit, pending: state.pending };
     }
   }
   const snapshot = await getPublishedCoachIndex({ ...options, dataDir, fastSync: true, onProgress });

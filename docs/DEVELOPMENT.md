@@ -51,3 +51,32 @@ asset before installing the native launcher. Installation is outside cloud setup
 
 Replay setup does not require model, voice or paid-provider credentials. No paid
 endpoint is part of npm setup, start, test or release scanning.
+
+## Local replay flow
+
+After installing the root and Viewer dependencies, build the Viewer and start
+the loopback Replay server:
+
+```bash
+npm run viewer:build
+npm run replay:serve
+```
+
+In another terminal, import the newest completed match from Arena's local
+Detailed Logs:
+
+```bash
+node bin/mtga-gpt-replay.mjs latest --no-open
+```
+
+Replay data synchronization is explicit and targets a separately configured
+private data repository:
+
+```bash
+node bin/mtga-gpt-replay.mjs sync --repo owner/private-replay-data
+node bin/mtga-gpt-replay.mjs sync
+```
+
+An unchanged sync performs one small remote revision check and skips remote
+replay body reads, local replay rebuilding and publication. A changed or newly
+queued match runs the existing integrity, privacy and conflict checks.

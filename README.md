@@ -1,4 +1,4 @@
-# MTGA AI Replay source
+# MTGA Replay source
 
 Replay 2.0 reads cloud-generated reviews from the private data repository. Its
 separate server entry is `npm run replay:serve`; it does not load a local model
@@ -9,7 +9,7 @@ and worker-isolated validation: [P1 protocol](docs/CLOUD_REVIEW_P1_PROTOCOL.md),
 [Chinese P1 report](docs/CLOUD_REVIEW_P1_REPORT_20261015.md), and [test evidence](docs/cloud-review-p1-results.json).
 The [Phase 1 audit](docs/REPLAY_AI_AUDIT_20261014.md) and
 [previous lifecycle/rollback notes](docs/REPLAY_AI_HARDENING.md) remain historical evidence.
-The legacy voice code and launcher remain in Git; the original desktop checkout is not replaced.
+The current public source contains Replay only; old desktop and review reports remain historical records.
 
 
 This repository contains the MTGA Replay backend, owned Viewer integration,
@@ -40,6 +40,13 @@ npm run test:cloud
 npm run check:release
 npm start -- --port 8787
 ```
+
+For a local replay session, use `npm run replay:serve` after building the
+Viewer. `node bin/mtga-gpt-replay.mjs latest --no-open` imports the newest
+completed replay from local Arena logs. `node bin/mtga-gpt-replay.mjs sync` performs an explicit sync to the
+separately configured private data repository. When the remote revision, local
+replay revisions and pending queue are unchanged, sync performs one small remote
+revision check and skips replay downloads, body reads and publication work.
 
 Dependency installation needs the npm registry or a populated cache. Tests use
 synthetic logs, temporary local repositories,

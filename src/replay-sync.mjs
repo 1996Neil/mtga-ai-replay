@@ -52,11 +52,19 @@ async function run({ dataDir, onProgress, publisher = syncCoachCatalog, remoteIm
   // independent remote change. The publisher rechecks the hash before writes.
   const snapshot = await replaySyncSnapshot({ ...options, state, dataDir, onProgress });
   onProgress?.({ phase: 'downloading' });
-  const imported = await remoteImport('remote', { dataDir, snapshot, baselines });
+  const publishedIds = new Set(snapshot.index.matches.map(entry => entry.match_id));
+  const localNeedsUpload = state.pending.length || refreshMatchIds.length ||
+    local.some(match => !publishedIds.has(match.id));
+  const localIds = new Set(local.map(match => match.id));
+  const remoteNeedsDownload = snapshot.index.matches.some(entry =>
+    !localIds.has(entry.match_id) || !receipts[entry.match_id]);
+  const idleRemote = snapshot.unchanged === true && !localNeedsUpload && !remoteNeedsDownload;
+  const imported = idleRemote
+    ? { downloaded: 0, conflicts: [], remote_revisions: {} }
+    : await remoteImport('remote', { dataDir, snapshot, baselines });
   const downloaded = imported.downloaded, failures = [...imported.conflicts];
   Object.assign(receipts, imported.remote_revisions ?? {});
   await atomicSyncWrite(receiptPath, JSON.stringify(receipts));
-  const publishedIds = new Set(snapshot.index.matches.map(entry => entry.match_id));
   const needsUpload = state.pending.length || refreshMatchIds.some(id => !imported.remote_revisions?.[id]) ||
     local.some(match => !publishedIds.has(match.id));
   const result = failures.length

@@ -20,10 +20,16 @@ test('sync downloads cloud-only replay and unchanged repeat neither rebuilds nor
   assert.equal(first.downloaded, 1);
   assert.equal(first.published, 0);
   assert.equal((await listReplays({ dataDir: h.dataDir })).length, 1);
-  const second = await syncReplays({ ...h.options, workerCount: 0 });
+  const cachedRemote = JSON.parse(await readFile(join(h.dataDir, 'replay-sync-snapshot.json')));
+  let remoteReads = 0;
+  const second = await syncReplays({ ...h.options, workerCount: 0,
+    probeRemote: async () => ({ isPrivate: true, nameWithOwner: 'fixture-owner/private-coaching',
+      defaultBranchRef: { name: cachedRemote.branch, target: { oid: cachedRemote.commit } } }),
+    remoteImport: async () => { remoteReads++; throw Error('Idle sync should not read remote replay bodies'); } });
   assert.equal(second.downloaded, 0);
   assert.equal(await h.commits(), before);
   assert.equal(second.remote_checked, true);
+  assert.equal(remoteReads, 0);
 });
 test('successful match sync refreshes draft associations without new picks and reports association failure separately', async t => {
   const h = await harness(t);
